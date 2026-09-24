@@ -1,0 +1,127 @@
+<div id="pos-tab" class="tab-content active">
+  <div class="pos-grid">
+    <div>
+      <div class="card">
+        <h4>🔍 Product & Service Catalog Search</h4>
+        <div style="display: flex; gap: 10px;">
+          <!-- FORCED HEIGHT AND FONT SIZE ON SEARCH & CATEGORY -->
+          <input type="text" id="search-input" placeholder="Search item..." onkeyup="searchProducts()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" />
+          <select id="category-filter" onchange="searchProducts()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">
+            <option value="">All Categories</option>
+            <option value="Finished Feed">Finished Feeds</option>
+            <option value="Raw - Energy">Raw - Energy</option>
+            <option value="Raw - Protein">Raw - Protein</option>
+            <option value="Raw - Mineral">Raw - Mineral</option>
+          </select>
+        </div>
+        <div id="search-results" class="search-results-box"></div>
+      </div>
+
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h4 style="margin: 0;">👤 Customer Selection</h4>
+            <button class="btn-sm btn-primary" onclick="document.getElementById('new-cust-form').style.display='block'" style="height: 40px; font-size: 16px;">+ Add New</button>
+        </div>
+        
+        <div id="new-cust-form" style="display:none; margin-top:10px; margin-bottom:10px; border: 1px solid #ddd; padding:15px; border-radius: 6px; background: #f8f9fa;">
+            <input type="text" id="nc-name" placeholder="Full Name" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
+            <input type="text" id="nc-phone" placeholder="Phone Number" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
+            <input type="text" id="nc-location" placeholder="Location / Town" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
+            <div style="display:flex; gap: 10px;">
+                <button class="btn-sm btn-success" style="flex:1; height: 45px; font-size: 16px;" onclick="saveNewCustomer()">Save & Select</button>
+                <button class="btn-sm btn-danger" style="flex:1; height: 45px; font-size: 16px;" onclick="document.getElementById('new-cust-form').style.display='none'">Cancel</button>
+            </div>
+        </div>
+
+        <!-- FORCED HEIGHT AND FONT SIZE ON CUSTOMER DROPDOWN -->
+        <select id="customer-select" style="width: 100%; margin-top: 15px; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" onchange="updateCustomerDetails()">
+          <option value="">CASH CUSTOMER (Walk-In)</option>
+        </select>
+        
+        <div id="customer-credit-card" class="credit-info-box" style="display: none; font-size: 16px; padding: 15px;">
+          <strong>Credit Limit:</strong> KSh <span id="c-limit">0.00</span> | 
+          <strong>Current Debt:</strong> KSh <span id="c-debt">0.00</span><br/>
+          <strong>Available Credit:</strong> KSh <span id="c-avail">0.00</span>
+          
+          <hr style="border-top: 1px solid #b6d4fe; margin: 12px 0;" />
+          <div style="display:flex; gap:10px; align-items:center;">
+             <input type="number" id="repay-amount" placeholder="Amount to pay" style="flex:2; height: 45px; font-size: 16px; padding: 10px;" min="1" />
+             <button class="btn-sm btn-success" style="flex:1; height: 45px; font-size: 16px;" onclick="processDebtRepayment()">Settle Debt</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h4>🛒 Active Sales Cart</h4>
+        <div style="overflow-x: auto;">
+          <table class="cart-table" style="font-size: 16px;">
+            <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Price</th><th>Total</th><th></th></tr></thead>
+            <tbody id="cart-body"><tr><td colspan="6" style="text-align: center; color: #888; padding: 20px;">Cart is empty.</td></tr></tbody>
+          </table>
+        </div>
+        <br/>
+        <div style="display: flex; gap: 10px;">
+            <button class="btn-sm btn-danger" style="height: 40px; font-size: 16px;" onclick="clearCart()">Cancel Sale</button>
+            <button id="btn-hold" class="btn-sm btn-warning" style="height: 40px; font-size: 16px;" onclick="holdCart()">Hold Sale</button>
+            <button id="btn-restore" class="btn-sm btn-info" style="height: 40px; font-size: 16px; display: none;" onclick="restoreCart()">Restore Sale</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h4>💳 Checkout & Payment</h4>
+        <div style="background:#eef6ff; padding:15px; border-radius:6px; border:1px solid #b6d4fe; margin-bottom:15px;">
+            <h4 style="margin: 0; color: #333;">Total Amount Due:</h4>
+            <h2 style="margin: 5px 0; color: #dc3545; font-size: 2.5rem;">KSh <span id="cart-total">0.00</span></h2>
+            <h4 style="margin: 0; color: #333; margin-top: 10px;">Change Due to Customer:</h4>
+            <h3 style="margin: 5px 0; color: #28a745; font-size: 1.8rem;">KSh <span id="change-due">0.00</span></h3>
+        </div>
+        
+        <label style="font-size: 16px;"><strong>Discount Application (Optional):</strong></label>
+        <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+          <input type="number" id="discount-val" value="0" min="0" onchange="renderCart()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" />
+          <select id="discount-type" onchange="renderCart()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px;">
+            <option value="KSH">KSh (Flat)</option>
+            <option value="PCT">% (Percent)</option>
+          </select>
+        </div>
+
+        <label style="font-size: 16px;"><strong>Cashier Manual Entry:</strong></label>
+        <div id="payment-lines">
+          <div class="split-row" style="margin-bottom: 10px;">
+            <select class="p-method" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select>
+            <input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" />
+            <input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;" />
+          </div>
+        </div>
+        <button class="btn-sm" style="height: 40px; font-size: 16px; margin-top: 5px; margin-bottom: 20px;" onclick="addPaymentLine()">+ Add Split Payment</button>
+        <button onclick="completeCheckout()" class="btn-primary" style="width: 100%; padding: 20px; font-size: 20px; border-radius: 8px;">Complete Sale</button>
+      </div>
+
+      <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h4 style="margin:0;">📄 Receipt</h4>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-sm btn-info" id="btn-print" style="height: 40px; font-size: 16px;" onclick="window.print()" disabled>🖨️ Print</button>
+                <button class="btn-sm btn-success" id="btn-wa" style="height: 40px; font-size: 16px;" onclick="shareWhatsApp()" disabled>💬 WhatsApp</button>
+            </div>
+        </div>
+        
+        <div id="printable-receipt" class="receipt-box" style="font-size: 14px;">
+          <center>
+            <h3 style="margin:0;">EMINING FEEDS</h3>
+            <small><em>Quality Feeds For You</em></small><br/>
+            <small id="r-date">---</small>
+          </center>
+          <hr style="border-top: 1px dashed #333;"/>
+          Receipt #: <span id="r-id">---</span><br/>Customer: <span id="r-cust">---</span><br/>
+          <hr style="border-top: 1px dashed #333;"/>
+          <div id="r-lines"></div>
+          <hr style="border-top: 1px dashed #333;"/>
+          <strong style="font-size:1.4rem;">TOTAL: KSh <span id="r-total">0.00</span></strong>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

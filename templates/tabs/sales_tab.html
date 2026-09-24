@@ -1,0 +1,13 @@
+<div id="sales-tab" class="tab-content">
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h3 style="margin:0;">📄 Historical Sales Ledger</h3>
+      <button class="btn-primary" onclick="loadSalesHistory()" style="padding: 6px 12px;">Refresh List</button>
+    </div>
+    <br/>
+    <table class="data-table">
+      <thead><tr><th>Date</th><th>Sale ID</th><th>Customer</th><th>Total (KSh)</th><th>Paid</th><th>Credit Debt</th><th>Methods</th></tr></thead>
+      <tbody id="sales-table-body"><tr><td colspan="7">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>

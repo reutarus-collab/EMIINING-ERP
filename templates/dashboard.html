@@ -14,18 +14,34 @@
   .cart-table, .data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.88rem; }
   .cart-table th, .cart-table td, .data-table th, .data-table td { border: 1px solid #eee; padding: 8px; text-align: left; }
   .data-table th { background: #f8f9fa; }
-  .btn-sm { padding: 4px 8px; font-size: 0.8rem; cursor: pointer; border-radius: 3px; border: 1px solid #ccc; }
+  .btn-sm { font-size: 0.9rem; padding: 8px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #ccc; }
   .btn-primary { background: #007bff; color: white; border: none; }
   .btn-success { background: #28a745; color: white; border: none; }
+  .btn-warning { background: #ffc107; color: #212529; border: none; }
+  .btn-info { background: #17a2b8; color: white; border: none; }
   .btn-danger { background: #dc3545; color: white; border: none; }
   .split-row { display: flex; gap: 5px; margin-bottom: 5px; }
   .receipt-box { background: #fff; border: 1px dashed #333; padding: 15px; font-family: monospace; font-size: 0.85rem; }
-  .form-group { margin-bottom: 12px; }
-  .form-group label { display: block; font-weight: bold; margin-bottom: 4px; font-size: 0.85rem; }
-  .form-group input, .form-group select { width: 100%; padding: 8px; box-sizing: border-box; }
   .credit-info-box { background: #eef6ff; border: 1px solid #b6d4fe; padding: 10px; border-radius: 6px; margin-top: 8px; font-size: 0.85rem; }
+  
+  /* FORCE LARGE INPUTS AND SELECTS */
+  input, select, textarea { 
+      padding: 12px 15px !important; 
+      font-size: 16px !important; 
+      height: 52px !important; 
+      border: 1px solid #ced4da !important; 
+      border-radius: 6px !important; 
+      box-sizing: border-box !important; 
+      width: 100% !important;
+      background-color: #fff !important;
+  }
+  
+  @media print {
+    body * { visibility: hidden; }
+    #printable-receipt, #printable-receipt * { visibility: visible; }
+    #printable-receipt { position: absolute; left: 0; top: 0; width: 100%; max-width: 300px; border: none; padding: 0; }
+  }
 </style>
-
 <h2>Emining Feeds Enterprise & Factory Terminal</h2>
 
 <div class="nav-tabs">
@@ -36,449 +52,16 @@
   <button class="tab-btn" onclick="showTab('factory-tab')">🏭 Factory & Milling</button>
 </div>
 
-<!-- ==================== TAB 1: POINT OF SALE ==================== -->
-<div id="pos-tab" class="tab-content active">
-  <div class="pos-grid">
-    <div>
-      <div class="card">
-        <h4>🔍 Product & Service Catalog Search</h4>
-        <div style="display: flex; gap: 10px;">
-          <input type="text" id="search-input" placeholder="Search item..." onkeyup="searchProducts()" style="flex: 1; padding: 8px;" />
-          <select id="category-filter" onchange="searchProducts()" style="padding: 8px;">
-            <option value="">All Categories</option>
-            <option value="Finished Feed">Finished Feeds</option>
-            <option value="Raw - Energy">Raw - Energy</option>
-            <option value="Raw - Protein">Raw - Protein</option>
-            <option value="Raw - Mineral">Raw - Mineral</option>
-          </select>
-        </div>
-        <div id="search-results" class="search-results-box"></div>
-      </div>
-
-      <div class="card">
-        <h4>👤 Customer Selection</h4>
-        <select id="customer-select" style="width: 100%; padding: 8px;" onchange="updateCustomerDetails()">
-          <option value="">CASH CUSTOMER (Walk-In)</option>
-        </select>
-        <div id="customer-credit-card" class="credit-info-box" style="display: none;">
-          <strong>Credit Limit:</strong> KSh <span id="c-limit">0.00</span> | 
-          <strong>Current Debt:</strong> KSh <span id="c-debt">0.00</span><br/>
-          <strong>Available Credit:</strong> KSh <span id="c-avail">0.00</span>
-        </div>
-      </div>
-
-      <div class="card">
-        <h4>🛒 Active Sales Cart</h4>
-        <table class="cart-table">
-          <thead><tr><th>Item</th><th>Unit</th><th>Qty</th><th>Price</th><th>Total</th><th>Action</th></tr></thead>
-          <tbody id="cart-body"><tr><td colspan="6" style="text-align: center; color: #888;">Cart is empty.</td></tr></tbody>
-        </table>
-        <br/>
-        <button class="btn-sm btn-danger" onclick="clearCart()">Cancel Sale</button>
-      </div>
-    </div>
-
-    <div>
-      <div class="card">
-        <h4>💳 Checkout & Payment</h4>
-        <h3 style="margin: 5px 0; color: #28a745;">Total Due: KSh <span id="cart-total">0.00</span></h3>
-        <hr/>
-        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-          <div style="flex: 1;">
-            <label><small>Extra Discount Value (KSh):</small></label>
-            <input type="number" id="discount-val" value="0" min="0" onchange="renderCart()" style="width: 100%; padding: 4px;" />
-          </div>
-        </div>
-
-        <label><small>Payment Method Breakdown:</small></label>
-        <div id="payment-lines">
-          <div class="split-row">
-            <select class="p-method" style="flex: 1;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select>
-            <input type="number" min="0" class="p-amount" placeholder="Amount" style="flex: 1; padding: 4px;" />
-            <input type="text" class="p-ref" placeholder="Ref" style="flex: 1; padding: 4px;" />
-          </div>
-        </div>
-        <button class="btn-sm" onclick="addPaymentLine()" style="margin-top: 5px;">+ Add Split Payment</button>
-        <br/><br/>
-        <button onclick="completeCheckout()" class="btn-primary" style="width: 100%; padding: 12px;">Complete Sale & Issue Receipt</button>
-      </div>
-
-      <div class="card">
-        <h4>📄 Thermal Receipt View</h4>
-        <div id="printable-receipt" class="receipt-box">
-          <center><strong>EMINING FEEDS</strong><br/><small id="r-date">---</small></center>
-          <hr style="border-top: 1px dashed #333;"/>
-          Receipt #: <span id="r-id">---</span><br/>Customer: <span id="r-cust">---</span><br/>
-          <hr style="border-top: 1px dashed #333;"/>
-          <div id="r-lines"></div>
-          <hr style="border-top: 1px dashed #333;"/>
-          <strong>TOTAL: KSh <span id="r-total">0.00</span></strong>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ==================== TAB 2: PURCHASE ORDERS & GRPO ==================== -->
-<div id="po-tab" class="tab-content">
-  <div class="pos-grid">
-    <div>
-      <div class="card" style="border-top: 4px solid #007bff;">
-        <h4>📝 1. Raise Purchase Order</h4>
-        <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-          <div class="form-group" style="flex: 1;"><label>Supplier:</label><select id="po-supplier-select"></select></div>
-          <div class="form-group" style="flex: 1;"><label>Location:</label><select id="po-location-select"></select></div>
-        </div>
-        <div style="display: flex; gap: 10px; align-items: flex-end;">
-          <div class="form-group" style="flex: 2;"><label>Raw Material:</label><select id="po-ingredient-select"></select></div>
-          <div class="form-group" style="flex: 1;"><label>Qty (KG):</label><input type="number" id="po-qty" min="1" placeholder="1000" /></div>
-          <div class="form-group" style="flex: 1;"><label>Unit Cost:</label><input type="number" id="po-cost" min="0" placeholder="35.00" /></div>
-          <button class="btn-primary" onclick="addToPOCart()" style="padding: 8px 12px; margin-bottom: 12px;">Add</button>
-        </div>
-        <table class="cart-table">
-          <thead><tr><th>Item</th><th>Ordered Qty</th><th>Unit Cost</th><th>Total</th><th>Action</th></tr></thead>
-          <tbody id="po-cart-body"><tr><td colspan="5" style="text-align: center; color: #888;">Cart is empty.</td></tr></tbody>
-        </table>
-        <h3 style="margin: 10px 0; color: #007bff; text-align: right;">Total PO Value: KSh <span id="po-total-val">0.00</span></h3>
-        <button onclick="submitPO()" class="btn-primary" style="width: 100%; margin-top: 10px; padding: 10px;">Issue Official PO</button>
-        <div id="po-response" style="margin-top:10px; font-weight:bold;"></div>
-      </div>
-    </div>
-
-    <div>
-      <div class="card" style="border-top: 4px solid #28a745;">
-        <h4>🚚 2. GRPO Receipt</h4>
-        <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-          <input type="text" id="grpo-po-search" placeholder="Enter PO-XXXXXX" style="flex: 2; padding: 8px;" />
-          <button class="btn-primary" onclick="fetchPOLinesForGRPO()" style="flex: 1;">Find PO</button>
-        </div>
-        <table class="cart-table">
-          <thead><tr><th>Item</th><th>Ordered</th><th>Received</th><th>Receiving Now (KG)</th></tr></thead>
-          <tbody id="grpo-lines-body"><tr><td colspan="4" style="text-align: center; color: #888;">Search PO.</td></tr></tbody>
-        </table>
-        <button onclick="submitGRPO()" class="btn-success" style="width: 100%; padding: 12px; margin-top: 15px;">Confirm Physical Receipt</button>
-        <div id="grpo-response" style="margin-top:10px; font-weight:bold;"></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ==================== TAB 3: SALES LEDGER ==================== -->
-<div id="sales-tab" class="tab-content">
-  <div class="card">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-      <h3 style="margin:0;">📄 Historical Sales Ledger</h3>
-      <button class="btn-primary" onclick="loadSalesHistory()" style="padding: 6px 12px;">Refresh List</button>
-    </div>
-    <br/>
-    <table class="data-table">
-      <thead><tr><th>Date</th><th>Sale ID</th><th>Customer</th><th>Total (KSh)</th><th>Paid</th><th>Credit Debt</th><th>Methods</th></tr></thead>
-      <tbody id="sales-table-body"><tr><td colspan="7">Loading...</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
-<!-- ==================== TAB 4: RATION FORMULATOR ==================== -->
-<div id="matrix-tab" class="tab-content">
-  <div class="card">
-    <h3>Least-Cost Feed Formulation Engine (WinFeed Logic)</h3>
-    <div class="form-group">
-      <label>Target Livestock Stage:</label>
-      <select id="species-select">
-        <option value="Dairy Cattle (High Yield 15L+)">Dairy Cattle (High Yield 15L+)</option>
-        <option value="Poultry Broiler Starter">Poultry Broiler Starter</option>
-        <option value="Pig Grower Rations">Pig Grower Rations</option>
-      </select>
-    </div>
-    <div class="form-group">
-      <label>Batch Size (KG):</label>
-      <input type="number" id="batch-kg" value="1000" />
-    </div>
-    <button class="btn-primary" onclick="runFormulation()" style="padding: 10px;">Calculate Optimal Batch Recipe</button>
-    <pre id="formulation-result" style="background:#f8f9fa; padding:10px; margin-top:10px; border-radius:4px;"></pre>
-  </div>
-</div>
-
-<!-- ==================== TAB 5: FACTORY PRODUCTION ==================== -->
-<div id="factory-tab" class="tab-content">
-  <div class="card">
-    <h3>🏭 Factory Milling & Batch Manufacturing</h3>
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-      <div style="background:#f8f9fa; padding:15px; border-radius:6px;">
-        <h4>1. Grain Milling Operation</h4>
-        <div class="form-group"><label>Input Raw Grain:</label><select id="mill-input-select"></select></div>
-        <div class="form-group"><label>Input Weight (KG):</label><input type="number" id="mill-input-qty" placeholder="1000" /></div>
-        <div class="form-group"><label>Output Milled Product:</label><select id="mill-output-select"></select></div>
-        <button class="btn-primary" onclick="alert('Milling module active.')">Process Milling Run</button>
-      </div>
-      <div style="background:#f8f9fa; padding:15px; border-radius:6px;">
-        <h4>2. Finished Feed Batch Production</h4>
-        <div class="form-group"><label>Formula Name:</label><input type="text" id="prod-formula" value="Emining Layers High-Protein" /></div>
-        <div class="form-group"><label>Target Finished Feed:</label><select id="prod-output-select"></select></div>
-        <button class="btn-success" onclick="alert('Production order queued.')">Execute Production Order</button>
-      </div>
-    </div>
-  </div>
-</div>
+<!-- INCLUDED TAB COMPONENTS (ONLY CALLED ONCE) -->
+{% include "tabs/pos_tab.html" %}
+{% include "tabs/po_tab.html" %}
+{% include "tabs/sales_tab.html" %}
+{% include "tabs/formulator_tab.html" %}
+{% include "tabs/factory_tab.html" %}
 
 <!-- ==================== SCRIPTS ==================== -->
-<script>
-  let cart = [];
-  let poCart = [];
-  let customersCache = [];
-  let searchResultsCache = [];
-  let activePOId = null;
-  let currentGRPOLines = [];
-
-  function showTab(tabId) {
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-    document.getElementById(tabId).classList.add('active');
-    event.currentTarget.classList.add('active');
-    if (tabId === 'sales-tab') loadSalesHistory();
-    if (tabId === 'po-tab') loadPODropdown();
-    if (tabId === 'factory-tab') loadFactoryDropdowns();
-  }
-
-  // --- POS CART ---
-  async function searchProducts() {
-    const q = document.getElementById('search-input').value;
-    const cat = document.getElementById('category-filter').value;
-    const res = await fetch(`/api/products/search?q=${q}&category=${cat}`);
-    searchResultsCache = await res.json();
-    const div = document.getElementById('search-results');
-    div.innerHTML = '';
-    if (searchResultsCache.length === 0) { div.innerHTML = '<div style="padding:10px;">No items match query.</div>'; return; }
-    searchResultsCache.forEach(i => {
-      div.innerHTML += `<div class="product-row">
-        <div><b>${i.name}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${i.category}</span><br/><small>Stock: ${i.available_stock_kg} kg | KSh ${i.retail_price_kg}/kg</small></div>
-        <button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button></div>`;
-    });
-  }
-
-  function addToCart(itemId) {
-    const item = searchResultsCache.find(i => i.id === itemId);
-    const existing = cart.find(c => c.id === item.id);
-    if (existing) { existing.qty += 1; } else { cart.push({ id: item.id, name: item.name, unit_type: 'KG', bag_size_kg: item.bag_size_kg, qty: 1, retail_price_kg: item.retail_price_kg }); }
-    renderCart();
-  }
-
-  function renderCart() {
-    const tbody = document.getElementById('cart-body');
-    tbody.innerHTML = '';
-    let subtotal = 0;
-    
-    if (cart.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #888;">Cart is empty.</td></tr>';
-      document.getElementById('cart-total').textContent = '0.00';
-      return;
-    }
-
-    cart.forEach((c, idx) => {
-      const lineTotal = c.qty * c.retail_price_kg;
-      subtotal += lineTotal;
-      tbody.innerHTML += `<tr>
-        <td><b>${c.name}</b></td>
-        <td>KG</td>
-        <td><input type="number" value="${c.qty}" step="any" min="0.1" onchange="cart[${idx}].qty=Math.max(0.1, parseFloat(this.value)); renderCart()" style="width: 60px; text-align: center;" /></td>
-        <td>${c.retail_price_kg.toFixed(2)}</td><td><b>${lineTotal.toFixed(2)}</b></td>
-        <td><button class="btn-sm btn-danger" onclick="cart.splice(${idx}, 1); renderCart()">x</button></td>
-      </tr>`;
-    });
-
-    const disc = parseFloat(document.getElementById('discount-val').value) || 0;
-    document.getElementById('cart-total').textContent = Math.max(0, subtotal - disc).toFixed(2);
-  }
-  function clearCart() { cart = []; renderCart(); }
-
-  // --- CHECKOUT ---
-  function addPaymentLine() { 
-      document.getElementById('payment-lines').innerHTML += `<div class="split-row"><select class="p-method" style="flex: 1;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Amount" style="flex: 1; padding: 4px;" /><input type="text" class="p-ref" placeholder="Ref" style="flex: 1; padding: 4px;" /></div>`; 
-  }
-
-  async function completeCheckout() {
-    if (cart.length === 0) return alert('Cart is empty!');
-    const custId = document.getElementById('customer-select').value;
-    let payments = [];
-    let isValid = true;
-
-    document.querySelectorAll('.p-method').forEach((m, i) => { 
-        const amtStr = document.querySelectorAll('.p-amount')[i].value; 
-        if(amtStr) {
-            const amt = parseFloat(amtStr);
-            if (amt < 0) isValid = false;
-            payments.push({ payment_method: m.value, amount: amt, reference: document.querySelectorAll('.p-ref')[i].value }); 
-        }
-    });
-
-    if (!isValid) return alert("Negative payments are strictly prohibited.");
-    if (payments.length === 0) payments.push({ payment_method: 'CASH', amount: parseFloat(document.getElementById('cart-total').textContent) });
-
-    const discAmount = parseFloat(document.getElementById('discount-val').value || 0);
-    if (discAmount < 0) return alert("Negative discounts are strictly prohibited.");
-
-    try {
-        const res = await fetch('/api/pos/checkout', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customer_id: custId ? parseInt(custId) : null, discount_amount: discAmount, cart: cart.map(c => ({ ingredient_id: c.id, unit_type: c.unit_type, qty: c.qty })), payments: payments })
-        });
-        const data = await res.json();
-        
-        if (data.status === 'success') { 
-            renderReceipt(data.data); clearCart(); searchProducts(); await loadCustomers(); 
-        } else { alert('Sale Failed: ' + data.message); }
-    } catch(err) { alert("System Error: " + err.message); }
-  }
-
-  function renderReceipt(data) {
-    document.getElementById('r-date').textContent = new Date().toLocaleString(); document.getElementById('r-id').textContent = data.sale_id; 
-    const cSel = document.getElementById('customer-select');
-    document.getElementById('r-cust').textContent = cSel.options[cSel.selectedIndex].text; 
-    document.getElementById('r-total').textContent = data.total_amount.toFixed(2); 
-    document.getElementById('r-lines').innerHTML = ''; 
-    data.items.forEach(i => { document.getElementById('r-lines').innerHTML += `<div style="display:flex; justify-content:space-between;"><span>${i.name} (${i.qty_entered} ${i.unit})</span><span>KSh ${i.subtotal.toFixed(2)}</span></div>`; });
-  }
-
-  // --- CUSTOMERS ---
-  async function loadCustomers() {
-    const res = await fetch('/api/customers');
-    customersCache = await res.json();
-    const sel = document.getElementById('customer-select'); const currentSelVal = sel.value;
-    sel.innerHTML = '<option value="">CASH CUSTOMER (Walk-In)</option>';
-    customersCache.forEach(c => { sel.innerHTML += `<option value="${c.id}">${c.name} (${c.phone}) - Debt: KSh ${c.balance}</option>`; });
-    sel.value = currentSelVal; updateCustomerDetails();
-  }
-  function updateCustomerDetails() {
-    const selId = document.getElementById('customer-select').value;
-    const card = document.getElementById('customer-credit-card');
-    if (!selId) { card.style.display = 'none'; return; }
-    const cust = customersCache.find(c => c.id == selId);
-    if (cust) {
-      const available = cust.credit_limit - cust.balance;
-      document.getElementById('c-limit').textContent = cust.credit_limit.toFixed(2);
-      document.getElementById('c-debt').textContent = cust.balance.toFixed(2);
-      document.getElementById('c-avail').textContent = available.toFixed(2);
-      card.style.display = 'block';
-    }
-  }
-
-  // --- PO SYSTEM ---
-  async function loadPODropdown() {
-    const items = await (await fetch('/api/inventory')).json();
-    const sel = document.getElementById('po-ingredient-select');
-    sel.innerHTML = '';
-    items.forEach(i => { sel.innerHTML += `<option value="${i.id}" data-cost="${i.cost_per_kg}">${i.name}</option>`; });
-
-    const suppliers = await (await fetch('/api/suppliers')).json();
-    const supSel = document.getElementById('po-supplier-select');
-    supSel.innerHTML = '';
-    suppliers.forEach(s => supSel.innerHTML += `<option value="${s.id}">${s.name}</option>`);
-
-    const locations = await (await fetch('/api/locations')).json();
-    const locSel = document.getElementById('po-location-select');
-    locSel.innerHTML = '';
-    locations.forEach(l => locSel.innerHTML += `<option value="${l.id}">${l.name}</option>`);
-
-    sel.addEventListener('change', (e) => { document.getElementById('po-cost').value = e.target.options[e.target.selectedIndex].getAttribute('data-cost'); });
-    if(sel.options.length > 0) document.getElementById('po-cost').value = sel.options[0].getAttribute('data-cost');
-  }
-
-  function addToPOCart() {
-    const sel = document.getElementById('po-ingredient-select');
-    if (sel.selectedIndex === -1) return alert("Select an item.");
-    const qty = parseFloat(document.getElementById('po-qty').value);
-    const cost = parseFloat(document.getElementById('po-cost').value);
-    if (!qty || qty <= 0 || cost < 0 || isNaN(cost)) return alert("Valid quantity and cost required.");
-
-    poCart.push({ ingredient_id: parseInt(sel.value), name: sel.options[sel.selectedIndex].text.split(' (')[0], qty_kg: qty, unit_cost: cost });
-    document.getElementById('po-qty').value = ''; renderPOCart();
-  }
-
-  function renderPOCart() {
-    const tbody = document.getElementById('po-cart-body');
-    const totalEl = document.getElementById('po-total-val');
-    tbody.innerHTML = '';
-    let total = 0;
-    if (poCart.length === 0) { tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #888;">Cart is empty.</td></tr>'; if(totalEl) totalEl.textContent='0.00'; return; }
-
-    poCart.forEach((item, idx) => {
-      const subtotal = item.qty_kg * item.unit_cost; total += subtotal;
-      tbody.innerHTML += `<tr><td><b>${item.name}</b></td><td>${item.qty_kg}</td><td>${item.unit_cost.toFixed(2)}</td><td><b>${subtotal.toFixed(2)}</b></td><td><button class="btn-sm btn-danger" onclick="poCart.splice(${idx},1); renderPOCart()">x</button></td></tr>`;
-    });
-    if(totalEl) totalEl.textContent = total.toFixed(2);
-  }
-
-  async function submitPO() {
-    if (poCart.length === 0) return alert("Cart is empty.");
-    try {
-      const res = await fetch('/api/po/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supplier_id: parseInt(document.getElementById('po-supplier-select').value), location_id: parseInt(document.getElementById('po-location-select').value), items: poCart }) });
-      const data = await res.json();
-      if (data.status === 'success') { document.getElementById('po-response').innerHTML = `<span style="color:green;">✓ PO ${data.po_no} Issued!</span>`; poCart = []; renderPOCart(); } 
-      else { document.getElementById('po-response').innerHTML = `<span style="color:red;">Error: ${data.message}</span>`; }
-    } catch (err) { document.getElementById('po-response').innerHTML = `<span style="color:red;">System Error: ${err.message}</span>`; }
-  }
-
-  // --- GRPO SYSTEM ---
-  async function fetchPOLinesForGRPO() {
-    const search = document.getElementById('grpo-po-search').value.trim();
-    if (!search) return alert("Enter PO Number.");
-    try {
-      const res = await fetch(`/api/po/details?po_no=${search}`);
-      const data = await res.json();
-      if (data.status === 'error') return alert(data.message);
-      activePOId = data.po_id; currentGRPOLines = data.lines;
-      const tbody = document.getElementById('grpo-lines-body');
-      tbody.innerHTML = '';
-      currentGRPOLines.forEach((line, idx) => {
-        tbody.innerHTML += `<tr><td>${line.ingredient_name}</td><td>${line.ordered_qty}</td><td>${line.received_qty}</td><td><input type="number" id="grpo-qty-${idx}" max="${line.ordered_qty - line.received_qty}" min="0" value="${Math.max(0, line.ordered_qty - line.received_qty)}" style="width: 80px; padding: 4px;" /></td></tr>`;
-      });
-    } catch (err) { alert("System Error."); }
-  }
-
-  async function submitGRPO() {
-    if (!activePOId || currentGRPOLines.length === 0) return alert("No active PO.");
-    const received = currentGRPOLines.map((line, idx) => ({ line_id: line.line_id, qty_kg: parseFloat(document.getElementById(`grpo-qty-${idx}`).value) || 0 })).filter(item => item.qty_kg > 0);
-    if (received.length === 0) return alert("Enter quantities > 0.");
-    try {
-      const res = await fetch(`/api/po/${activePOId}/grpo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ received_items: received }) });
-      const data = await res.json();
-      if (data.status === 'success') { document.getElementById('grpo-response').innerHTML = `<span style="color:#198754;">✓ GRPO Received!</span>`; document.getElementById('grpo-lines-body').innerHTML = '<tr><td colspan="4" style="text-align: center;">Search PO.</td></tr>'; activePOId = null; currentGRPOLines = []; } 
-      else { document.getElementById('grpo-response').innerHTML = `<span style="color:red;">Error: ${data.message}</span>`; }
-    } catch (err) { alert("System Error."); }
-  }
-
-  // --- LEDGER ---
-  async function loadSalesHistory() {
-    const res = await fetch('/api/sales-history'); 
-    const history = await res.json();
-    const tbody = document.getElementById('sales-table-body'); 
-    tbody.innerHTML = '';
-    if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="7">No sales logged.</td></tr>'; return; }
-    history.forEach(s => {
-      tbody.innerHTML += `<tr><td><small>${s.created_at}</small></td><td><b>${s.sale_id}</b></td><td>${s.customer_name}</td><td><b>KSh ${s.total_amount.toFixed(2)}</b></td><td>KSh ${s.paid_amount.toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+s.credit_amount.toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${s.payments.map(p => `${p.method}: KSh${p.amount.toFixed(2)}`).join(', ') || 'CASH'}</small></td></tr>`;
-    });
-  }
-
-  async function runFormulation() {
-    const res = await fetch('/api/formulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ species: document.getElementById('species-select').value, target_batch_kg: document.getElementById('batch-kg').value }) });
-    document.getElementById('formulation-result').textContent = JSON.stringify(await res.json(), null, 2);
-  }
-
-  async function loadFactoryDropdowns() {
-    const items = await (await fetch('/api/inventory')).json();
-    const millIn = document.getElementById('mill-input-select'), millOut = document.getElementById('mill-output-select'), prodOut = document.getElementById('prod-output-select');
-    if (!millIn) return;
-    millIn.innerHTML = ''; millOut.innerHTML = ''; prodOut.innerHTML = '';
-    items.forEach(i => {
-      const opt = `<option value="${i.id}">${i.name} (${i.stock_quantity_kg}kg available)</option>`;
-      if (i.category.includes('Raw - Energy')) millIn.innerHTML += opt;
-      if (i.category.includes('Raw') || i.category.includes('Finished')) millOut.innerHTML += opt;
-      if (i.category === 'Finished Feed') prodOut.innerHTML += opt;
-    });
-  }
-
-  // Init
-  loadCustomers();
-  searchProducts();
-</script>
+<<script src="/static/js/main.js?v=5"></script>
+<script src="/static/js/pos.js?v=5"></script>
+<script src="/static/js/purchasing.js?v=5"></script>
+<script src="/static/js/factory.js?v=5"></script>
 {% endblock %}

@@ -1,8 +1,7 @@
-import os, random, uuid
+import os
 from app import app
 from services.db import db
-from services.models import FeedIngredient, Customer, Location, Supplier, Account, PurchaseOrderHeader, PurchaseOrderLine, StockMovement, TillSession, AnimalRequirement
-from services.pos_service import process_full_pos_checkout, post_gl_entry
+from services.models import FeedIngredient, Customer, Location, Supplier, Account, PurchaseOrderHeader, PurchaseOrderLine, AnimalRequirement, TillSession
 
 def stress_test_seed():
     with app.app_context():
@@ -29,9 +28,9 @@ def stress_test_seed():
 
         print("--- 3. Inventory & Formulator Data ---")
         items = [
-            FeedIngredient(name="Layer Mash", category="Finished Feed", cost_per_kg=55.0, stock_quantity_kg=20000.0, retail_price_per_kg=65.0, crude_protein_pct=16.0),
-            FeedIngredient(name="Maize Grain", category="Raw - Energy", cost_per_kg=35.0, stock_quantity_kg=50000.0, retail_price_per_kg=40.0, metabolizable_energy_mcal=3.3),
-            FeedIngredient(name="Ochonga (Fishmeal)", category="Raw - Protein", cost_per_kg=180.0, stock_quantity_kg=5000.0, retail_price_per_kg=200.0, crude_protein_pct=55.0)
+            FeedIngredient(name="Layer Mash", category="Finished Feed", cost_per_kg=55.0, stock_quantity_kg=20000.0, retail_price_per_kg=65.0, crude_protein_pct=16.0, bag_size_kg=70.0),
+            FeedIngredient(name="Maize Grain", category="Raw - Energy", cost_per_kg=35.0, stock_quantity_kg=50000.0, retail_price_per_kg=40.0, metabolizable_energy_mcal=3.3, bag_size_kg=90.0),
+            FeedIngredient(name="Ochonga (Fishmeal)", category="Raw - Protein", cost_per_kg=180.0, stock_quantity_kg=5000.0, retail_price_per_kg=200.0, crude_protein_pct=55.0, bag_size_kg=50.0)
         ]
         db.session.add_all(items)
         
@@ -41,40 +40,12 @@ def stress_test_seed():
         ])
         db.session.commit()
 
-        print("--- 4. Customers & POS Stress Test ---")
-        customers = [Customer(name=f"Test Cust {i}", phone=f"0711{i}{i}{i}{i}{i}{i}", credit_limit=50000.0) for i in range(1, 6)]
+        print("--- 4. Customers ---")
+        customers = [Customer(name=f"Test Cust {i}", phone=f"0711{i}{i}{i}{i}{i}{i}", location="Baringo", credit_limit=50000.0) for i in range(1, 6)]
         db.session.add_all(customers)
         db.session.commit()
 
         db.session.add(TillSession(cashier_name="admin", opening_cash=5000.0))
-        db.session.commit()
-
-        payment_methods = ['CASH', 'MPESA', 'BANK', 'CREDIT']
-        for i in range(20):
-            cust = random.choice(customers)
-            item = random.choice(items)
-            method = random.choice(payment_methods)
-            qty = random.randint(1, 5)
-            val = qty * item.retail_price_per_kg
-            
-            if method == 'CREDIT' and (cust.current_balance + val) > cust.credit_limit: method = 'CASH'
-
-            payload = {
-                "customer_id": cust.id, "discount_amount": 0,
-                "cart": [{"ingredient_id": item.id, "qty": qty, "unit_type": "KG", "bag_size_kg": 1.0}],
-                "payments": [{"payment_method": method, "amount": val, "reference": f"REF-{i}"}]
-            }
-            try:
-                process_full_pos_checkout(payload)
-            except Exception as e:
-                pass
-
-        print("--- 5. Purchase Orders ---")
-        po = PurchaseOrderHeader(po_no="PO-TEST-1", supplier_id=suppliers[0].id, location_id=factory.id, status='ISSUED', total_amount=175000.0)
-        db.session.add(po)
-        db.session.flush()
-        db.session.add(PurchaseOrderLine(po_id=po.id, ingredient_id=items[1].id, ordered_qty_kg=5000, unit_cost=35.0, subtotal=175000.0))
-        suppliers[0].balance_due += 175000.0
         db.session.commit()
 
         print("--- Full ERP System Seed Complete! ---")

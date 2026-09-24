@@ -109,12 +109,13 @@ class Customer(db.Model):
     __tablename__ = 'customers'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    phone = db.Column(db.String(30))
-    location = db.Column(db.String(100))
+    phone = db.Column(db.String(20), nullable=True)
+    location = db.Column(db.String(100), nullable=True) # <--- THIS WAS MISSING
     customer_type = db.Column(db.String(20), default='RETAIL')
-    credit_limit = db.Column(db.Float, default=0.0)
     current_balance = db.Column(db.Float, default=0.0)
-
+    credit_limit = db.Column(db.Float, default=0.0)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    
 class OrderHeader(db.Model):
     __tablename__ = 'order_headers'
     id = db.Column(db.Integer, primary_key=True)

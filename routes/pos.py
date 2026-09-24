@@ -31,12 +31,12 @@ def get_inventory():
 def manage_customers():
     if request.method == 'POST':
         data = request.get_json()
-        cust = Customer(name=data['name'], phone=data.get('phone'), location=data.get('location'), customer_type=data.get('customer_type', 'RETAIL'), credit_limit=float(data.get('credit_limit', 0.0)))
+        cust = Customer(name=data['name'], phone=data.get('phone'), location=data.get('location', ''), customer_type=data.get('customer_type', 'RETAIL'), credit_limit=float(data.get('credit_limit', 0.0)))
         db.session.add(cust)
         db.session.commit()
         return jsonify({'status': 'success', 'customer_id': cust.id})
-    return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone, 'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit} for c in Customer.query.all()])
-
+    # Notice we added 'location' to the output here:
+    return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone, 'location': c.location or 'Unknown', 'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit} for c in Customer.query.all()])
 @pos_bp.route('/api/customers/<int:customer_id>/repay', methods=['POST'])
 def repay_customer_debt(customer_id):
     try:
