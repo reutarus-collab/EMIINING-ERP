@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EMINING ERP - Feed PWA</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#007bff">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background-color: #f4f6f9; color: #333; }
+    header { background: #212529; color: #fff; padding: 1rem; text-align: center; display: flex; justify-content: space-between; align-items: center; }
+    nav a { color: #fff; margin: 0 10px; text-decoration: none; font-weight: bold; }
+    .container { padding: 20px; max-width: 1200px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
+    .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; }
+    .online { background: #28a745; color: #fff; }
+    .offline { background: #dc3545; color: #fff; }
+    button { background: #007bff; color: #fff; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #0056b3; }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>EMINING Feed ERP System</h2>
+    <nav>
+      <a href="/">Dashboard</a>
+      <span id="network-status" class="status-badge online">ONLINE</span>
+    </nav>
+  </header>
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+  <script src="/static/js/outbox.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+    function updateStatus() {
+      const badge = document.getElementById('network-status');
+      if (navigator.onLine) {
+        badge.textContent = 'ONLINE';
+        badge.className = 'status-badge online';
+      } else {
+        badge.textContent = 'OFFLINE';
+        badge.className = 'status-badge offline';
+      }
+    }
+    window.addEventListener('online', updateStatus);
+    window.addEventListener('offline', updateStatus);
+    updateStatus();
+  </script>
+</body>
+</html>

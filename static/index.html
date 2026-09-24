@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Emining ERP</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <section id="login-screen" class="screen">
+    <div class="login-card">
+      <h1>Emining ERP</h1>
+      <p class="sub">Shop login</p>
+      <input id="username" placeholder="Username" autocomplete="username">
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+      <button id="login-btn" class="btn-primary">Log in</button>
+      <p id="login-error" class="error"></p>
+    </div>
+  </section>
+
+  <section id="app-screen" class="screen" style="display:none">
+    <header>
+      <div>
+        <div id="location-name" class="location-name"></div>
+        <div id="sync-status" class="sync-status">checking…</div>
+      </div>
+      <button id="logout-btn" class="btn-ghost">Log out</button>
+    </header>
+
+    <main>
+      <h2>Log a sale</h2>
+      <form id="sale-form">
+        <select id="item-select" required></select>
+        <div class="qty-row">
+          <input id="qty" type="number" inputmode="decimal" step="0.1" min="0" placeholder="Quantity" required>
+          <select id="unit-select">
+            <option value="bag">bags</option>
+            <option value="kg">kg</option>
+          </select>
+        </div>
+        <button type="submit" class="btn-primary">Log sale</button>
+      </form>
+
+      <button id="sync-btn" class="btn-secondary">Sync now</button>
+
+      <h3>Pending — not yet synced</h3>
+      <ul id="pending-list" class="list"></ul>
+
+      <h3>Stock at this shop</h3>
+      <ul id="stock-list" class="list"></ul>
+    </main>
+  </section>
+
+<script src="app.js"></script>
+</body>
+</html>

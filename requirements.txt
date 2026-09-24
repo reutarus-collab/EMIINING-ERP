@@ -1,0 +1,12 @@
+Flask
+Flask-SQLAlchemy
+Flask-WTF
+WTForms
+scipy
+numpy
+stripe
+alembic
+psycopg2-binary
+python-dotenv
+gunicorn
+requests
