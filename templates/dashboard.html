@@ -46,7 +46,7 @@ select {
 
 <div class="nav-tabs">
   <button class="tab-btn active" onclick="showTab('pos-tab')">🛒 Point of Sale (POS)</button>
-  <button class="tab-btn" onclick="showTab('po-tab')">📦 Purchase Orders</button>
+<button class="tab-btn" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">📦 Purchase Orders</button>
   <button class="tab-btn" onclick="showTab('sales-tab')">📄 Sales Ledger</button>
   <button class="tab-btn" onclick="showTab('matrix-tab')">🧮 Ration Formulator</button>
   <button class="tab-btn" onclick="showTab('factory-tab')">🏭 Factory & Milling</button>
@@ -60,8 +60,8 @@ select {
 {% include "tabs/factory_tab.html" %}
 
 <!-- ==================== SCRIPTS ==================== -->
-<<script src="/static/js/main.js?v=5"></script>
-<script src="/static/js/pos.js?v=5"></script>
-<script src="/static/js/purchasing.js?v=5"></script>
-<script src="/static/js/factory.js?v=5"></script>
+<script src="/static/js/main.js?v=7"></script>
+<script src="/static/js/pos.js?v=7"></script>
+<script src="/static/js/purchasing.js?v=7"></script>
+<script src="/static/js/factory.js?v=7"></script>
 {% endblock %}

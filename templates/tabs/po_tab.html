@@ -1,0 +1,567 @@
+<div id="po-tab" class="tab-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h3>Purchase Orders & Goods Receiving</h3>
+        <button class="btn btn-primary" onclick="document.getElementById('create-po-modal').style.display='block'">+ New Purchase Order</button>
+    </div>
+
+    <!-- Active PO Table -->
+    <div class="card">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>PO Number</th>
+                    <th>Date</th>
+                    <th>Supplier</th>
+                    <th>Total Amount</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody id="po-list-body"></tbody>
+        </table>
+    </div>
+
+    <!-- ITEM MASTER SECTION -->
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 40px; margin-bottom: 20px;">
+        <h3>Item Master (Database)</h3>
+        <button class="btn btn-info" onclick="document.getElementById('create-item-modal').style.display='block'">+ Add New Item</button>
+    </div>
+
+    <div class="card">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Item Name</th>
+                    <th>Category</th>
+                    <th>Bag Size</th>
+                    <th>Current Stock</th>
+                    <th>Avg Cost (KSh)</th>
+                </tr>
+            </thead>
+            <tbody id="item-master-body"></tbody>
+        </table>
+    </div>
+
+    <!-- CREATE PO MODAL -->
+    <div id="create-po-modal" style="display:none; position:fixed; top:50px; left:50%; transform:translateX(-50%); width:800px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1000;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+            <h3>Create Purchase Order</h3>
+            <button onclick="document.getElementById('create-po-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <div style="margin-bottom:15px; display:flex; gap:10px;">
+            <select id="po-supplier" style="flex:1; padding:8px;"></select>
+            <button type="button" class="btn btn-info" onclick="document.getElementById('create-supplier-modal').style.display='block'">+ New</button>
+        </div>
+        <div style="display:flex; gap:10px; margin-bottom:20px; background:#f8f9fa; padding:15px; border-radius:5px;">
+            <select id="po-item-select" style="flex:2;"></select>
+            <input type="number" id="po-qty" placeholder="Qty (kg)" style="flex:1;">
+            <input type="number" id="po-cost" placeholder="Unit Cost" style="flex:1;">
+      <button type="button" class="btn btn-secondary" onclick="addToPOCart()">Add Item</button>
+        </div>
+        <table class="cart-table">
+            <thead><tr><th>Item</th><th>Qty</th><th>Unit Cost</th><th>Subtotal</th><th></th></tr></thead>
+            <tbody id="po-cart-body"></tbody>
+        </table>
+        <div style="text-align:right; font-size:18px; margin-bottom:20px; margin-top: 15px;">
+            Total: <b>KSh <span id="po-cart-total">0.00</span></b>
+        </div>
+        <<div style="text-align:right; margin-top: 15px;">
+            <button type="button" class="btn btn-secondary" style="margin-right: 10px;" onclick="document.getElementById('create-po-modal').style.display='none'">Close</button>
+            <button type="button" class="btn btn-primary" onclick="submitPO()">Commit Purchase Order</button>
+        </div>
+    </div>
+	
+
+    <!-- CREATE NEW ITEM MODAL -->
+    <div id="create-item-modal" style="display:none; position:fixed; top:100px; left:50%; transform:translateX(-50%); width:500px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1100;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+            <h3>Add New Inventory Item</h3>
+            <button onclick="document.getElementById('create-item-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <input type="text" id="new-item-name" placeholder="Item Name (e.g., Sunflower Cake)" style="width:100%; margin-bottom:10px; padding: 8px;">
+        <select id="new-item-cat" style="width:100%; margin-bottom:10px; padding: 8px;">
+            <option value="Raw - Energy">Raw - Energy</option>
+            <option value="Raw - Protein">Raw - Protein</option>
+            <option value="Raw - Mineral">Raw - Mineral/Additive</option>
+            <option value="Packaging">Packaging Materials</option>
+            <option value="Finished Feed">Finished Feed</option>
+        </select>
+        <div style="display:flex; gap:10px; margin-bottom:20px;">
+            <input type="number" id="new-item-bag" placeholder="Bag Size (kg)" style="flex:1; padding: 8px;">
+            <input type="number" id="new-item-cost" placeholder="Est. Cost per kg" style="flex:1; padding: 8px;">
+        </div>
+        <div style="text-align:right; margin-top: 15px;">
+            <button type="button" class="btn btn-secondary" style="margin-right: 10px;" onclick="document.getElementById('create-item-modal').style.display='none'">Close</button>
+            <button type="button" class="btn btn-primary" onclick="submitNewItem()">Save Item</button>
+        </div>
+    </div>
+<!-- RECEIVE GRN MODAL -->
+    <div id="receive-grn-modal" style="display:none; position:fixed; top:50px; left:50%; transform:translateX(-50%); width:800px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1200;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
+            <h3>Receive Goods: PO <span id="grn-po-number"></span></h3>
+            <button onclick="document.getElementById('receive-grn-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <div style="display:flex; gap:10px; margin-bottom:15px;">
+            <input type="text" id="grn-delivery-note" placeholder="Delivery Note No." style="flex:1; padding:8px;">
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr><th>Item Details</th><th>Receive Qty</th><th>Reject Qty</th><th>Accepted</th><th>Batch/Lot</th></tr>
+            </thead>
+            <tbody id="grn-lines-body"></tbody>
+        </table>
+       <div style="text-align:right; margin-top:20px;">
+            <button type="button" class="btn btn-secondary" style="margin-right: 10px;" onclick="document.getElementById('receive-grn-modal').style.display='none'">Cancel</button>
+            <button type="button" class="btn btn-success" onclick="submitGRN()">Post GRN & Update Stock</button>
+        </div>
+    </div>
+
+    <!-- VIEW PO MODAL -->
+    <div id="view-po-modal" style="display:none; position:fixed; top:50px; left:50%; transform:translateX(-50%); width:700px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1300;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+            <h3 style="margin:0;">Purchase Order Details</h3>
+            <button type="button" onclick="document.getElementById('view-po-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <div style="background:#f8f9fa; padding:15px; border-radius:5px; margin-bottom:15px; display:flex; justify-content:space-between; font-size:14px;">
+            <div>
+                <b>PO Number:</b> <span id="v-po-no"></span><br>
+                <b>Supplier:</b> <span id="v-po-sup"></span><br>
+                <b>Date:</b> <span id="v-po-date"></span>
+            </div>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr><th>Item Description</th><th>Qty Ordered (kg)</th><th>Qty Received (kg)</th><th>Pending (kg)</th></tr>
+            </thead>
+            <tbody id="view-po-lines"></tbody>
+        </table>
+		<div style="text-align:right; margin-top:20px;">
+            <button type="button" class="btn btn-secondary" onclick="document.getElementById('view-po-modal').style.display='none'">Close</button>
+        </div>
+    </div>
+<!-- CREATE SUPPLIER MODAL -->
+    <div id="create-supplier-modal" style="display:none; position:fixed; top:100px; left:50%; transform:translateX(-50%); width:400px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1400;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
+            <h3 style="margin:0;">Add New Supplier</h3>
+            <button type="button" onclick="document.getElementById('create-supplier-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <input type="text" id="new-supplier-name" placeholder="Supplier Name (e.g., Kampi Feeds)" style="width:100%; margin-bottom:15px; padding:8px;">
+        <div style="text-align:right;">
+            <button type="button" class="btn btn-secondary" style="margin-right:10px;" onclick="document.getElementById('create-supplier-modal').style.display='none'">Cancel</button>
+            <button type="button" class="btn btn-primary" onclick="submitNewSupplier()">Save Supplier</button>
+        </div>
+    </div>	
+<!-- INLINE JAVASCRIPT: Full Cart & GRN Logic -->
+<script>
+    let po_suppliersList = [];
+    let po_inventoryList = [];
+    let po_currentCart = [];
+    let po_orderHistory = [];
+    let po_activeReceiving = null;
+	let poCart = [];
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initPOModule();
+    });
+
+    async function initPOModule() {
+        await po_loadSuppliers();
+        await po_loadInventory();
+        await po_loadHistory();
+    }
+
+    async function po_loadSuppliers() {
+        try {
+            const res = await fetch('/api/suppliers');
+            po_suppliersList = await res.json();
+            const sel = document.getElementById('po-supplier');
+            if(!sel) return;
+            sel.innerHTML = '<option value="">-- Select Supplier --</option>';
+            po_suppliersList.forEach(s => {
+                sel.innerHTML += `<option value="${s.id}">${s.name}</option>`;
+            });
+        } catch (e) { console.error("Supplier Load Error", e); }
+    }
+
+    async function po_loadInventory() {
+        try {
+            const res = await fetch('/api/po/inventory');
+            po_inventoryList = await res.json();
+            
+            const sel = document.getElementById('po-item-select');
+            if(!sel) return;
+            sel.innerHTML = '<option value="">-- Select Item to Order --</option>';
+            
+            const tbody = document.getElementById('item-master-body');
+            if(tbody) tbody.innerHTML = '';
+            
+            po_inventoryList.forEach(i => {
+                sel.innerHTML += `<option value="${i.id}" data-cost="${i.cost_per_kg}">${i.name} (Stock: ${i.stock_quantity_kg.toFixed(1)}kg)</option>`;
+                
+                if(tbody) {
+                    let stockColor = i.stock_quantity_kg > 0 ? 'green' : 'red';
+                    tbody.innerHTML += `
+                        <tr>
+                            <td><b>${i.name}</b></td>
+                            <td>${i.category}</td>
+                            <td>${i.bag_size_kg || '-'} kg</td>
+                            <td style="font-weight:bold; color:${stockColor};">${i.stock_quantity_kg.toFixed(1)} kg</td>
+                            <td>KSh ${i.cost_per_kg.toFixed(2)}</td>
+                        </tr>
+                    `;
+                }
+            });
+
+            sel.onchange = function() {
+                const selectedOpt = sel.options[sel.selectedIndex];
+                const cost = selectedOpt.getAttribute('data-cost');
+                if (cost) {
+                    document.getElementById('po-cost').value = cost;
+                }
+            };
+        } catch (e) { console.error("Inventory Load Error", e); }
+    }
+
+ async function po_loadHistory() {
+        try {
+            const res = await fetch('/api/po');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            
+            po_orderHistory = await res.json();
+            const tbody = document.getElementById('po-list-body');
+            if(!tbody) return;
+            tbody.innerHTML = '';
+            
+            if(po_orderHistory.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No POs found.</td></tr>';
+                return;
+            }
+            
+            po_orderHistory.forEach(po => {
+                // Safely handle casing differences
+                const statusStr = (po.status || 'ISSUED').toUpperCase();
+                
+                let actionBtn = `<button type="button" class="btn-sm btn-info" style="margin-right: 5px;" onclick="viewPO(${po.id})">View</button>`;
+                
+                // Show GRN as long as it's NOT fully received or closed
+                if(statusStr !== 'FULLY_RECEIVED' && statusStr !== 'CLOSED') {
+                    actionBtn += `<button type="button" class="btn-sm btn-success" onclick="openReceiveGRN(${po.id})">Receive GRN</button>`;
+                } else {
+                    actionBtn += `<span style="color:gray; margin-left: 5px;">Closed</span>`;
+                }
+
+                // Dynamic coloring for status
+                const statusColor = statusStr === 'FULLY_RECEIVED' ? 'green' : (statusStr === 'ISSUED' ? 'blue' : 'orange');
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td><b>${po.po_number}</b></td>
+                        <td>${po.created_at}</td>
+                        <td>${po.supplier_name}</td>
+                        <td>KSh ${po.total_amount.toFixed(2)}</td>
+                        <td><span style="font-weight:bold; color:${statusColor};">${statusStr}</span></td>
+                        <td>${actionBtn}</td>
+                    </tr>
+                `;
+            });
+        } catch (e) { 
+            console.error("History Load Error", e); 
+            alert("Failed to load PO history."); 
+        }
+    }
+
+async function viewPO(poId) {
+        const po = po_orderHistory.find(p => p.id == poId);
+        if(!po) return alert("PO not found in local history.");
+
+        // Safe DOM updates
+        const noEl = document.getElementById('v-po-no');
+        if (noEl) noEl.innerText = po.po_number;
+        const supEl = document.getElementById('v-po-sup');
+        if (supEl) supEl.innerText = po.supplier_name;
+        const dateEl = document.getElementById('v-po-date');
+        if (dateEl) dateEl.innerText = po.created_at;
+
+        try {
+            const res = await fetch(`/api/po/${poId}/lines`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            
+            const tbody = document.getElementById('view-po-lines');
+            if (!tbody) return console.error("View modal tbody missing.");
+            tbody.innerHTML = '';
+            
+            if (data.lines && data.lines.length > 0) {
+                data.lines.forEach(line => {
+                    const pending = line.qty_ordered - line.qty_received_so_far;
+                    tbody.innerHTML += `
+                        <tr>
+                            <td><b>${line.item_name}</b></td>
+                            <td>${line.qty_ordered}</td>
+                            <td><span style="color:${line.qty_received_so_far > 0 ? 'green' : 'black'}; font-weight:bold;">${line.qty_received_so_far}</span></td>
+                            <td><span style="color:${pending > 0 ? 'orange' : 'gray'};">${Math.max(0, pending)}</span></td>
+                        </tr>
+                    `;
+                });
+            } else {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;">No items found.</td></tr>';
+            }
+            
+            document.getElementById('view-po-modal').style.display = 'block';
+        } catch (err) {
+            console.error(err);
+            alert("Error loading PO lines from server.");
+        }
+    }
+
+    async function openReceiveGRN(poId) {
+        const po = po_orderHistory.find(p => p.id == poId);
+        if(!po) return alert("Could not find PO reference in local history.");
+        
+        try {
+            const res = await fetch(`/api/po/${poId}/lines`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const poData = await res.json();
+            
+            po_activeReceiving = poData;
+            
+            const titleEl = document.getElementById('grn-po-number');
+            if (titleEl) titleEl.innerText = po.po_number;
+            
+            const tbody = document.getElementById('grn-lines-body');
+            if (!tbody) return console.error("GRN modal tbody missing.");
+            tbody.innerHTML = '';
+            
+            poData.lines.forEach((line, idx) => {
+                const remaining = line.qty_ordered - line.qty_received_so_far;
+                if (remaining <= 0) return;
+
+                tbody.innerHTML += `
+                    <tr data-polineid="${line.id}" data-ordered="${remaining}">
+                        <td>${line.item_name}<br/><small style="color:#666;">Ordered: ${line.qty_ordered} | Pending: ${remaining}</small></td>
+                        <td><input type="number" class="grn-recv-qty" max="${remaining}" placeholder="Qty" style="width:90px;" oninput="calcAccepted(${idx})"></td>
+                        <td><input type="number" class="grn-rej-qty" value="0" min="0" style="width:90px;" oninput="calcAccepted(${idx})"></td>
+                        <td><span class="grn-acc-qty" style="font-weight:bold; color:green; font-size:16px;">0</span></td>
+                        <td><input type="text" class="grn-batch" placeholder="Lot/Batch" style="width:110px;"></td>
+                    </tr>
+                `;
+            });
+            
+            document.getElementById('receive-grn-modal').style.display = 'block';
+        } catch (err) {
+            console.error(err);
+            alert("Error loading PO details.");
+        }
+    }
+    // --- CART LOGIC ---
+function addToPOCart() {
+        const sel = document.getElementById('po-item-select');
+        if (!sel || sel.selectedIndex <= 0 || !sel.value) return alert("Please select an item.");
+        
+        const qty = parseFloat(document.getElementById('po-qty').value) || 1;
+        const cost = parseFloat(document.getElementById('po-cost').value) || 0;
+        
+        if (qty <= 0 || cost < 0) return alert("Please enter a valid positive quantity and cost.");
+
+        const itemName = sel.options[sel.selectedIndex].text.split(' (')[0];
+        
+        po_currentCart.push({ 
+            ingredient_id: parseInt(sel.value), 
+            name: itemName, 
+            qty: qty,       // <--- FIX: Prevents "Error: 'qty'" on the backend
+            qty_kg: qty,    // <--- Failsafe for other backend versions
+            unit_cost: cost 
+        });
+        
+        document.getElementById('po-qty').value = ''; 
+        renderPOCart();
+    }
+    function renderPOCart() {
+        const tbody = document.getElementById('po-cart-body');
+        if(!tbody) return;
+        tbody.innerHTML = '';
+        let total = 0;
+        
+        po_currentCart.forEach((item, idx) => {
+            // FAILSAFE: Grabs qty_kg, but falls back to qty if it somehow got mismatched
+            const safeQty = item.qty_kg || item.qty || 0; 
+            const sub = safeQty * item.unit_cost; 
+            
+            total += sub;
+            tbody.innerHTML += `
+                <tr>
+                    <td>${item.name}</td>
+                    <td>${safeQty} kg</td>
+                    <td>KSh ${item.unit_cost.toFixed(2)}</td>
+                    <td><b>KSh ${sub.toFixed(2)}</b></td>
+                    <td><button type="button" class="btn-sm btn-danger" onclick="po_currentCart.splice(${idx}, 1); renderPOCart()">x</button></td>
+                </tr>
+            `;
+        });
+        
+        const totalSpan = document.getElementById('po-cart-total');
+        if(totalSpan) totalSpan.innerText = total.toFixed(2);
+    }
+
+    // --- GRN RECEIVING LOGIC ---
+    async function openReceiveGRN(poId) {
+        // Use loose comparison (==) to prevent type mismatch bugs between IDs
+        const po = po_orderHistory.find(p => p.id == poId);
+        if(!po) {
+            alert("Could not find PO reference in local history.");
+            return;
+        }
+        
+        try {
+            const res = await fetch(`/api/po/${poId}/lines`);
+            const poData = await res.json();
+            
+            po_activeReceiving = poData;
+            document.getElementById('grn-po-number').innerText = po.po_number;
+            
+            const tbody = document.getElementById('grn-lines-body');
+            tbody.innerHTML = '';
+            
+            poData.lines.forEach((line, idx) => {
+                const remaining = line.qty_ordered - line.qty_received_so_far;
+                if (remaining <= 0) return;
+
+                tbody.innerHTML += `
+                    <tr data-polineid="${line.id}" data-ordered="${remaining}">
+                        <td>${line.item_name}<br/><small style="color:#666;">Ordered: ${line.qty_ordered} | Pending: ${remaining}</small></td>
+                        <td><input type="number" class="grn-recv-qty" max="${remaining}" placeholder="Qty" style="width:90px;" oninput="calcAccepted(${idx})"></td>
+                        <td><input type="number" class="grn-rej-qty" value="0" min="0" style="width:90px;" oninput="calcAccepted(${idx})"></td>
+                        <td><span class="grn-acc-qty" style="font-weight:bold; color:green; font-size:16px;">0</span></td>
+                        <td><input type="text" class="grn-batch" placeholder="Lot/Batch" style="width:110px;"></td>
+                    </tr>
+                `;
+            });
+            
+            document.getElementById('receive-grn-modal').style.display = 'block';
+        } catch (err) {
+            alert("Error loading PO details.");
+            console.error(err);
+        }
+    }
+
+    function calcAccepted(idx) {
+        const row = document.getElementById('grn-lines-body').children[idx];
+        const recv = parseFloat(row.querySelector('.grn-recv-qty').value) || 0;
+        const rej = parseFloat(row.querySelector('.grn-rej-qty').value) || 0;
+        const acc = Math.max(0, recv - rej);
+        row.querySelector('.grn-acc-qty').innerText = acc;
+    }
+
+async function submitPO() {
+        const supplierId = document.getElementById('po-supplier').value;
+        if(!supplierId) return alert("Select a supplier.");
+        if(po_currentCart.length === 0) return alert("Add at least one item to the order.");
+
+        try {
+            // FIX: Changed to match your exact backend route
+            const res = await fetch('/api/po', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ 
+                    supplier_id: parseInt(supplierId), 
+                    location_id: 1, 
+                    items: po_currentCart 
+                })
+            });
+            // ... rest of the function stays the same
+            
+            const data = await res.json();
+            
+            if (!res.ok || data.status === 'error') {
+                // This extracts the EXACT database error from Python
+                throw new Error(data.message || `HTTP ${res.status}`);
+            }
+            
+            if(data.status === 'success') {
+                alert(`Purchase Order created successfully.`);
+                po_currentCart = [];
+                renderPOCart();
+                document.getElementById('po-supplier').value = '';
+                document.getElementById('create-po-modal').style.display = 'none';
+                await po_loadHistory();
+            }
+        } catch (err) { 
+            console.error(err);
+            // This will now pop up with the real reason it failed!
+            alert("Backend Error: " + err.message); 
+        }
+    }
+
+    async function submitGRN() {
+        const rows = document.getElementById('grn-lines-body').children;
+        let receiptLines = [];
+        
+        for(let row of rows) {
+            const poLineId = row.getAttribute('data-polineid');
+            const recv = parseFloat(row.querySelector('.grn-recv-qty').value) || 0;
+            const rej = parseFloat(row.querySelector('.grn-rej-qty').value) || 0;
+            
+            if (recv > 0) {
+                receiptLines.push({
+                    line_id: parseInt(poLineId),
+                    qty_kg: Math.max(0, recv - rej) 
+                });
+            }
+        }
+        
+        if(receiptLines.length === 0) return alert("Please enter a receive quantity greater than 0.");
+        
+        try {
+            const res = await fetch(`/api/po/${po_activeReceiving.id}/grpo`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ received_items: receiptLines })
+            });
+            
+            // FIX: Force read the response body FIRST before checking res.ok
+            const text = await res.text();
+            let data = {};
+            try { data = JSON.parse(text); } catch(e) {}
+            
+            // Now check for errors and extract the EXACT Python error message
+            if (!res.ok || data.status === 'error') {
+                throw new Error(data.message || text || `HTTP ${res.status}`);
+            }
+            
+            alert(`GRN posted successfully.`);
+            document.getElementById('receive-grn-modal').style.display = 'none';
+            await po_loadHistory();
+            if (typeof po_loadInventory === 'function') await po_loadInventory(); 
+            
+        } catch(err) { 
+            console.error(err);
+            // This will pop up the exact backend crash reason!
+            alert("Backend Error (GRN Post): " + err.message); 
+        }
+    }
+    async function submitNewItem() {
+        const name = document.getElementById('new-item-name').value;
+        const cat = document.getElementById('new-item-cat').value;
+        const bag = parseFloat(document.getElementById('new-item-bag').value) || 50;
+        const cost = parseFloat(document.getElementById('new-item-cost').value) || 0;
+
+        if(!name) return alert("Item name is required.");
+
+        try {
+            const res = await fetch('/api/po/inventory/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name, category: cat, bag_size_kg: bag, cost_per_kg: cost })
+            });
+            const data = await res.json();
+            
+            if(data.status === 'success') {
+                alert("✅ Item Saved to Database!");
+                document.getElementById('create-item-modal').style.display = 'none';
+                document.getElementById('new-item-name').value = '';
+                await po_loadInventory(); 
+            } else { alert("Error: " + data.message); }
+        } catch (err) { alert("System error adding item."); }
+    }
+	
+</script>

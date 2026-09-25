@@ -22,9 +22,15 @@ def unified_seed():
             Account(account_code="4000", name="Sales Revenue", category="REVENUE")
         ])
         
-        suppliers = [Supplier(name=f"Supplier {i}", phone=f"070000000{i}", balance_due=0.0) for i in range(1, 6)]
-        db.session.add_all(suppliers)
-        db.session.commit()
+        # Seed Default Suppliers (using name and contact_info fields only)
+        suppliers = [
+            Supplier(name="ABC Suppliers Ltd", contact_info="0711000111 - Nakuru"),
+            Supplier(name="Rift Valley Grains", contact_info="0722000222 - Eldoret"),
+            Supplier(name="Mombasa Premix Co.", contact_info="0733000333 - Mombasa")
+        ]
+        
+        for s in suppliers:
+            db.session.add(s)
 
         print("--- 3. Inventory & Formulator Data ---")
         items = [
@@ -38,18 +44,16 @@ def unified_seed():
             AnimalRequirement(species_stage="Dairy Cattle (High Yield 15L+)", min_cp=16.0, min_me=2.4),
             AnimalRequirement(species_stage="Poultry Broiler Starter", min_cp=22.0, min_me=3.0)
         ])
-        db.session.commit()
 
-        print("--- 4. Customers ---")
+        print("--- 4. Customers & Till ---")
         c1 = Customer(name="Test Cust 1", phone="0711111111", location="Baringo", current_balance=65.0, credit_limit=50000.0)
         c2 = Customer(name="Test Cust 2", phone="0711222222", location="Nakuru", current_balance=405.0, credit_limit=50000.0)
         c3 = Customer(name="Test Cust 3", phone="0711333333", location="Mogotio", current_balance=0.0, credit_limit=50000.0)
         db.session.add_all([c1, c2, c3])
-        db.session.commit()
 
         db.session.add(TillSession(cashier_name="admin", opening_cash=5000.0))
+        
         db.session.commit()
-
         print("\n✅ SUCCESS: Full ERP System Seed Complete!")
 
 if __name__ == '__main__':

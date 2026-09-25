@@ -19,7 +19,8 @@ migrate = Migrate(app, db)
 
 # 2. Register the POS Blueprint
 app.register_blueprint(pos_bp)
-
+from routes.po import po_bp
+app.register_blueprint(po_bp)
 @app.route('/')
 def dashboard():
     return render_template('dashboard.html')
@@ -76,7 +77,40 @@ def get_po_details():
         return jsonify({'status': 'success', 'po_id': po.id, 'po_no': po.po_no, 'lines': line_data})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+# --- MISSING ROUTE 1: Loads the PO History Table ---
+@app.route('/api/po', methods=['GET'])
+def get_all_pos():
+    try:
+        pos = PurchaseOrderHeader.query.order_by(PurchaseOrderHeader.created_at.desc()).all()
+        return jsonify([{
+            'id': p.id,
+            'po_number': p.po_no,
+            'created_at': p.created_at.strftime('%Y-%m-%d %H:%M'),
+            'supplier_name': db.session.get(Supplier, p.supplier_id).name if db.session.get(Supplier, p.supplier_id) else 'Unknown',
+            'total_amount': p.total_amount,
+            'status': p.status
+        } for p in pos])
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# --- MISSING ROUTE 2: Loads the items when clicking "Receive GRN" ---
+@app.route('/api/po/<int:po_id>/lines', methods=['GET'])
+def get_po_lines_by_id(po_id):
+    try:
+        lines = PurchaseOrderLine.query.filter_by(po_id=po_id).all()
+        out = []
+        for l in lines:
+            ing = db.session.get(FeedIngredient, l.ingredient_id)
+            out.append({
+                'id': l.id,
+                'item_name': ing.name if ing else 'Unknown',
+                'qty_ordered': l.ordered_qty_kg,
+                'qty_received_so_far': l.received_qty_kg
+            })
+        return jsonify({'id': po_id, 'lines': out})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+        
 @app.route('/api/po/<int:po_id>/grpo', methods=['POST'])
 def receive_grpo_partial(po_id):
     try:
