@@ -1,9 +1,9 @@
 import os
 from app import app
 from services.db import db
-from services.models import FeedIngredient, Customer, Location, Supplier, Account, PurchaseOrderHeader, PurchaseOrderLine, AnimalRequirement, TillSession
+from services.models import FeedIngredient, Customer, Location, Supplier, Account, AnimalRequirement, TillSession
 
-def stress_test_seed():
+def unified_seed():
     with app.app_context():
         print("--- 1. Wiping DB & Creating Complete Schema ---")
         db.drop_all()
@@ -41,14 +41,20 @@ def stress_test_seed():
         db.session.commit()
 
         print("--- 4. Customers ---")
-        customers = [Customer(name=f"Test Cust {i}", phone=f"0711{i}{i}{i}{i}{i}{i}", location="Baringo", credit_limit=50000.0) for i in range(1, 6)]
-        db.session.add_all(customers)
+        c1 = Customer(name="Test Cust 1", phone="0711111111", location="Baringo", current_balance=65.0, credit_limit=50000.0)
+        c2 = Customer(name="Test Cust 2", phone="0711222222", location="Nakuru", current_balance=405.0, credit_limit=50000.0)
+        c3 = Customer(name="Test Cust 3", phone="0711333333", location="Mogotio", current_balance=0.0, credit_limit=50000.0)
+        db.session.add_all([c1, c2, c3])
         db.session.commit()
 
         db.session.add(TillSession(cashier_name="admin", opening_cash=5000.0))
         db.session.commit()
 
-        print("--- Full ERP System Seed Complete! ---")
+        print("\n✅ SUCCESS: Full ERP System Seed Complete!")
 
 if __name__ == '__main__':
-    stress_test_seed()
+    try:
+        unified_seed()
+    except Exception as e:
+        print(f"\n❌ SEED FAILED! Error details:")
+        print(str(e))

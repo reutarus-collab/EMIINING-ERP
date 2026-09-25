@@ -5,12 +5,13 @@ from services.db import db, init_db
 from services.models import FeedIngredient, Supplier, Location, PurchaseOrderHeader, PurchaseOrderLine, StockMovement
 
 # 1. Import our new helpers and blueprints
-from services.ledger_service import post_gl_entry
 from routes.pos import pos_bp
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'emining-enterprise-2026')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///emining_erp.db')
+# Force Flask to use the absolute path of the current folder
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///' + os.path.join(BASE_DIR, 'emining_erp.db'))
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 init_db(app)

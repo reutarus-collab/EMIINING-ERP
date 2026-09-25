@@ -24,23 +24,23 @@
   .receipt-box { background: #fff; border: 1px dashed #333; padding: 15px; font-family: monospace; font-size: 0.85rem; }
   .credit-info-box { background: #eef6ff; border: 1px solid #b6d4fe; padding: 10px; border-radius: 6px; margin-top: 8px; font-size: 0.85rem; }
   
-  /* FORCE LARGE INPUTS AND SELECTS */
-  input, select, textarea { 
-      padding: 12px 15px !important; 
-      font-size: 16px !important; 
-      height: 52px !important; 
-      border: 1px solid #ced4da !important; 
-      border-radius: 6px !important; 
-      box-sizing: border-box !important; 
-      width: 100% !important;
-      background-color: #fff !important;
-  }
-  
-  @media print {
-    body * { visibility: hidden; }
-    #printable-receipt, #printable-receipt * { visibility: visible; }
-    #printable-receipt { position: absolute; left: 0; top: 0; width: 100%; max-width: 300px; border: none; padding: 0; }
-  }
+/* Normal-sized boxes, readable text, native browser rendering */
+input, select, textarea {
+    font-size: 16px !important; /* Forces the dropdown list text to be readable */
+    padding: 8px 10px !important;
+    border: 1px solid #ced4da !important;
+    border-radius: 4px !important;
+    font-family: inherit;
+    background-color: #fff;
+}
+
+/* Restore native Chrome/Windows dropdown rendering to fix the squished blue list */
+select {
+    -webkit-appearance: menulist !important;
+    -moz-appearance: menulist !important;
+    appearance: menulist !important;
+    cursor: pointer;
+}
 </style>
 <h2>Emining Feeds Enterprise & Factory Terminal</h2>
 
