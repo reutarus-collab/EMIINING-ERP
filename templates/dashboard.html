@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .nav-tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ccc; padding-bottom: 5px; overflow-x: auto; }
+  .tab-btn { background: #e9ecef; color: #495057; border: none; padding: 10px 20px; font-weight: bold; border-radius: 5px 5px 0 0; cursor: pointer; white-space: nowrap; }
+  .tab-btn.active { background: #007bff; color: white; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .pos-grid { display: grid; grid-template-columns: 1fr 440px; gap: 20px; font-family: sans-serif; }
+  .card { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12); margin-bottom: 15px; }
+  .search-results-box { max-height: 180px; overflow-y: auto; border: 1px solid #ddd; margin-top: 5px; border-radius: 4px; }
+  .product-row { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee; }
+  .product-row:hover { background: #f8f9fa; }
+  .cart-table, .data-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.88rem; }
+  .cart-table th, .cart-table td, .data-table th, .data-table td { border: 1px solid #eee; padding: 8px; text-align: left; }
+  .data-table th { background: #f8f9fa; }
+  .btn-sm { font-size: 0.9rem; padding: 8px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #ccc; }
+  .btn-primary { background: #007bff; color: white; border: none; }
+  .btn-success { background: #28a745; color: white; border: none; }
+  .btn-warning { background: #ffc107; color: #212529; border: none; }
+  .btn-info { background: #17a2b8; color: white; border: none; }
+  .btn-danger { background: #dc3545; color: white; border: none; }
+  .split-row { display: flex; gap: 5px; margin-bottom: 5px; }
+  .receipt-box { background: #fff; border: 1px dashed #333; padding: 15px; font-family: monospace; font-size: 0.85rem; }
+  .credit-info-box { background: #eef6ff; border: 1px solid #b6d4fe; padding: 10px; border-radius: 6px; margin-top: 8px; font-size: 0.85rem; }
+  
+/* Normal-sized boxes, readable text, native browser rendering */
+input, select, textarea {
+    font-size: 16px !important; /* Forces the dropdown list text to be readable */
+    padding: 8px 10px !important;
+    border: 1px solid #ced4da !important;
+    border-radius: 4px !important;
+    font-family: inherit;
+    background-color: #fff;
+}
+
+/* Restore native Chrome/Windows dropdown rendering to fix the squished blue list */
+select {
+    -webkit-appearance: menulist !important;
+    -moz-appearance: menulist !important;
+    appearance: menulist !important;
+    cursor: pointer;
+}
+</style>
+<h2>Emining Feeds Enterprise & Factory Terminal</h2>
+
+<div class="nav-tabs">
+  <button class="tab-btn active" onclick="showTab('pos-tab')">🛒 Point of Sale (POS)</button>
+<button class="tab-btn" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">📦 Purchase Orders</button>
+  <button class="tab-btn" onclick="showTab('sales-tab')">📄 Sales Ledger</button>
+  <button class="tab-btn" onclick="showTab('matrix-tab')">🧮 Ration Formulator</button>
+  <button class="tab-btn" onclick="showTab('factory-tab')">🏭 Factory & Milling</button>
+</div>
+
+<!-- INCLUDED TAB COMPONENTS (ONLY CALLED ONCE) -->
+{% include "tabs/pos_tab.html" %}
+{% include "tabs/po_tab.html" %}
+{% include "tabs/sales_tab.html" %}
+{% include "tabs/formulator_tab.html" %}
+{% include "tabs/factory_tab.html" %}
+
+<!-- ==================== SCRIPTS ==================== -->
+<script src="/static/js/main.js?v=7"></script>
+<script src="/static/js/pos.js?v=7"></script>
+<script src="/static/js/purchasing.js?v=7"></script>
+<script src="/static/js/factory.js?v=7"></script>
+{% endblock %}

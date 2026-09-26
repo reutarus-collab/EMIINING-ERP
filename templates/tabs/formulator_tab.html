@@ -1,0 +1,19 @@
+<div id="matrix-tab" class="tab-content">
+  <div class="card">
+    <h3>Least-Cost Feed Formulation Engine (WinFeed Logic)</h3>
+    <div class="form-group">
+      <label>Target Livestock Stage:</label>
+      <select id="species-select">
+        <option value="Dairy Cattle (High Yield 15L+)">Dairy Cattle (High Yield 15L+)</option>
+        <option value="Poultry Broiler Starter">Poultry Broiler Starter</option>
+        <option value="Pig Grower Rations">Pig Grower Rations</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Batch Size (KG):</label>
+      <input type="number" id="batch-kg" value="1000" />
+    </div>
+    <button class="btn-primary" onclick="runFormulation()" style="padding: 10px;">Calculate Optimal Batch Recipe</button>
+    <pre id="formulation-result" style="background:#f8f9fa; padding:10px; margin-top:10px; border-radius:4px;"></pre>
+  </div>
+</div>

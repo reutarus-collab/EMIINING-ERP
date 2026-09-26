@@ -1,0 +1,21 @@
+{
+  "short_name": "EMINING-ERP",
+  "name": "EMINING Livestock Feed ERP System",
+  "icons": [
+    {
+      "src": "/static/assets/img/AdminLTELogo.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/static/assets/img/AdminLTELogo.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#212529",
+  "theme_color": "#007bff",
+  "display": "standalone",
+  "orientation": "portrait"
+}
