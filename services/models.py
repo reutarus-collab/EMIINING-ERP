@@ -6,6 +6,13 @@ class FeedIngredient(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     category = db.Column(db.String(50))
+    
+    # --- NEW: UOM CONVERSION COLUMNS ---
+    purchase_uom = db.Column(db.String(20), default='KG') # e.g., BAG
+    stock_uom = db.Column(db.String(20), default='KG')    # e.g., KG
+    conversion_factor = db.Column(db.Float, default=1.0)  # e.g., 90.0
+    # -----------------------------------
+    
     cost_per_kg = db.Column(db.Float, default=0.0)
     stock_quantity_kg = db.Column(db.Float, default=0.0)
     reserved_quantity_kg = db.Column(db.Float, default=0.0)
@@ -13,6 +20,11 @@ class FeedIngredient(db.Model):
     retail_price_per_kg = db.Column(db.Float, default=0.0)
     crude_protein_pct = db.Column(db.Float, default=0.0)
     metabolizable_energy_mcal = db.Column(db.Float, default=0.0)
+# --- NEW: UOM CONVERSION COLUMNS ---
+    purchase_uom = db.Column(db.String(20), default='KG') 
+    stock_uom = db.Column(db.String(20), default='KG')    
+    conversion_type = db.Column(db.String(20), default='FIXED') # <--- ADD THIS LINE
+    conversion_factor = db.Column(db.Float, default=1.0)
 
 class Customer(db.Model):
     __tablename__ = 'customers'
@@ -35,7 +47,14 @@ class Supplier(db.Model):
     __tablename__ = 'suppliers'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    contact_info = db.Column(db.String(255))
+    contact_info = db.Column(db.String(255)) # Legacy field
+    
+    # --- NEW SUPPLIER FIELDS ---
+    phone = db.Column(db.String(50))
+    location = db.Column(db.String(100))
+    items_dealing = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
 class Account(db.Model):
@@ -152,6 +171,10 @@ class PurchaseOrderLine(db.Model):
     qty_ordered = db.Column(db.Float, default=0.0)
     unit_cost = db.Column(db.Float, default=0.0)
     subtotal = db.Column(db.Float, default=0.0)
+    
+    # --- NEW: GRN TRACKING COLUMNS ---
+    qty_received = db.Column(db.Float, default=0.0)
+    qty_rejected = db.Column(db.Float, default=0.0)
 
 class GoodsReceiptNote(db.Model):
     __tablename__ = 'goods_receipt_notes'

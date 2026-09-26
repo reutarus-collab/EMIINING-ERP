@@ -55,22 +55,27 @@ def list_pos():
 @po_bp.route('/api/po/<int:po_id>/lines', methods=['GET'])
 def get_po_lines_by_id(po_id):
     try:
-        # FIX: Changed po_id to po_header_id to perfectly match your database model
         lines = PurchaseOrderLine.query.filter_by(po_header_id=po_id).all()
         out = []
         for l in lines:
-            # Handle getting the ingredient safely
-            from services.models import FeedIngredient # ensure correct import if needed
+            # Ensure correct import
+            from services.models import FeedIngredient 
             ing = db.session.get(FeedIngredient, l.ingredient_id)
             
-            # Safely grab the received quantity, regardless of what it's named in the model
-            received = getattr(l, 'qty_received', getattr(l, 'received_qty_kg', 0.0))
+            received = getattr(l, 'qty_received', 0.0)
+            rejected = getattr(l, 'qty_rejected', 0.0)
             
             out.append({
                 'id': l.id,
                 'item_name': ing.name if ing else 'Unknown',
                 'qty_ordered': l.qty_ordered,
-                'qty_received_so_far': received
+                'qty_received_so_far': received,
+                'qty_rejected_so_far': rejected,
+                
+                # Send the UOM rules to the GRN screen
+                'purchase_uom': getattr(ing, 'purchase_uom', 'KG') if ing else 'KG',
+                'conversion_type': getattr(ing, 'conversion_type', 'FIXED') if ing else 'FIXED',
+                'conversion_factor': getattr(ing, 'conversion_factor', 1.0) if ing else 1.0
             })
         return jsonify({'id': po_id, 'lines': out})
     except Exception as e:
@@ -88,7 +93,8 @@ def get_po_inventory():
             'category': getattr(i, 'category', 'Raw Material'),
             'stock_quantity_kg': getattr(i, 'stock_quantity_kg', 0.0),
             'cost_per_kg': getattr(i, 'cost_per_kg', 0.0),
-            'bag_size_kg': getattr(i, 'bag_size_kg', 50.0)
+            'bag_size_kg': getattr(i, 'bag_size_kg', 50.0),
+            'purchase_uom': getattr(i, 'purchase_uom', 'KG') # NEW: Send UOM to frontend
         })
     return jsonify(result)
 
@@ -96,23 +102,26 @@ def get_po_inventory():
 def add_new_item():
     try:
         data = request.get_json()
-        print("📥 Incoming new item data:", data) # Debugging tool
+        print("📥 Incoming new item data:", data)
 
         new_item = FeedIngredient(
             name=data['name'],
-            category=data.get('category', 'Raw Material'),
-            bag_size_kg=float(data.get('bag_size_kg', 50.0)),
+            category=data.get('category'),
+            bag_size_kg=float(data.get('bag_size_kg', 50)),
             cost_per_kg=float(data.get('cost_per_kg', 0.0)),
-            stock_quantity_kg=0.0,
-            retail_price_per_kg=0.0 # <--- THIS FIXES THE DB REJECTION
+            purchase_uom=data.get('purchase_uom', 'KG'),
+            stock_uom=data.get('stock_uom', 'KG'),
+            conversion_type=data.get('conversion_type', 'FIXED'),
+            conversion_factor=float(data.get('conversion_factor', 1.0)) if data.get('conversion_type') == 'FIXED' else None
         )
+
         db.session.add(new_item)
         db.session.commit()
         print("✅ Item saved to DB successfully! ID:", new_item.id)
         
         return jsonify({'status': 'success', 'item_id': new_item.id})
     except Exception as e:
-        db.session.rollback() # Prevent DB crashes
+        db.session.rollback()
         print("❌ DB Save Error:", str(e))
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
@@ -123,8 +132,13 @@ def add_supplier():
         if not data or not data.get('name'):
             raise ValueError("Supplier name is required")
             
-        # Assuming Supplier is imported at the top of routes/po.py
-        new_sup = Supplier(name=data['name'])
+        new_sup = Supplier(
+            name=data['name'],
+            phone=data.get('phone', ''),
+            location=data.get('location', ''),
+            items_dealing=data.get('items_dealing', ''),
+            description=data.get('description', '')
+        )
         db.session.add(new_sup)
         db.session.commit()
         return jsonify({'status': 'success', 'id': new_sup.id})
@@ -149,37 +163,45 @@ def receive_grpo_partial(po_id):
             if not line:
                 continue
                 
-            incoming_qty = float(recv_item['qty_kg'])
-            if incoming_qty <= 0: 
+            # SEPARATING UOM: How many Bags arrived, vs how many KGs go to stock
+            incoming_po_qty = float(recv_item.get('qty_po_uom', 0.0))
+            rejected_po_qty = float(recv_item.get('qty_rejected_po_uom', 0.0))
+            incoming_kg = float(recv_item.get('qty_kg_accepted', 0.0))
+
+            if incoming_po_qty <= 0 and rejected_po_qty <= 0: 
                 continue
 
             ing = db.session.get(FeedIngredient, line.ingredient_id)
-            
-            # PERFECT MATCH: Using qty_ordered and qty_received
             ordered = getattr(line, 'qty_ordered', 0.0) or 0.0
             received = getattr(line, 'qty_received', 0.0) or 0.0
+            rejected = getattr(line, 'qty_rejected', 0.0) or 0.0
             
-            if (received + incoming_qty) > ordered: 
+            # Ensure they don't receive more than ordered (including rejects)
+            if (received + rejected + incoming_po_qty + rejected_po_qty) > ordered: 
                 raise ValueError(f"Exceeds PO limit for {ing.name}")
             
-            new_subtotal = incoming_qty * line.unit_cost
+            # Value is based on PO Units (e.g. Price per Bag)
+            new_subtotal = incoming_po_qty * line.unit_cost
+            
+            # Stock is strictly KG!
             old_val = (ing.stock_quantity_kg or 0.0) * (ing.cost_per_kg or 0.0)
-            new_total_stock = (ing.stock_quantity_kg or 0.0) + incoming_qty
+            new_total_stock = (ing.stock_quantity_kg or 0.0) + incoming_kg
             
             if new_total_stock > 0: 
                 ing.cost_per_kg = (old_val + new_subtotal) / new_total_stock
             
             ing.stock_quantity_kg = new_total_stock
             
-            # WRITE BACK to the correct database column
-            line.qty_received = received + incoming_qty
-                
+            # Write back the PO units
+            line.qty_received = received + incoming_po_qty
+            line.qty_rejected = rejected + rejected_po_qty
             grpo_total_value += new_subtotal
             
-            # Log the stock movement
-            db.session.add(StockMovement(ingredient_id=ing.id, movement_type='GRPO_RECEIPT', qty_kg=incoming_qty, reference_id=grpo_ref))
+            # Write the exact KG to the ledger
+            if incoming_kg > 0:
+                db.session.add(StockMovement(ingredient_id=ing.id, movement_type='GRPO_RECEIPT', qty_kg=incoming_kg, reference_id=grpo_ref))
             
-            if (received + incoming_qty) < ordered: 
+            if (line.qty_received + line.qty_rejected) < ordered: 
                 all_lines_fully_received = False
 
         po.status = 'FULLY_RECEIVED' if all_lines_fully_received else 'PARTIAL_RECEIVED'
@@ -188,4 +210,4 @@ def receive_grpo_partial(po_id):
         return jsonify({'status': 'success', 'grpo_no': grpo_ref, 'status': po.status})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'message': str(e)}), 400       
+        return jsonify({'status': 'error', 'message': str(e)}), 400

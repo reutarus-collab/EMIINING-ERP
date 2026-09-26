@@ -72,13 +72,15 @@
     </div>
 	
 
-    <!-- CREATE NEW ITEM MODAL -->
+<!-- CREATE NEW ITEM MODAL -->
     <div id="create-item-modal" style="display:none; position:fixed; top:100px; left:50%; transform:translateX(-50%); width:500px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1100;">
         <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
             <h3>Add New Inventory Item</h3>
             <button onclick="document.getElementById('create-item-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
         </div>
+        
         <input type="text" id="new-item-name" placeholder="Item Name (e.g., Sunflower Cake)" style="width:100%; margin-bottom:10px; padding: 8px;">
+        
         <select id="new-item-cat" style="width:100%; margin-bottom:10px; padding: 8px;">
             <option value="Raw - Energy">Raw - Energy</option>
             <option value="Raw - Protein">Raw - Protein</option>
@@ -86,10 +88,42 @@
             <option value="Packaging">Packaging Materials</option>
             <option value="Finished Feed">Finished Feed</option>
         </select>
-        <div style="display:flex; gap:10px; margin-bottom:20px;">
+        
+        <div style="display:flex; gap:10px; margin-bottom:15px;">
             <input type="number" id="new-item-bag" placeholder="Bag Size (kg)" style="flex:1; padding: 8px;">
             <input type="number" id="new-item-cost" placeholder="Est. Cost per kg" style="flex:1; padding: 8px;">
         </div>
+
+        <!-- NEW UOM ROW -->
+<!-- UPGRADED UOM ROW -->
+        <div style="display:flex; gap:10px; margin-bottom:20px; background:#f8f9fa; padding:10px; border-radius:5px;">
+            <div style="flex:1;">
+                <label style="font-size:12px; color:#666;">Purchase UOM</label>
+                <select id="new-item-puom" style="width:100%; padding:8px;">
+                    <option value="BAG">BAG</option>
+                    <option value="KG">KG</option>
+                    <option value="TON">TON</option>
+                </select>
+            </div>
+            <div style="flex:1;">
+                <label style="font-size:12px; color:#666;">Conv. Type</label>
+                <select id="new-item-conv-type" style="width:100%; padding:8px;" onchange="toggleConvFactor()">
+                    <option value="FIXED">Fixed Weight</option>
+                    <option value="VARIABLE">Actual Weight</option>
+                </select>
+            </div>
+            <div style="flex:1;">
+                <label style="font-size:12px; color:#666;">Factor (KG)</label>
+                <input type="number" id="new-item-conv" placeholder="e.g. 70" style="width:100%; padding:8px;">
+            </div>
+            <div style="flex:1;">
+                <label style="font-size:12px; color:#666;">Stock UOM</label>
+                <select id="new-item-suom" style="width:100%; padding:8px;">
+                    <option value="KG">KG</option>
+                </select>
+            </div>
+        </div>
+
         <div style="text-align:right; margin-top: 15px;">
             <button type="button" class="btn btn-secondary" style="margin-right: 10px;" onclick="document.getElementById('create-item-modal').style.display='none'">Close</button>
             <button type="button" class="btn btn-primary" onclick="submitNewItem()">Save Item</button>
@@ -106,7 +140,14 @@
         </div>
         <table class="data-table">
             <thead>
-                <tr><th>Item Details</th><th>Receive Qty</th><th>Reject Qty</th><th>Accepted</th><th>Batch/Lot</th></tr>
+                <tr>
+                    <th>Item Details</th>
+                    <th>Receive (PO UOM)</th>
+                    <th>Reject</th>
+                    <th>Accepted</th>
+                    <th>Stock (KG)</th>
+                    <th>Batch/Lot</th>
+                </tr>
             </thead>
             <tbody id="grn-lines-body"></tbody>
         </table>
@@ -140,17 +181,22 @@
         </div>
     </div>
 <!-- CREATE SUPPLIER MODAL -->
-    <div id="create-supplier-modal" style="display:none; position:fixed; top:100px; left:50%; transform:translateX(-50%); width:400px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1400;">
+    <div id="create-supplier-modal" style="display:none; position:fixed; top:100px; left:50%; transform:translateX(-50%); width:450px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1400;">
         <div style="display:flex; justify-content:space-between; margin-bottom:15px;">
             <h3 style="margin:0;">Add New Supplier</h3>
             <button type="button" onclick="document.getElementById('create-supplier-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
         </div>
-        <input type="text" id="new-supplier-name" placeholder="Supplier Name (e.g., Kampi Feeds)" style="width:100%; margin-bottom:15px; padding:8px;">
+        <input type="text" id="new-supplier-name" placeholder="Supplier Name (e.g., Kampi Feeds)" style="width:100%; margin-bottom:10px; padding:8px;">
+        <input type="text" id="new-supplier-phone" placeholder="Phone Number" style="width:100%; margin-bottom:10px; padding:8px;">
+        <input type="text" id="new-supplier-location" placeholder="Location (e.g., Nakuru)" style="width:100%; margin-bottom:10px; padding:8px;">
+        <input type="text" id="new-supplier-items" placeholder="Items Dealing (e.g., Maize, Ochonga)" style="width:100%; margin-bottom:10px; padding:8px;">
+        <textarea id="new-supplier-desc" placeholder="Brief Description / Notes" style="width:100%; margin-bottom:15px; padding:8px; height:60px;"></textarea>
         <div style="text-align:right;">
             <button type="button" class="btn btn-secondary" style="margin-right:10px;" onclick="document.getElementById('create-supplier-modal').style.display='none'">Cancel</button>
             <button type="button" class="btn btn-primary" onclick="submitNewSupplier()">Save Supplier</button>
         </div>
-    </div>	
+    </div>
+ </div>	
 <!-- INLINE JAVASCRIPT: Full Cart & GRN Logic -->
 <script>
     let po_suppliersList = [];
@@ -196,7 +242,8 @@
             if(tbody) tbody.innerHTML = '';
             
             po_inventoryList.forEach(i => {
-                sel.innerHTML += `<option value="${i.id}" data-cost="${i.cost_per_kg}">${i.name} (Stock: ${i.stock_quantity_kg.toFixed(1)}kg)</option>`;
+                const uom = i.purchase_uom || 'KG';
+                sel.innerHTML += `<option value="${i.id}" data-cost="${i.cost_per_kg}" data-uom="${uom}">${i.name} (Stock: ${i.stock_quantity_kg.toFixed(1)}kg)</option>`;
                 
                 if(tbody) {
                     let stockColor = i.stock_quantity_kg > 0 ? 'green' : 'red';
@@ -211,6 +258,7 @@
                     `;
                 }
             });
+            // ... rest of function remains the same
 
             sel.onchange = function() {
                 const selectedOpt = sel.options[sel.selectedIndex];
@@ -320,38 +368,44 @@ async function viewPO(poId) {
         
         try {
             const res = await fetch(`/api/po/${poId}/lines`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const poData = await res.json();
             
             po_activeReceiving = poData;
-            
-            const titleEl = document.getElementById('grn-po-number');
-            if (titleEl) titleEl.innerText = po.po_number;
+            document.getElementById('grn-po-number').innerText = po.po_number;
             
             const tbody = document.getElementById('grn-lines-body');
-            if (!tbody) return console.error("GRN modal tbody missing.");
             tbody.innerHTML = '';
             
             poData.lines.forEach((line, idx) => {
-                const remaining = line.qty_ordered - line.qty_received_so_far;
+                const remaining = line.qty_ordered - (line.qty_received_so_far + line.qty_rejected_so_far);
                 if (remaining <= 0) return;
 
+                const uom = line.purchase_uom;
+                const cType = line.conversion_type;
+                const cFact = line.conversion_factor;
+
+                // Dynamic KG Field based on conversion rule
+                let kgInputHtml = "";
+                if (cType === 'VARIABLE') {
+                    kgInputHtml = `<input type="number" class="grn-stock-kg" placeholder="Weighbridge KG" style="width:110px; border:2px solid orange; padding:5px;">`;
+                } else {
+                    kgInputHtml = `<input type="number" class="grn-stock-kg" placeholder="Auto KG" style="width:110px; background:#e9ecef; padding:5px;" readonly>`;
+                }
+
                 tbody.innerHTML += `
-                    <tr data-polineid="${line.id}" data-ordered="${remaining}">
-                        <td>${line.item_name}<br/><small style="color:#666;">Ordered: ${line.qty_ordered} | Pending: ${remaining}</small></td>
-                        <td><input type="number" class="grn-recv-qty" max="${remaining}" placeholder="Qty" style="width:90px;" oninput="calcAccepted(${idx})"></td>
-                        <td><input type="number" class="grn-rej-qty" value="0" min="0" style="width:90px;" oninput="calcAccepted(${idx})"></td>
-                        <td><span class="grn-acc-qty" style="font-weight:bold; color:green; font-size:16px;">0</span></td>
-                        <td><input type="text" class="grn-batch" placeholder="Lot/Batch" style="width:110px;"></td>
+                    <tr data-polineid="${line.id}" data-ordered="${remaining}" data-ctype="${cType}" data-cfact="${cFact}">
+                        <td>${line.item_name}<br/><small style="color:#666;">Pending: ${remaining} ${uom}</small></td>
+                        <td><input type="number" class="grn-recv-qty" max="${remaining}" placeholder="${uom}" style="width:90px;" oninput="calcAccepted(${idx})"></td>
+                        <td><input type="number" class="grn-rej-qty" value="0" min="0" style="width:70px;" oninput="calcAccepted(${idx})"></td>
+                        <td><span class="grn-acc-qty" style="font-weight:bold; color:green; font-size:16px;">0</span> <small>${uom}</small></td>
+                        <td>${kgInputHtml}</td>
+                        <td><input type="text" class="grn-batch" placeholder="Lot" style="width:90px;"></td>
                     </tr>
                 `;
             });
             
             document.getElementById('receive-grn-modal').style.display = 'block';
-        } catch (err) {
-            console.error(err);
-            alert("Error loading PO details.");
-        }
+        } catch (err) { alert("Error loading PO details."); }
     }
     // --- CART LOGIC ---
 function addToPOCart() {
@@ -360,22 +414,25 @@ function addToPOCart() {
         
         const qty = parseFloat(document.getElementById('po-qty').value) || 1;
         const cost = parseFloat(document.getElementById('po-cost').value) || 0;
-        
         if (qty <= 0 || cost < 0) return alert("Please enter a valid positive quantity and cost.");
 
-        const itemName = sel.options[sel.selectedIndex].text.split(' (')[0];
+        const selectedOpt = sel.options[sel.selectedIndex];
+        const uom = selectedOpt.getAttribute('data-uom') || 'KG';
+        const itemName = selectedOpt.text.split(' (')[0];
         
         po_currentCart.push({ 
             ingredient_id: parseInt(sel.value), 
             name: itemName, 
-            qty: qty,       // <--- FIX: Prevents "Error: 'qty'" on the backend
-            qty_kg: qty,    // <--- Failsafe for other backend versions
-            unit_cost: cost 
+            qty: qty,       
+            qty_kg: qty,    
+            unit_cost: cost,
+            uom: uom  // NEW: Save UOM to cart
         });
         
         document.getElementById('po-qty').value = ''; 
         renderPOCart();
     }
+
     function renderPOCart() {
         const tbody = document.getElementById('po-cart-body');
         if(!tbody) return;
@@ -383,15 +440,15 @@ function addToPOCart() {
         let total = 0;
         
         po_currentCart.forEach((item, idx) => {
-            // FAILSAFE: Grabs qty_kg, but falls back to qty if it somehow got mismatched
             const safeQty = item.qty_kg || item.qty || 0; 
+            const uom = item.uom || 'KG'; // Fallback to KG if missing
             const sub = safeQty * item.unit_cost; 
             
             total += sub;
             tbody.innerHTML += `
                 <tr>
                     <td>${item.name}</td>
-                    <td>${safeQty} kg</td>
+                    <td>${safeQty} ${uom}</td>
                     <td>KSh ${item.unit_cost.toFixed(2)}</td>
                     <td><b>KSh ${sub.toFixed(2)}</b></td>
                     <td><button type="button" class="btn-sm btn-danger" onclick="po_currentCart.splice(${idx}, 1); renderPOCart()">x</button></td>
@@ -444,14 +501,22 @@ function addToPOCart() {
         }
     }
 
-    function calcAccepted(idx) {
+function calcAccepted(idx) {
         const row = document.getElementById('grn-lines-body').children[idx];
         const recv = parseFloat(row.querySelector('.grn-recv-qty').value) || 0;
         const rej = parseFloat(row.querySelector('.grn-rej-qty').value) || 0;
-        const acc = Math.max(0, recv - rej);
-        row.querySelector('.grn-acc-qty').innerText = acc;
+        const accUnits = Math.max(0, recv - rej);
+        
+        row.querySelector('.grn-acc-qty').innerText = accUnits;
+        
+        // Handle the UOM Conversion Math
+        const cType = row.getAttribute('data-ctype');
+        const cFact = parseFloat(row.getAttribute('data-cfact')) || 1;
+        
+        if (cType === 'FIXED') {
+            row.querySelector('.grn-stock-kg').value = (accUnits * cFact).toFixed(2);
+        }
     }
-
 async function submitPO() {
         const supplierId = document.getElementById('po-supplier').value;
         if(!supplierId) return alert("Select a supplier.");
@@ -492,7 +557,7 @@ async function submitPO() {
         }
     }
 
-    async function submitGRN() {
+async function submitGRN() {
         const rows = document.getElementById('grn-lines-body').children;
         let receiptLines = [];
         
@@ -500,16 +565,24 @@ async function submitPO() {
             const poLineId = row.getAttribute('data-polineid');
             const recv = parseFloat(row.querySelector('.grn-recv-qty').value) || 0;
             const rej = parseFloat(row.querySelector('.grn-rej-qty').value) || 0;
+            const accUnits = Math.max(0, recv - rej);
+            const kgInput = parseFloat(row.querySelector('.grn-stock-kg').value) || 0;
             
             if (recv > 0) {
+                // Failsafe: Don't let them submit an empty actual weight!
+                if (accUnits > 0 && kgInput <= 0) {
+                    return alert("Please enter the actual Stock KG from the scale.");
+                }
                 receiptLines.push({
                     line_id: parseInt(poLineId),
-                    qty_kg: Math.max(0, recv - rej) 
+                    qty_po_uom: accUnits,           // Send Accepted Bags
+                    qty_rejected_po_uom: rej,       // Send Rejected Bags
+                    qty_kg_accepted: kgInput        // Send Stock KG
                 });
             }
         }
         
-        if(receiptLines.length === 0) return alert("Please enter a receive quantity greater than 0.");
+        if(receiptLines.length === 0) return alert("Please enter a receive quantity.");
         
         try {
             const res = await fetch(`/api/po/${po_activeReceiving.id}/grpo`, {
@@ -518,40 +591,43 @@ async function submitPO() {
                 body: JSON.stringify({ received_items: receiptLines })
             });
             
-            // FIX: Force read the response body FIRST before checking res.ok
-            const text = await res.text();
-            let data = {};
-            try { data = JSON.parse(text); } catch(e) {}
-            
-            // Now check for errors and extract the EXACT Python error message
+            const data = await res.json();
             if (!res.ok || data.status === 'error') {
-                throw new Error(data.message || text || `HTTP ${res.status}`);
+                throw new Error(data.message || `HTTP ${res.status}`);
             }
             
-            alert(`GRN posted successfully.`);
+            alert(`GRN posted successfully!`);
             document.getElementById('receive-grn-modal').style.display = 'none';
             await po_loadHistory();
             if (typeof po_loadInventory === 'function') await po_loadInventory(); 
             
-        } catch(err) { 
-            console.error(err);
-            // This will pop up the exact backend crash reason!
-            alert("Backend Error (GRN Post): " + err.message); 
-        }
+        } catch(err) { alert("Backend Error (GRN Post): " + err.message); }
     }
-    async function submitNewItem() {
+async function submitNewItem() {
         const name = document.getElementById('new-item-name').value;
         const cat = document.getElementById('new-item-cat').value;
         const bag = parseFloat(document.getElementById('new-item-bag').value) || 50;
         const cost = parseFloat(document.getElementById('new-item-cost').value) || 0;
-
-        if(!name) return alert("Item name is required.");
-
+        
+        const puom = document.getElementById('new-item-puom').value;
+        const suom = document.getElementById('new-item-suom').value;
+        const convType = document.getElementById('new-item-conv-type').value; 
+        const conv = parseFloat(document.getElementById('new-item-conv').value) || 1;
+        
         try {
             const res = await fetch('/api/po/inventory/add', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name: name, category: cat, bag_size_kg: bag, cost_per_kg: cost })
+                body: JSON.stringify({ 
+                    name: name, 
+                    category: cat, 
+                    bag_size_kg: bag, 
+                    cost_per_kg: cost,
+                    purchase_uom: puom,
+                    stock_uom: suom,
+                    conversion_type: convType,
+                    conversion_factor: convType === 'VARIABLE' ? null : conv 
+                })
             });
             const data = await res.json();
             
@@ -559,9 +635,51 @@ async function submitPO() {
                 alert("✅ Item Saved to Database!");
                 document.getElementById('create-item-modal').style.display = 'none';
                 document.getElementById('new-item-name').value = '';
+                document.getElementById('new-item-conv').value = '';
                 await po_loadInventory(); 
             } else { alert("Error: " + data.message); }
         } catch (err) { alert("System error adding item."); }
     }
-	
+async function submitNewSupplier() {
+        const name = document.getElementById('new-supplier-name').value;
+        const phone = document.getElementById('new-supplier-phone').value;
+        const loc = document.getElementById('new-supplier-location').value;
+        const items = document.getElementById('new-supplier-items').value;
+        const desc = document.getElementById('new-supplier-desc').value;
+
+        if(!name) return alert("Supplier name is required.");
+
+        try {
+            const res = await fetch('/api/suppliers/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name, phone: phone, location: loc, items_dealing: items, description: desc })
+            });
+            const data = await res.json();
+            
+            if(data.status === 'success') {
+                alert("✅ Supplier added successfully!");
+                document.getElementById('create-supplier-modal').style.display = 'none';
+                document.getElementById('new-supplier-name').value = '';
+                document.getElementById('new-supplier-phone').value = '';
+                document.getElementById('new-supplier-location').value = '';
+                document.getElementById('new-supplier-items').value = '';
+                document.getElementById('new-supplier-desc').value = '';
+                await po_loadSuppliers(); 
+            } else { alert("Error: " + data.message); }
+        } catch (err) { alert("System error adding supplier."); }
+    }
+
+    function toggleConvFactor() {
+        const type = document.getElementById('new-item-conv-type').value;
+        const factorInput = document.getElementById('new-item-conv');
+        if (type === 'VARIABLE') {
+            factorInput.value = '';
+            factorInput.disabled = true;
+            factorInput.placeholder = 'N/A';
+        } else {
+            factorInput.disabled = false;
+            factorInput.placeholder = 'e.g. 70';
+        }
+    }
 </script>
