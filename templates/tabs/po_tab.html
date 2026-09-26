@@ -460,47 +460,6 @@ function addToPOCart() {
         if(totalSpan) totalSpan.innerText = total.toFixed(2);
     }
 
-    // --- GRN RECEIVING LOGIC ---
-    async function openReceiveGRN(poId) {
-        // Use loose comparison (==) to prevent type mismatch bugs between IDs
-        const po = po_orderHistory.find(p => p.id == poId);
-        if(!po) {
-            alert("Could not find PO reference in local history.");
-            return;
-        }
-        
-        try {
-            const res = await fetch(`/api/po/${poId}/lines`);
-            const poData = await res.json();
-            
-            po_activeReceiving = poData;
-            document.getElementById('grn-po-number').innerText = po.po_number;
-            
-            const tbody = document.getElementById('grn-lines-body');
-            tbody.innerHTML = '';
-            
-            poData.lines.forEach((line, idx) => {
-                const remaining = line.qty_ordered - line.qty_received_so_far;
-                if (remaining <= 0) return;
-
-                tbody.innerHTML += `
-                    <tr data-polineid="${line.id}" data-ordered="${remaining}">
-                        <td>${line.item_name}<br/><small style="color:#666;">Ordered: ${line.qty_ordered} | Pending: ${remaining}</small></td>
-                        <td><input type="number" class="grn-recv-qty" max="${remaining}" placeholder="Qty" style="width:90px;" oninput="calcAccepted(${idx})"></td>
-                        <td><input type="number" class="grn-rej-qty" value="0" min="0" style="width:90px;" oninput="calcAccepted(${idx})"></td>
-                        <td><span class="grn-acc-qty" style="font-weight:bold; color:green; font-size:16px;">0</span></td>
-                        <td><input type="text" class="grn-batch" placeholder="Lot/Batch" style="width:110px;"></td>
-                    </tr>
-                `;
-            });
-            
-            document.getElementById('receive-grn-modal').style.display = 'block';
-        } catch (err) {
-            alert("Error loading PO details.");
-            console.error(err);
-        }
-    }
-
 function calcAccepted(idx) {
         const row = document.getElementById('grn-lines-body').children[idx];
         const recv = parseFloat(row.querySelector('.grn-recv-qty').value) || 0;
@@ -604,42 +563,52 @@ async function submitGRN() {
         } catch(err) { alert("Backend Error (GRN Post): " + err.message); }
     }
 async function submitNewItem() {
-        const name = document.getElementById('new-item-name').value;
-        const cat = document.getElementById('new-item-cat').value;
-        const bag = parseFloat(document.getElementById('new-item-bag').value) || 50;
-        const cost = parseFloat(document.getElementById('new-item-cost').value) || 0;
-        
-        const puom = document.getElementById('new-item-puom').value;
-        const suom = document.getElementById('new-item-suom').value;
-        const convType = document.getElementById('new-item-conv-type').value; 
-        const conv = parseFloat(document.getElementById('new-item-conv').value) || 1;
-        
-        try {
-            const res = await fetch('/api/po/inventory/add', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ 
-                    name: name, 
-                    category: cat, 
-                    bag_size_kg: bag, 
-                    cost_per_kg: cost,
-                    purchase_uom: puom,
-                    stock_uom: suom,
-                    conversion_type: convType,
-                    conversion_factor: convType === 'VARIABLE' ? null : conv 
-                })
-            });
-            const data = await res.json();
-            
-            if(data.status === 'success') {
-                alert("✅ Item Saved to Database!");
-                document.getElementById('create-item-modal').style.display = 'none';
-                document.getElementById('new-item-name').value = '';
-                document.getElementById('new-item-conv').value = '';
-                await po_loadInventory(); 
-            } else { alert("Error: " + data.message); }
-        } catch (err) { alert("System error adding item."); }
+    const name = document.getElementById('new-item-name').value;
+    
+    // Safety check to prevent blank items
+    if (!name || name.trim() === '') {
+        return alert("Please enter an Item Name before saving.");
     }
+
+    const cat = document.getElementById('new-item-cat').value;
+    const bag = parseFloat(document.getElementById('new-item-bag').value) || 50;
+    const cost = parseFloat(document.getElementById('new-item-cost').value) || 0;
+    
+    const puom = document.getElementById('new-item-puom').value;
+    const suom = document.getElementById('new-item-suom').value;
+    const convType = document.getElementById('new-item-conv-type').value; 
+    const conv = parseFloat(document.getElementById('new-item-conv').value) || 1;
+    
+    try {
+        const res = await fetch('/api/po/inventory/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ 
+                name: name, 
+                category: cat, 
+                bag_size_kg: bag, 
+                cost_per_kg: cost,
+                purchase_uom: puom,
+                stock_uom: suom,
+                conversion_type: convType,
+                conversion_factor: convType === 'VARIABLE' ? null : conv 
+            })
+        });
+        const data = await res.json();
+        
+        if(data.status === 'success') {
+            alert("✅ Item Saved to Database!");
+            document.getElementById('create-item-modal').style.display = 'none';
+            document.getElementById('new-item-name').value = '';
+            document.getElementById('new-item-conv').value = '';
+            await po_loadInventory(); 
+        } else { 
+            alert("Error: " + data.message); 
+        }
+    } catch (err) { 
+        alert("System error adding item."); 
+    }
+}
 async function submitNewSupplier() {
         const name = document.getElementById('new-supplier-name').value;
         const phone = document.getElementById('new-supplier-phone').value;
