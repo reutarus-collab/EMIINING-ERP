@@ -30,7 +30,10 @@ def process_full_pos_checkout(data):
             raise Exception(f"Insufficient stock for {ingredient.name}. Available: {ingredient.stock_quantity_kg}kg")
 
         ingredient.stock_quantity_kg -= total_kg_for_item
-        subtotal = qty * (ingredient.retail_price_per_kg * bag_size_kg)
+        price_per_kg = ingredient.retail_price_per_kg or ingredient.cost_per_kg or 0.0
+        subtotal = qty * (price_per_kg * bag_size_kg)
+        if subtotal <= 0:
+            raise Exception(f"Item '{ingredient.name}' has no price configured. Set its price in Inventory before selling it.")
         total_bill += subtotal
         
         order_lines.append(OrderLine(

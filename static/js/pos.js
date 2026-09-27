@@ -123,27 +123,64 @@ function addPaymentLine() {
 async function completeCheckout() {
   if (cart.length === 0) return alert('Cart is empty!');
   const custId = document.getElementById('customer-select').value;
-  let payments = []; let isValid = true;
   
-  document.querySelectorAll('.p-method').forEach((m, i) => { 
-      const amtStr = document.querySelectorAll('.p-amount')[i].value; 
-      if(amtStr && parseFloat(amtStr) > 0) {
-          const amt = parseFloat(amtStr);
-          if (amt < 0) isValid = false;
-          payments.push({ payment_method: m.value, amount: amt, reference: document.querySelectorAll('.p-ref')[i].value }); 
-      }
-  });
-
-  if (!isValid) return alert("Negative payments are strictly prohibited.");
-  
-  // We removed the strict check! If payments are short, the backend will auto-assign it to credit.
-
   let rawSubtotal = cart.reduce((sum, c) => sum + (c.qty * c.retail_price_kg * c.bag_size_kg), 0);
   let discVal = parseFloat(document.getElementById('discount-val').value) || 0;
   let discType = document.getElementById('discount-type').value;
   let absoluteDisc = discType === 'PCT' ? (rawSubtotal * (discVal / 100)) : discVal;
   
   if (absoluteDisc < 0) return alert("Negative discounts are strictly prohibited.");
+  
+  let totalDue = Math.max(0, rawSubtotal - absoluteDisc);
+
+  // --- NEW STRICT BLOCKER ---
+  if (totalDue <= 0) {
+      return alert("Cannot complete sale: Total amount due is KSh 0.00. Please check if all items have prices set.");
+  }
+  // --- NEW: AUTO-CREDIT CALCULATOR ---
+  let explicitTotal = 0;
+  let emptyCreditRow = null;
+  
+  document.querySelectorAll('.split-row').forEach(row => {
+      const method = row.querySelector('.p-method').value;
+      const amt = parseFloat(row.querySelector('.p-amount').value) || 0;
+      explicitTotal += amt;
+      
+      // Detect if they chose CREDIT but left amount blank
+      if (method === 'CREDIT' && amt === 0) {
+          emptyCreditRow = row;
+      }
+  });
+
+  // Auto-fill the missing balance
+  if (emptyCreditRow && explicitTotal < totalDue) {
+      const short = parseFloat((totalDue - explicitTotal).toFixed(2));
+      emptyCreditRow.querySelector('.p-amount').value = short;
+      calculateChange(); 
+  }
+  // -----------------------------------
+
+  let payments = []; 
+  let isValid = true;
+  let totalEntered = 0;
+  
+  document.querySelectorAll('.split-row').forEach(row => { 
+      const amtStr = row.querySelector('.p-amount').value; 
+      if(amtStr && parseFloat(amtStr) > 0) {
+          const amt = parseFloat(amtStr);
+          if (amt < 0) isValid = false;
+          payments.push({ payment_method: row.querySelector('.p-method').value, amount: amt, reference: row.querySelector('.p-ref').value }); 
+          totalEntered += amt;
+      }
+  });
+
+  if (!isValid) return alert("Negative payments are strictly prohibited.");
+  
+  // STRICT PAYMENT CHECK
+  if (totalEntered < (totalDue - 0.01)) { 
+      const short = (totalDue - totalEntered).toFixed(2);
+      return alert(`Payment incomplete! You are short by KSh ${short}.`);
+  }
 
   try {
       const res = await fetch('/api/pos/checkout', {

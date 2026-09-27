@@ -75,12 +75,23 @@ def receive_grpo_partial(po_id):
             
             new_subtotal = incoming_qty * line.unit_cost
             old_val = (ing.stock_quantity_kg or 0.0) * (ing.cost_per_kg or 0.0)
-            new_total_stock = (ing.stock_quantity_kg or 0.0) + incoming_qty
+            # Canonical Read: Current stock from ledger
+            current_stock = db.session.query(db.func.sum(StockMovement.qty_kg)).filter_by(ingredient_id=ing.id).scalar() or 0.0
             
-            if new_total_stock > 0: ing.cost_per_kg = (old_val + new_subtotal) / new_total_stock
+            # NOTE: Using incoming_kg instead of incoming_qty to match po.py
+            new_subtotal = incoming_kg * line.unit_cost
+            old_val = current_stock * (ing.cost_per_kg or 0.0)
+            new_total_stock = current_stock + incoming_kg
             
-            ing.stock_quantity_kg = new_total_stock
-            line.received_qty_kg += incoming_qty
+            # Update moving average cost based on true ledger stock
+            if new_total_stock > 0: 
+                ing.cost_per_kg = (old_val + new_subtotal) / new_total_stock
+            
+            # DELETED: ing.stock_quantity_kg = new_total_stock
+            
+            # Write back the PO units
+            line.qty_received = received + incoming_po_qty
+            line.qty_rejected = rejected + rejected_po_qty
             grpo_total_value += new_subtotal
             
             db.session.add(StockMovement(ingredient_id=ing.id, movement_type='GRPO_RECEIPT', qty_kg=incoming_qty, reference_id=grpo_ref))

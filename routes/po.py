@@ -179,18 +179,20 @@ def receive_grpo_partial(po_id):
             # Ensure they don't receive more than ordered (including rejects)
             if (received + rejected + incoming_po_qty + rejected_po_qty) > ordered: 
                 raise ValueError(f"Exceeds PO limit for {ing.name}")
+
+            # Canonical Read: Current stock from ledger
+            current_stock = db.session.query(db.func.sum(StockMovement.qty_kg)).filter_by(ingredient_id=ing.id).scalar() or 0.0
             
-            # Value is based on PO Units (e.g. Price per Bag)
-            new_subtotal = incoming_po_qty * line.unit_cost
+            # NOTE: Using incoming_kg instead of incoming_qty to match po.py
+            new_subtotal = incoming_kg * line.unit_cost
+            old_val = current_stock * (ing.cost_per_kg or 0.0)
+            new_total_stock = current_stock + incoming_kg
             
-            # Stock is strictly KG!
-            old_val = (ing.stock_quantity_kg or 0.0) * (ing.cost_per_kg or 0.0)
-            new_total_stock = (ing.stock_quantity_kg or 0.0) + incoming_kg
-            
+            # Update moving average cost based on true ledger stock
             if new_total_stock > 0: 
                 ing.cost_per_kg = (old_val + new_subtotal) / new_total_stock
             
-            ing.stock_quantity_kg = new_total_stock
+            # DELETED: ing.stock_quantity_kg = new_total_stock
             
             # Write back the PO units
             line.qty_received = received + incoming_po_qty
