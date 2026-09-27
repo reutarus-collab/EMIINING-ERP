@@ -55,8 +55,10 @@ def process_full_pos_checkout(data):
     explicit_credit = sum(float(p.get('amount', 0.0)) for p in payments if p.get('payment_method') == 'CREDIT')
     
     credit_amount = explicit_credit
-    if total_paid < final_due and explicit_credit == 0:
-        credit_amount = final_due - total_paid
+    total_tendered = total_paid + credit_amount
+
+    if total_tendered < (final_due - 0.01):
+        raise Exception(f"Payment incomplete! KSh {total_tendered:.2f} tendered but KSh {final_due:.2f} is due. Select 'Credit' as the payment method and enter the amount if this is a debt sale.")
 
     change_due = max(0.0, total_paid - final_due) if credit_amount == 0 else 0.0
 
