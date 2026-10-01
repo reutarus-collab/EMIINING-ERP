@@ -6,10 +6,12 @@ from services.models import FeedIngredient, Supplier, Location, PurchaseOrderHea
 
 # 1. Import our new helpers and blueprints
 from routes.pos import pos_bp
+# top of file
+import os
 
+# where the config is
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'emining-enterprise-2026')
-# Force Flask to use the absolute path of the current folder
+app.config['SECRET_KEY'] = os.environ['SECRET_KEY']
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///' + os.path.join(BASE_DIR, 'emining_erp.db'))
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -172,4 +174,4 @@ def process_production():
     return jsonify({"status": "success", "message": "Batch production completed. Finished feed added to inventory."})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=os.environ.get('FLASK_DEBUG') == '1', host='127.0.0.1')
