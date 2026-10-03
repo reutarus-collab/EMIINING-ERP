@@ -422,6 +422,10 @@ function addToPOCart() {
 
         const selectedOpt = sel.options[sel.selectedIndex];
         const uom = selectedOpt.getAttribute('data-uom') || 'KG';
+        const knownCost = parseFloat(selectedOpt.getAttribute('data-cost')) || 0;
+        if (uom !== 'KG' && knownCost > 0 && Math.abs(cost - knownCost) < 0.01) {
+            if (!confirm('This item is bought per ' + uom + '. KSh ' + cost.toFixed(2) + ' equals its current price per kg. The cost here must be the price per ' + uom + ', and the quantity the number of ' + uom + 's. Add this line anyway?')) return;
+        }
         const itemName = selectedOpt.text.split(' (')[0];
         
         po_currentCart.push({ 
@@ -453,7 +457,7 @@ function addToPOCart() {
                 <tr>
                     <td>${escHtml(item.name)}</td>
                     <td>${safeQty} ${uom}</td>
-                    <td>KSh ${item.unit_cost.toFixed(2)}</td>
+                    <td>KSh ${item.unit_cost.toFixed(2)} per ${escHtml(uom)}</td>
                     <td><b>KSh ${sub.toFixed(2)}</b></td>
                     <td><button type="button" class="btn-sm btn-danger" onclick="po_currentCart.splice(${idx}, 1); renderPOCart()">x</button></td>
                 </tr>
