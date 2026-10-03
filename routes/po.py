@@ -1,3 +1,4 @@
+import math
 from flask import Blueprint, request, jsonify
 import uuid
 from services.db import db
@@ -9,8 +10,12 @@ po_bp = Blueprint('po_bp', __name__)
 @po_bp.route('/api/suppliers', methods=['GET', 'POST'])
 def manage_suppliers():
     if request.method == 'POST':
-        data = request.get_json()
-        supplier = Supplier(name=data['name'], contact_info=data.get('contact_info', ''))
+        data = request.get_json(silent=True) or {}
+        sname = str(data.get('name', '')).strip()
+        sinfo = str(data.get('contact_info', '') or '').strip()
+        if not sname or len(sname) > 100 or any(ch in (sname + sinfo) for ch in '<>'):
+            return jsonify({'status': 'error', 'message': 'Invalid supplier details.'}), 400
+        supplier = Supplier(name=sname, contact_info=sinfo[:255])
         db.session.add(supplier)
         db.session.commit()
         return jsonify({'status': 'success', 'supplier_id': supplier.id})
@@ -31,7 +36,7 @@ def create_po():
 def receive_po(po_id):
     try:
         grn_data = request.get_json()
-        grn_number = post_goods_receipt(po_id, grn_data)
+        raise Exception('This receiving route is retired. Use the Receive screen on the Purchase Orders tab.')
         return jsonify({'status': 'success', 'grn_number': grn_number})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
@@ -104,9 +109,14 @@ def add_new_item():
         data = request.get_json()
         print("📥 Incoming new item data:", data)
 
+        clean_name = str(data.get('name', '')).strip()
+        clean_cat = str(data.get('category') or '').strip()[:50]
+        text_fields = clean_name + clean_cat + str(data.get('purchase_uom') or '') + str(data.get('stock_uom') or '') + str(data.get('conversion_type') or '')
+        if not clean_name or len(clean_name) > 100 or any(ch in text_fields for ch in '<>'):
+            raise ValueError('Invalid item name or category.')
         new_item = FeedIngredient(
-            name=data['name'],
-            category=data.get('category'),
+            name=clean_name,
+            category=clean_cat,
             bag_size_kg=float(data.get('bag_size_kg', 50)),
             cost_per_kg=float(data.get('cost_per_kg', 0.0)),
             purchase_uom=data.get('purchase_uom', 'KG'),
@@ -132,12 +142,15 @@ def add_supplier():
         if not data or not data.get('name'):
             raise ValueError("Supplier name is required")
             
+        vals = {k: str(data.get(k) or '').strip() for k in ('name', 'phone', 'location', 'items_dealing', 'description')}
+        if len(vals['name']) > 100 or any(ch in ''.join(vals.values()) for ch in '<>'):
+            raise ValueError('Invalid supplier details.')
         new_sup = Supplier(
-            name=data['name'],
-            phone=data.get('phone', ''),
-            location=data.get('location', ''),
-            items_dealing=data.get('items_dealing', ''),
-            description=data.get('description', '')
+            name=vals['name'],
+            phone=vals['phone'][:50],
+            location=vals['location'][:100],
+            items_dealing=vals['items_dealing'][:255],
+            description=vals['description'][:2000]
         )
         db.session.add(new_sup)
         db.session.commit()
@@ -153,6 +166,8 @@ def receive_grpo_partial(po_id):
         po = db.session.get(PurchaseOrderHeader, po_id)
         if not po:
             raise ValueError("Purchase Order not found.")
+        if po.status in ('FULLY_RECEIVED', 'CLOSED', 'CANCELLED'):
+            raise ValueError("This purchase order is already closed.")
             
         grpo_total_value = 0.0
         grpo_ref = f"GRPO-{uuid.uuid4().hex[:6].upper()}"
@@ -160,13 +175,17 @@ def receive_grpo_partial(po_id):
 
         for recv_item in data.get('received_items', []):
             line = db.session.get(PurchaseOrderLine, int(recv_item['line_id']))
-            if not line:
-                continue
+            if not line or line.po_header_id != po_id:
+                raise ValueError('A receipt line does not belong to this purchase order.')
                 
             # SEPARATING UOM: How many Bags arrived, vs how many KGs go to stock
             incoming_po_qty = float(recv_item.get('qty_po_uom', 0.0))
             rejected_po_qty = float(recv_item.get('qty_rejected_po_uom', 0.0))
             incoming_kg = float(recv_item.get('qty_kg_accepted', 0.0))
+            if not all(math.isfinite(v) and v >= 0 for v in (incoming_po_qty, rejected_po_qty, incoming_kg)):
+                raise ValueError('Quantities must be zero or more.')
+            if incoming_po_qty > 0 and incoming_kg <= 0:
+                raise ValueError('Enter the weight in kg for the goods received.')
 
             if incoming_po_qty <= 0 and rejected_po_qty <= 0: 
                 continue
@@ -184,15 +203,20 @@ def receive_grpo_partial(po_id):
             current_stock = db.session.query(db.func.sum(StockMovement.qty_kg)).filter_by(ingredient_id=ing.id).scalar() or 0.0
             
             # NOTE: Using incoming_kg instead of incoming_qty to match po.py
-            new_subtotal = incoming_kg * line.unit_cost
+            new_subtotal = incoming_po_qty * line.unit_cost
             old_val = current_stock * (ing.cost_per_kg or 0.0)
             new_total_stock = current_stock + incoming_kg
+            if incoming_kg > 0 and incoming_po_qty > 0:
+                implied = new_subtotal / incoming_kg
+                known = ing.cost_per_kg or 0.0
+                if known > 0 and not (known / 3.0 <= implied <= known * 3.0):
+                    raise ValueError(f"Cost per kg works out to {implied:.2f} for {ing.name}, far from its current {known:.2f}. Check the quantity received and the unit cost on the PO.")
             
             # Update moving average cost based on true ledger stock
             if new_total_stock > 0: 
                 ing.cost_per_kg = (old_val + new_subtotal) / new_total_stock
             
-            # DELETED: ing.stock_quantity_kg = new_total_stock
+            ing.stock_quantity_kg = (ing.stock_quantity_kg or 0.0) + incoming_kg
             
             # Write back the PO units
             line.qty_received = received + incoming_po_qty
@@ -209,7 +233,7 @@ def receive_grpo_partial(po_id):
         po.status = 'FULLY_RECEIVED' if all_lines_fully_received else 'PARTIAL_RECEIVED'
 
         db.session.commit()
-        return jsonify({'status': 'success', 'grpo_no': grpo_ref, 'status': po.status})
+        return jsonify({'status': 'success', 'grpo_no': grpo_ref, 'po_status': po.status})
     except Exception as e:
         db.session.rollback()
         return jsonify({'status': 'error', 'message': str(e)}), 400

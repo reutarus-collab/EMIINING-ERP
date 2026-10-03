@@ -1,3 +1,10 @@
+<script>
+window.escHtml = window.escHtml || function (s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+};
+</script>
 <div id="pos-tab" class="tab-content active">
   <div class="pos-grid">
     <div>
@@ -27,6 +34,7 @@
             <input type="text" id="nc-name" placeholder="Full Name" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
             <input type="text" id="nc-phone" placeholder="Phone Number" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
             <input type="text" id="nc-location" placeholder="Location / Town" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
+			<input type="number" id="nc-limit" min="0" placeholder="Credit limit in KSh (leave 0 for cash-only)" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
             <div style="display:flex; gap: 10px;">
                 <button class="btn-sm btn-success" style="flex:1; height: 45px; font-size: 16px;" onclick="saveNewCustomer()">Save & Select</button>
                 <button class="btn-sm btn-danger" style="flex:1; height: 45px; font-size: 16px;" onclick="document.getElementById('new-cust-form').style.display='none'">Cancel</button>

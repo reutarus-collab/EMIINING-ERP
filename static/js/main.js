@@ -12,10 +12,23 @@ function showTab(tabId) {
     if (tabId === 'sales-tab' && typeof loadSalesHistory === 'function') loadSalesHistory();
 }
 
-// Aggressively load all module dropdowns on page boot
-document.addEventListener('DOMContentLoaded', () => {
-    if(typeof loadCustomers === 'function') loadCustomers();
-    if(typeof searchProducts === 'function') searchProducts();
-    if(typeof loadPODropdown === 'function') loadPODropdown();
-    if(typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
+document.addEventListener('DOMContentLoaded', async () => {
+    let role = 'sales';
+    try {
+        const r = await fetch('/api/me', { credentials: 'same-origin' });
+        if (r.ok) role = (await r.json()).role;
+    } catch (e) {}
+    window.currentRole = role;
+
+    document.querySelectorAll('[data-roles]').forEach(el => {
+        if (!el.dataset.roles.split(',').includes(role)) el.style.display = 'none';
+    });
+
+    if (typeof loadCustomers === 'function') loadCustomers();
+    if (typeof searchProducts === 'function') searchProducts();
+
+    if (['admin', 'accountant', 'warehouse'].includes(role)) {
+        if (typeof loadPODropdown === 'function') loadPODropdown();
+        if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
+    }
 });

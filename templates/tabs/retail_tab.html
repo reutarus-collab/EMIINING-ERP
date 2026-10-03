@@ -1,0 +1,124 @@
+﻿<div id="stock-tab" class="tab-content">
+  <div class="card">
+    <h3>Stock on Hand</h3>
+    <input id="stock-filter" placeholder="Filter items..." oninput="renderStock()"
+           style="padding:10px;width:100%;max-width:320px;margin-bottom:10px">
+    <table class="data-table">
+      <thead><tr><th>Item</th><th>Category</th><th>Stock (kg)</th><th>Bag (kg)</th><th>Retail / kg</th></tr></thead>
+      <tbody id="stock-body"><tr><td colspan="5">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+<div id="report-tab" class="tab-content">
+  <div class="card">
+    <h3>Daily Report <span id="rep-date"></span></h3>
+    <div id="rep-body">Loading...</div>
+  </div>
+</div>
+<div id="pricing-tab" class="tab-content">
+  <div class="card">
+    <h3>Retail Pricing (admin only)</h3>
+    <p style="font-size:.9rem;color:#666">Items with no price cannot be sold. Price must be above cost.</p>
+    <table class="data-table">
+      <thead><tr><th>Item</th><th>Cost / kg</th><th>Retail / kg</th><th>Margin</th><th></th></tr></thead>
+      <tbody id="price-body"><tr><td colspan="5">Loading...</td></tr></tbody>
+    </table>
+    <div id="price-msg" style="margin-top:10px"></div>
+  </div>
+</div>
+<script>
+let stockRows = [];
+const retailEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function loadStock() {
+  const r = await fetch('/api/stock', {credentials: 'same-origin'});
+  if (!r.ok) { document.getElementById('stock-body').innerHTML = '<tr><td colspan="5">Cannot load stock.</td></tr>'; return; }
+  stockRows = await r.json();
+  renderStock();
+}
+function renderStock() {
+  const q = (document.getElementById('stock-filter').value || '').toLowerCase();
+  const rows = stockRows.filter(i => (i.name || '').toLowerCase().includes(q));
+  document.getElementById('stock-body').innerHTML = rows.map(i =>
+    `<tr><td>${retailEsc(i.name)}</td><td>${retailEsc(i.category)}</td><td>${i.stock_kg}</td><td>${i.bag_size_kg}</td><td>${
+      i.priced ? i.retail_price_per_kg.toFixed(2) : '<span style="color:#b00;font-weight:bold">NO PRICE</span>'}</td></tr>`
+  ).join('') || '<tr><td colspan="5">No items.</td></tr>';
+}
+async function loadDailyReport() {
+  const box = document.getElementById('rep-body');
+  const r = await fetch('/api/reports/daily', {credentials: 'same-origin'});
+  if (!r.ok) { box.textContent = 'Cannot load report.'; return; }
+  const d = await r.json();
+  document.getElementById('rep-date').textContent = '(' + d.date + ')';
+  const methods = Object.entries(d.by_method).map(([m, a]) =>
+    `<tr><td>${retailEsc(m)}</td><td>${a.toFixed(2)}</td></tr>`).join('');
+  box.innerHTML = `<p>Sales: <b>${d.sales_count}</b> &nbsp; Total: <b>KSh ${d.total_sales.toFixed(2)}</b> &nbsp; Discounts: KSh ${d.discounts.toFixed(2)}</p>
+    <table class="data-table"><thead><tr><th>Payment method</th><th>KSh</th></tr></thead>
+    <tbody>${methods || '<tr><td colspan="2">No payments today.</td></tr>'}</tbody></table>`;
+}
+async function loadPrices() {
+  const body = document.getElementById('price-body');
+  const r = await fetch('/api/admin/prices', {credentials: 'same-origin'});
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="5">Admin only.</td></tr>'; return; }
+  const rows = await r.json();
+  body.innerHTML = rows.map(i => {
+    const m = i.margin_pct === null ? '<span style="color:#b00;font-weight:bold">NO PRICE</span>' : i.margin_pct + '%';
+    return `<tr><td>${retailEsc(i.name)}</td><td>${i.cost_per_kg.toFixed(2)}</td>
+      <td><input type="number" min="0" step="0.01" id="price-${i.id}" value="${i.retail_price_per_kg || ''}" style="width:110px;padding:6px"></td>
+      <td>${m}</td><td><button class="btn-sm btn-primary" onclick="savePrice(${i.id})">Save</button></td></tr>`;
+  }).join('');
+}
+async function savePrice(id) {
+  const price = parseFloat(document.getElementById('price-' + id).value);
+  const msg = document.getElementById('price-msg');
+  const r = await fetch('/api/admin/prices', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: id, retail_price_per_kg: price})
+  });
+  const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
+  msg.innerHTML = d.status === 'success'
+    ? '<span style="color:green">Saved.</span>'
+    : '<span style="color:red">' + retailEsc(d.message) + '</span>';
+  if (d.status === 'success') loadPrices();
+}
+</script>
+
+<div id="customers-tab" class="tab-content">
+  <div class="card">
+    <h3>Customers and Credit Limits (admin only)</h3>
+    <p style="font-size:.9rem;color:#666">Customers created at the till start at a limit of 0. Set a limit here to allow credit sales.</p>
+    <table class="data-table">
+      <thead><tr><th>Customer</th><th>Phone</th><th>Debt</th><th>Credit limit</th><th></th></tr></thead>
+      <tbody id="cust-body"><tr><td colspan="5">Loading...</td></tr></tbody>
+    </table>
+    <div id="cust-msg" style="margin-top:10px"></div>
+  </div>
+</div>
+<script>
+async function loadCustAdmin() {
+  const body = document.getElementById('cust-body');
+  const r = await fetch('/api/customers', {credentials: 'same-origin'});
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="5">Cannot load customers.</td></tr>'; return; }
+  const rows = await r.json();
+  body.innerHTML = rows.map(c =>
+    `<tr><td>${retailEsc(c.name)}</td><td>${retailEsc(c.phone)}</td><td>${Number(c.balance || 0).toFixed(2)}</td>
+     <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
+     <td><button class="btn-sm btn-primary" onclick="saveCreditLimit(${c.id})">Save</button></td></tr>`
+  ).join('') || '<tr><td colspan="5">No customers.</td></tr>';
+}
+async function saveCreditLimit(id) {
+  const limit = parseFloat(document.getElementById('cl-' + id).value);
+  const msg = document.getElementById('cust-msg');
+  const r = await fetch('/api/admin/customers/' + id + '/credit-limit', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({credit_limit: limit})
+  });
+  const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
+  msg.innerHTML = d.status === 'success'
+    ? '<span style="color:green">Saved.</span>'
+    : '<span style="color:red">' + retailEsc(d.message) + '</span>';
+  if (d.status === 'success') loadCustAdmin();
+}
+</script>

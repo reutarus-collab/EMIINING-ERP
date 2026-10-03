@@ -12,9 +12,13 @@ async function searchProducts() {
   div.innerHTML = '';
   if (searchResultsCache.length === 0) { div.innerHTML = '<div style="padding:10px;">No items match query.</div>'; return; }
   searchResultsCache.forEach(i => {
+    const priceText = i.priced ? `KSh ${i.retail_price_kg}/kg` : '<b style="color:#b00">NO PRICE</b>';
+    const btn = i.priced
+      ? `<button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button>`
+      : `<button class="btn-sm" disabled>No price</button>`;
     div.innerHTML += `<div class="product-row">
-      <div><b>${i.name}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${i.category}</span><br/><small>Stock: ${i.available_stock_kg} kg | KSh ${i.retail_price_kg}/kg | Bag: ${i.bag_size_kg}kg</small></div>
-      <button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button></div>`;
+      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>Stock: ${i.available_stock_kg} kg | ${priceText} | Bag: ${i.bag_size_kg}kg</small></div>
+      ${btn}</div>`;
   });
 }
 
@@ -70,7 +74,7 @@ function renderCart() {
     subtotal += lineTotal;
     
     tbody.innerHTML += `<tr>
-      <td><b>${c.name}</b></td>
+      <td><b>${escHtml(c.name)}</b></td>
       <td><input type="number" value="${c.qty}" step="any" min="0.1" onchange="cart[${idx}].qty=Math.max(0.1, parseFloat(this.value)); renderCart()" style="width: 80px; text-align: center; padding: 10px; font-size: 16px; height: 50px;" /></td>
       <td>
         <select onchange="updateCartUnit(${idx}, this.value)" style="height: 50px; font-size: 16px; width: 100%; min-width: 120px;">
@@ -119,6 +123,7 @@ function restoreCart() {
 function addPaymentLine() { 
     document.getElementById('payment-lines').innerHTML += `<div class="split-row" style="margin-bottom: 10px;"><select class="p-method" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;" /></div>`; 
 }
+let checkoutInFlight = false;
 
 async function completeCheckout() {
   if (cart.length === 0) return alert('Cart is empty!');
@@ -182,26 +187,34 @@ async function completeCheckout() {
       return alert(`Payment incomplete! You are short by KSh ${short}.`);
   }
 
+    if (checkoutInFlight) return;
+  checkoutInFlight = true;
   try {
       const res = await fetch('/api/pos/checkout', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-              customer_id: custId ? parseInt(custId) : null, 
-              discount_amount: absoluteDisc, 
-              cart: cart.map(c => ({ ingredient_id: c.id, unit_type: c.unit_type, qty: c.qty, bag_size_kg: c.bag_size_kg })), 
-              payments: payments 
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+              customer_id: custId ? parseInt(custId) : null,
+              discount_amount: absoluteDisc,
+              cart: cart.map(c => ({ ingredient_id: c.id, unit_type: c.unit_type, qty: c.qty, bag_size_kg: c.bag_size_kg })),
+              payments: payments
           })
       });
+      if (res.status === 401) {
+          return alert('Session expired. Sale NOT recorded. Cart is kept. Log in again in a new tab, then press Complete again.');
+      }
+      if (res.status === 403) return alert('Your role is not allowed to do this.');
       const data = await res.json();
-      if (data.status === 'success') { 
-          await loadCustomers(); 
-          renderReceipt(data.data); 
-          clearCart(); 
-          searchProducts(); 
+      if (data.status === 'success') {
+          await loadCustomers();
+          renderReceipt(data.data);
+          clearCart();
+          searchProducts();
       } else { alert('Sale Failed: ' + data.message); }
-  } catch(err) { alert("System Error: " + err.message); }
+  } catch(err) {
+      alert('No connection or system error. Sale NOT recorded. Cart is kept. (' + err.message + ')');
+  } finally { checkoutInFlight = false; }
 }
-
 function renderReceipt(data) {
   document.getElementById('r-date').textContent = new Date().toLocaleString(); 
   document.getElementById('r-id').textContent = data.sale_id; 
@@ -219,13 +232,13 @@ function renderReceipt(data) {
       }
   }
 
-  document.getElementById('r-cust').innerHTML = `<strong>${customerDisplayText}</strong>${debtText}`; 
+  document.getElementById('r-cust').innerHTML = `<strong>${escHtml(customerDisplayText)}</strong>${debtText}`; 
   document.getElementById('r-total').textContent = data.total_amount.toFixed(2); 
   
   const linesDiv = document.getElementById('r-lines');
   linesDiv.innerHTML = ''; 
   data.items.forEach(i => { 
-      linesDiv.innerHTML += `<div style="display:flex; justify-content:space-between; margin-bottom: 4px;"><span>${i.qty_entered} ${i.unit} x ${i.name}</span><span>KSh ${i.subtotal.toFixed(2)}</span></div>`; 
+      linesDiv.innerHTML += `<div style="display:flex; justify-content:space-between; margin-bottom: 4px;"><span>${i.qty_entered} ${i.unit} x ${escHtml(i.name)}</span><span>KSh ${i.subtotal.toFixed(2)}</span></div>`; 
   });
 
   linesDiv.innerHTML += `<hr style="border-top: 1px dashed #333; margin: 5px 0;"/>`;
@@ -280,8 +293,8 @@ function printReceiptOnly() {
             <p>Quality Feeds For You</p>
             <hr>
             <div>Date: ${document.getElementById('r-date').innerText}</div>
-            <div>Receipt: ${document.getElementById('r-id').innerText}</div>
-            <div>Customer: ${document.getElementById('r-cust').innerText}</div>
+            <div>Receipt: ${escHtml(document.getElementById('r-id').innerText)}</div>
+            <div>Customer: ${escHtml(document.getElementById('r-cust').innerText)}</div>
             <hr>
             ${document.getElementById('r-lines').innerHTML}
             <hr>
@@ -302,8 +315,8 @@ async function loadCustomers() {
   const sel = document.getElementById('customer-select'); const currentSelVal = sel.value;
   sel.innerHTML = '<option value="">CASH CUSTOMER (Walk-In)</option>';
   customersCache.forEach(c => { 
-      const locText = c.location && c.location !== 'Unknown' ? ` (${c.location})` : '';
-      sel.innerHTML += `<option value="${c.id}">${c.name}${locText} - ${c.phone} - Debt: KSh ${c.balance}</option>`; 
+      const locText = c.location && c.location !== 'Unknown' ? ` (${escHtml(c.location)})` : '';
+      sel.innerHTML += `<option value="${c.id}">${escHtml(c.name)}${locText} - ${escHtml(c.phone)} - Debt: KSh ${c.balance}</option>`; 
   });
   sel.value = currentSelVal; updateCustomerDetails();
 }
@@ -325,10 +338,11 @@ async function saveNewCustomer() {
     const name = document.getElementById('nc-name').value;
     const phone = document.getElementById('nc-phone').value;
     const location = document.getElementById('nc-location').value;
+    const limit = Math.max(0, parseFloat(document.getElementById('nc-limit').value) || 0);
     if(!name) return alert("Name is required");
     const res = await fetch('/api/customers', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: name, phone: phone, location: location})
+        body: JSON.stringify({name: name, phone: phone, location: location, credit_limit: limit})
     });
     const data = await res.json();
     if(data.status === 'success') {
@@ -336,7 +350,7 @@ async function saveNewCustomer() {
         document.getElementById('customer-select').value = data.customer_id;
         updateCustomerDetails();
         document.getElementById('new-cust-form').style.display = 'none';
-        document.getElementById('nc-name').value = ''; document.getElementById('nc-phone').value = ''; document.getElementById('nc-location').value = '';
+        document.getElementById('nc-name').value = ''; document.getElementById('nc-phone').value = ''; document.getElementById('nc-location').value = ''; document.getElementById('nc-limit').value = '';
     } else {
         alert("Failed to save customer");
     }
@@ -377,6 +391,6 @@ async function loadSalesHistory() {
   tbody.innerHTML = '';
   if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="7">No sales logged.</td></tr>'; return; }
   history.forEach(s => {
-    tbody.innerHTML += `<tr><td><small>${s.created_at}</small></td><td><b>${s.sale_id}</b></td><td>${s.customer_name}</td><td><b>KSh ${s.total_amount.toFixed(2)}</b></td><td>KSh ${s.paid_amount.toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+s.credit_amount.toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${s.payments.map(p => `${p.method}: KSh${p.amount.toFixed(2)}`).join(', ') || 'CASH'}</small></td></tr>`;
+    tbody.innerHTML += `<tr><td><small>${s.created_at}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${s.total_amount.toFixed(2)}</b></td><td>KSh ${s.paid_amount.toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+s.credit_amount.toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${s.payments.map(p => `${p.method}: KSh${p.amount.toFixed(2)}`).join(', ') || 'CASH'}</small></td></tr>`;
   });
 }

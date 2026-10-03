@@ -67,31 +67,55 @@ class OutboxManager {
   }
 
   async flushOutbox() {
-    const queue = await this.getAll();
-    if (queue.length === 0) return;
-
+    if (this.flushing) return;
+    this.flushing = true;
     try {
+      const queue = await this.getAll();
+      if (queue.length === 0) return;
+
       const response = await fetch('/api/sync/outbox', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(queue)
       });
+
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('outbox-auth-required',
+          { detail: { pending: queue.length } }));
+        return;
+      }
+      if (!response.ok) {
+        console.error('Outbox sync rejected:', response.status);
+        return;
+      }
       const resData = await response.json();
-      if (resData.synced_ids) {
-        for (const id of resData.synced_ids) {
-          await this.remove(id);
-        }
+      for (const id of (resData.synced_ids || [])) {
+        await this.remove(id);
       }
     } catch (err) {
       console.log('Outbox flush deferred: offline mode active.');
+    } finally {
+      this.flushing = false;
     }
   }
 }
 
 window.outboxManager = new OutboxManager();
 
-window.addEventListener('online', () => {
-  window.outboxManager.flushOutbox();
+window.addEventListener('online', () => window.outboxManager.flushOutbox());
+window.addEventListener('load', () => window.outboxManager.flushOutbox());
+setInterval(() => {
+  if (navigator.onLine) window.outboxManager.flushOutbox();
+}, 60000);
+
+window.addEventListener('outbox-auth-required', (e) => {
+  if (document.getElementById('outbox-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'outbox-banner';
+  b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#b00;color:#fff;padding:10px;text-align:center';
+  b.innerHTML = e.detail.pending + ' sale(s) waiting to sync. <a href="/login" style="color:#fff;font-weight:bold">Log in again</a> to send them.';
+  document.body.appendChild(b);
 });
 
 if ('serviceWorker' in navigator) {

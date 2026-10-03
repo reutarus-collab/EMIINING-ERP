@@ -206,8 +206,12 @@
     let po_activeReceiving = null;
 	let poCart = [];
 
-    document.addEventListener('DOMContentLoaded', () => {
-        initPOModule();
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            const r = await fetch('/api/me', {credentials: 'same-origin'});
+            const me = await r.json();
+            if (['admin', 'accountant', 'warehouse'].includes(me.role)) initPOModule();
+        } catch (e) { console.error('PO init skipped', e); }
     });
 
     async function initPOModule() {
@@ -224,7 +228,7 @@
             if(!sel) return;
             sel.innerHTML = '<option value="">-- Select Supplier --</option>';
             po_suppliersList.forEach(s => {
-                sel.innerHTML += `<option value="${s.id}">${s.name}</option>`;
+                sel.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
             });
         } catch (e) { console.error("Supplier Load Error", e); }
     }
@@ -243,14 +247,14 @@
             
             po_inventoryList.forEach(i => {
                 const uom = i.purchase_uom || 'KG';
-                sel.innerHTML += `<option value="${i.id}" data-cost="${i.cost_per_kg}" data-uom="${uom}">${i.name} (Stock: ${i.stock_quantity_kg.toFixed(1)}kg)</option>`;
+                sel.innerHTML += `<option value="${i.id}" data-cost="${i.cost_per_kg}" data-uom="${uom}">${escHtml(i.name)} (Stock: ${i.stock_quantity_kg.toFixed(1)}kg)</option>`;
                 
                 if(tbody) {
                     let stockColor = i.stock_quantity_kg > 0 ? 'green' : 'red';
                     tbody.innerHTML += `
                         <tr>
-                            <td><b>${i.name}</b></td>
-                            <td>${i.category}</td>
+                            <td><b>${escHtml(i.name)}</b></td>
+                            <td>${escHtml(i.category)}</td>
                             <td>${i.bag_size_kg || '-'} kg</td>
                             <td style="font-weight:bold; color:${stockColor};">${i.stock_quantity_kg.toFixed(1)} kg</td>
                             <td>KSh ${i.cost_per_kg.toFixed(2)}</td>
@@ -303,9 +307,9 @@
 
                 tbody.innerHTML += `
                     <tr>
-                        <td><b>${po.po_number}</b></td>
+                        <td><b>${escHtml(po.po_number)}</b></td>
                         <td>${po.created_at}</td>
-                        <td>${po.supplier_name}</td>
+                        <td>${escHtml(po.supplier_name)}</td>
                         <td>KSh ${po.total_amount.toFixed(2)}</td>
                         <td><span style="font-weight:bold; color:${statusColor};">${statusStr}</span></td>
                         <td>${actionBtn}</td>
@@ -344,7 +348,7 @@ async function viewPO(poId) {
                     const pending = line.qty_ordered - line.qty_received_so_far;
                     tbody.innerHTML += `
                         <tr>
-                            <td><b>${line.item_name}</b></td>
+                            <td><b>${escHtml(line.item_name)}</b></td>
                             <td>${line.qty_ordered}</td>
                             <td><span style="color:${line.qty_received_so_far > 0 ? 'green' : 'black'}; font-weight:bold;">${line.qty_received_so_far}</span></td>
                             <td><span style="color:${pending > 0 ? 'orange' : 'gray'};">${Math.max(0, pending)}</span></td>
@@ -394,7 +398,7 @@ async function viewPO(poId) {
 
                 tbody.innerHTML += `
                     <tr data-polineid="${line.id}" data-ordered="${remaining}" data-ctype="${cType}" data-cfact="${cFact}">
-                        <td>${line.item_name}<br/><small style="color:#666;">Pending: ${remaining} ${uom}</small></td>
+                        <td>${escHtml(line.item_name)}<br/><small style="color:#666;">Pending: ${remaining} ${uom}</small></td>
                         <td><input type="number" class="grn-recv-qty" max="${remaining}" placeholder="${uom}" style="width:90px;" oninput="calcAccepted(${idx})"></td>
                         <td><input type="number" class="grn-rej-qty" value="0" min="0" style="width:70px;" oninput="calcAccepted(${idx})"></td>
                         <td><span class="grn-acc-qty" style="font-weight:bold; color:green; font-size:16px;">0</span> <small>${uom}</small></td>
@@ -447,7 +451,7 @@ function addToPOCart() {
             total += sub;
             tbody.innerHTML += `
                 <tr>
-                    <td>${item.name}</td>
+                    <td>${escHtml(item.name)}</td>
                     <td>${safeQty} ${uom}</td>
                     <td>KSh ${item.unit_cost.toFixed(2)}</td>
                     <td><b>KSh ${sub.toFixed(2)}</b></td>

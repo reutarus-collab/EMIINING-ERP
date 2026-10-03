@@ -2,3 +2,13 @@
 __pycache__/
 *.pyc
 backups/
+
+*.db
+*.bak
+__pycache__/
+check*.txt
+check_gl.py
+reset_password.py
+golive_reset.py
+show_users.py
+add_lock_cols.py

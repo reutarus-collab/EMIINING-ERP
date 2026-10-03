@@ -1,18 +1,18 @@
 from services.db import db
 from datetime import datetime
-
+from werkzeug.security import generate_password_hash, check_password_hash
 class FeedIngredient(db.Model):
     __tablename__ = 'feed_ingredients'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     category = db.Column(db.String(50))
-    
-    # --- NEW: UOM CONVERSION COLUMNS ---
-    purchase_uom = db.Column(db.String(20), default='KG') # e.g., BAG
-    stock_uom = db.Column(db.String(20), default='KG')    # e.g., KG
-    conversion_factor = db.Column(db.Float, default=1.0)  # e.g., 90.0
-    # -----------------------------------
-    
+
+    # --- UOM CONVERSION COLUMNS ---
+    purchase_uom = db.Column(db.String(20), default='KG')
+    stock_uom = db.Column(db.String(20), default='KG')
+    conversion_type = db.Column(db.String(20), default='FIXED')
+    conversion_factor = db.Column(db.Float, default=1.0)
+
     cost_per_kg = db.Column(db.Float, default=0.0)
     stock_quantity_kg = db.Column(db.Float, default=0.0)
     reserved_quantity_kg = db.Column(db.Float, default=0.0)
@@ -20,11 +20,6 @@ class FeedIngredient(db.Model):
     retail_price_per_kg = db.Column(db.Float, default=0.0)
     crude_protein_pct = db.Column(db.Float, default=0.0)
     metabolizable_energy_mcal = db.Column(db.Float, default=0.0)
-# --- NEW: UOM CONVERSION COLUMNS ---
-    purchase_uom = db.Column(db.String(20), default='KG') 
-    stock_uom = db.Column(db.String(20), default='KG')    
-    conversion_type = db.Column(db.String(20), default='FIXED') # <--- ADD THIS LINE
-    conversion_factor = db.Column(db.Float, default=1.0)
 
 class Customer(db.Model):
     __tablename__ = 'customers'
@@ -210,3 +205,22 @@ class GeneralLedgerEntry(db.Model):
     source_type = db.Column(db.String(50))
     source_id = db.Column(db.Integer)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+class User(db.Model):
+    __tablename__ = 'app_users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    full_name = db.Column(db.String(100))
+    role = db.Column(db.String(20), nullable=False)       # admin / accountant / sales / warehouse
+    location = db.Column(db.String(30), nullable=False)   # factory / branch1
+    active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    failed_attempts = db.Column(db.Integer, default=0)
+    locked_until = db.Column(db.DateTime)
+
+    def set_password(self, pw):
+        self.password_hash = generate_password_hash(pw)
+
+    def check_password(self, pw):
+        return check_password_hash(self.password_hash, pw)

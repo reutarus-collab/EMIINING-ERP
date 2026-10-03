@@ -3,6 +3,8 @@ from flask import Flask, render_template, request, jsonify
 from flask_migrate import Migrate
 from services.db import db, init_db
 from services.models import FeedIngredient, Supplier, Location, PurchaseOrderHeader, PurchaseOrderLine, StockMovement
+from routes.auth import auth_bp, init_auth
+from routes.retail import retail_bp
 
 # 1. Import our new helpers and blueprints
 from routes.pos import pos_bp
@@ -18,8 +20,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 init_db(app)
 migrate = Migrate(app, db)
-
-# 2. Register the POS Blueprint
+app.register_blueprint(auth_bp)
+app.register_blueprint(retail_bp)
+init_auth(app)
 app.register_blueprint(pos_bp)
 from routes.po import po_bp
 app.register_blueprint(po_bp)
@@ -159,19 +162,12 @@ def receive_grpo_partial(po_id):
 # ==========================================
 @app.route('/api/formulate', methods=['POST'])
 def run_formulation():
-    data = request.get_json()
-    species = data.get('species', 'Unknown')
-    batch = float(data.get('target_batch_kg', 1000))
-    mock_recipe = f"Optimal Ration Result for: {species}\nTotal Batch Size: {batch} KG\n\nIngredient Breakdown:\n- Maize Grain: {batch * 0.55} KG (55%)\n- Soybean/Ochonga: {batch * 0.25} KG (25%)\n- Bran/Pollard: {batch * 0.18} KG (18%)\n- Minerals/Premix: {batch * 0.02} KG (2%)\n\nEstimated Cost: KSh {(batch * 45):,.2f}"
-    return jsonify({"status": "success", "recipe": mock_recipe})
-
+    return jsonify({"status": "error", "message": "Ration formulation is not available in the ERP yet."}), 501
 @app.route('/api/factory/mill', methods=['POST'])
 def process_milling():
-    return jsonify({"status": "success", "message": "Milling run completed and stock updated."})
-
+    return jsonify({"status": "error", "message": "Milling is not available in the ERP yet. Nothing was recorded."}), 501
 @app.route('/api/factory/produce', methods=['POST'])
 def process_production():
-    return jsonify({"status": "success", "message": "Batch production completed. Finished feed added to inventory."})
-
+    return jsonify({"status": "error", "message": "Production is not available in the ERP yet. Nothing was recorded."}), 501
 if __name__ == '__main__':
     app.run(debug=os.environ.get('FLASK_DEBUG') == '1', host='127.0.0.1')

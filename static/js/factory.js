@@ -24,7 +24,7 @@ async function loadFactoryDropdowns() {
     millIn.innerHTML = ''; millOut.innerHTML = ''; prodOut.innerHTML = '';
     
     items.forEach(i => {
-        const opt = `<option value="${i.id}">${i.name} (${i.stock_quantity_kg}kg available)</option>`;
+        const opt = `<option value="${i.id}">${escHtml(i.name)} (${i.stock_quantity_kg}kg available)</option>`;
         if (i.category.includes('Raw - Energy')) millIn.innerHTML += opt;
         if (i.category.includes('Raw') || i.category.includes('Finished')) millOut.innerHTML += opt;
         if (i.category === 'Finished Feed') prodOut.innerHTML += opt;

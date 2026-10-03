@@ -3,59 +3,108 @@ from datetime import datetime
 from services.db import db
 from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement
 
+import math
+from flask import g
+# Max discount as % of the bill, per role. A role not listed gets 0%.
+DISCOUNT_CAP_PCT = {'sales': 5.0, 'accountant': 10.0, 'admin': 30.0}
+def _num(value, name):
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise Exception(f"Invalid {name}.")
+    if not math.isfinite(v):
+        raise Exception(f"Invalid {name}.")
+    return v
+import math
+from flask import g
+# Max discount as % of the bill, per role. A role not listed gets 0%.
+DISCOUNT_CAP_PCT = {'sales': 5.0, 'accountant': 10.0, 'admin': 30.0}
+def _num(value, name):
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise Exception(f"Invalid {name}.")
+    if not math.isfinite(v):
+        raise Exception(f"Invalid {name}.")
+    return v
+import math
+from flask import g
+# Max discount as % of the bill, per role. A role not listed gets 0%.
+DISCOUNT_CAP_PCT = {'sales': 5.0, 'accountant': 10.0, 'admin': 30.0}
+def _num(value, name):
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise Exception(f"Invalid {name}.")
+    if not math.isfinite(v):
+        raise Exception(f"Invalid {name}.")
+    return v
 def process_full_pos_checkout(data):
     customer_id = data.get('customer_id')
-    discount_amount = float(data.get('discount_amount', 0.0))
+    discount_amount = round(_num(data.get('discount_amount', 0.0), 'discount amount'), 2)
+    if discount_amount < 0:
+        raise Exception("Invalid discount amount.")
     cart = data.get('cart', [])
     payments = data.get('payments', [])
-
+    if not isinstance(payments, list):
+        raise Exception('Invalid payments.')
+    for p in payments:
+        if not isinstance(p, dict) or p.get('payment_method') not in ('CASH', 'MPESA', 'BANK', 'CREDIT'):
+            raise Exception('Invalid payment method.')
+        if _num(p.get('amount', 0.0), 'payment amount') < 0:
+            raise Exception('Payment amounts cannot be negative.')
     if not cart:
         raise Exception("Cart is empty.")
-
     total_bill = 0.0
+    total_cost = 0.0
     order_lines = []
-    
     for item in cart:
         ing_id = item.get('ingredient_id')
-        qty = float(item.get('qty', 0.0))
+        qty = _num(item.get('qty', 0.0), 'quantity')
         unit_type = item.get('unit_type', 'KG')
-        bag_size_kg = float(item.get('bag_size_kg', 1.0))
-        
+        bag_size_kg = _num(item.get('bag_size_kg', 1.0), 'bag size')
+        if qty <= 0 or bag_size_kg <= 0:
+            raise Exception("Quantity and bag size must be above zero.")
         total_kg_for_item = qty * bag_size_kg
         ingredient = FeedIngredient.query.get(ing_id)
-        
         if not ingredient:
             raise Exception(f"Ingredient ID {ing_id} not found.")
         if ingredient.stock_quantity_kg < total_kg_for_item:
             raise Exception(f"Insufficient stock for {ingredient.name}. Available: {ingredient.stock_quantity_kg}kg")
-
-        ingredient.stock_quantity_kg -= total_kg_for_item
-        price_per_kg = ingredient.retail_price_per_kg or ingredient.cost_per_kg or 0.0
+        price_per_kg = ingredient.retail_price_per_kg or 0.0
+        if price_per_kg <= 0:
+            raise Exception(f"'{ingredient.name}' has no retail price. An admin must set it under Retail Pricing before it can be sold.")
         subtotal = qty * (price_per_kg * bag_size_kg)
-        if subtotal <= 0:
-            raise Exception(f"Item '{ingredient.name}' has no price configured. Set its price in Inventory before selling it.")
+        ingredient.stock_quantity_kg -= total_kg_for_item
         total_bill += subtotal
-        
+        total_cost += total_kg_for_item * (ingredient.cost_per_kg or 0.0)
         order_lines.append(OrderLine(
             ingredient_id=ingredient.id,
             unit_type=unit_type,
             qty_entered=qty,
             subtotal=subtotal
         ))
-        
         db.session.add(StockMovement(
             ingredient_id=ingredient.id,
             movement_type='POS_SALE',
             qty_kg=-total_kg_for_item
         ))
-
+    role = getattr(getattr(g, 'user', None), 'role', None)
+    max_pct = DISCOUNT_CAP_PCT.get(role, 0.0)
+    max_discount = round(total_bill * max_pct / 100.0, 2)
+    if discount_amount > max_discount + 0.01:
+        raise Exception(f"Discount KSh {discount_amount:.2f} is above the {max_pct:.0f}% limit for your role (max KSh {max_discount:.2f}).")
     final_due = max(0.0, total_bill - discount_amount)
+    if final_due + 0.01 < total_cost:
+        raise Exception(f"Sale is below the cost of the goods (KSh {final_due:.2f} vs cost KSh {total_cost:.2f}). Reduce the discount.")
     
     total_paid = sum(float(p.get('amount', 0.0)) for p in payments if p.get('payment_method') != 'CREDIT')
     explicit_credit = sum(float(p.get('amount', 0.0)) for p in payments if p.get('payment_method') == 'CREDIT')
     
     credit_amount = explicit_credit
     total_tendered = total_paid + credit_amount
+    if credit_amount > 0 and total_paid + credit_amount > final_due + 0.01:
+        raise Exception('Cash plus credit is more than the amount due. Reduce the credit to the unpaid balance.')
 
     if total_tendered < (final_due - 0.01):
         raise Exception(f"Payment incomplete! KSh {total_tendered:.2f} tendered but KSh {final_due:.2f} is due. Select 'Credit' as the payment method and enter the amount if this is a debt sale.")
@@ -102,7 +151,8 @@ def process_full_pos_checkout(data):
         if credit_amount > 0:
             post_gl_entry(sale_id, '1300', credit_amount, 0.0, 'POS', order.id)
     except Exception as e:
-        print(f"GL Posting Failed/Skipped: {e}")
+        db.session.rollback()
+        raise Exception(f"Sale blocked: accounting ledger failed to post ({e}). No stock or payment was recorded - try again or check ledger_service.py.")
 
     db.session.commit()
 
