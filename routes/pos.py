@@ -4,8 +4,10 @@ from flask import g
 import uuid
 from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError
+import hashlib
+import json
 from services.db import db
-from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund
+from services.models import FeedIngredient, Customer, CustomerPayment, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, IdempotencyKey
 from services.pos_service import process_full_pos_checkout
 from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
 from routes.auth import roles_required
@@ -80,12 +82,17 @@ def manage_customers():
     return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone, 'location': c.location or 'Unknown', 'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit} for c in Customer.query.all()])
 
 @pos_bp.route('/api/customers/<int:customer_id>/repay', methods=['POST'])
+@roles_required('admin', 'accountant', 'sales')
 def repay_customer_debt(customer_id):
     try:
         data = request.get_json(silent=True) or {}
         amount = round(float(data.get('amount', 0.0)), 2)
         if not math.isfinite(amount) or amount <= 0:
             return jsonify({'status': 'error', 'message': 'Invalid amount.'}), 400
+        method = str(data.get('payment_method') or '').strip().upper()
+        if method not in ('CASH', 'MPESA', 'BANK'):
+            return jsonify({'status': 'error', 'message': 'Choose CASH, MPESA, or BANK.'}), 400
+        location = resolve_location(data.get('location_id'))
         cust = db.session.get(Customer, customer_id)
         if not cust:
             return jsonify({'status': 'error', 'message': 'Customer not found.'}), 404
@@ -97,27 +104,66 @@ def repay_customer_debt(customer_id):
         amount = min(amount, owed)
         cust.current_balance = round(owed - amount, 2)
         ref = f"PAY-{uuid.uuid4().hex[:6].upper()}"
+        till = None
+        if method == 'CASH':
+            till = active_till(location.id, g.user.username, lock=True)
+            if not till:
+                raise ValueError('Open your outlet till before accepting a cash repayment.')
+            till.expected_cash = round((till.expected_cash or 0.0) + amount, 2)
+        payment = CustomerPayment(reference=ref, customer_id=cust.id, location_id=location.id,
+                                  till_session_id=till.id if till else None, amount=amount,
+                                  payment_method=method, created_by=g.user.username)
+        db.session.add(payment)
+        db.session.flush()
         from services.ledger_service import post_gl_entry
-        post_gl_entry(ref, "1000", amount, 0.0, "DEBT_REPAYMENT", customer_id)
-        post_gl_entry(ref, "1300", 0.0, amount, "DEBT_REPAYMENT", customer_id)
+        payment_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
+        posted = post_gl_entry(ref, payment_account, amount, 0.0, "DEBT_REPAYMENT", payment.id)
+        posted = post_gl_entry(ref, "1300", 0.0, amount, "DEBT_REPAYMENT", payment.id) and posted
+        if not posted:
+            raise RuntimeError('Could not post the customer payment to the ledger.')
         db.session.commit()
-        return jsonify({'status': 'success', 'new_balance': cust.current_balance})
+        return jsonify({'status': 'success', 'reference': ref, 'new_balance': cust.current_balance})
     except Exception as e:
         db.session.rollback()
         return jsonify({'status': 'error', 'message': str(e)}), 400
 @pos_bp.route('/api/pos/checkout', methods=['POST'])
 def checkout():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(status='error', message='Invalid checkout request.'), 400
+    key = (request.headers.get('Idempotency-Key') or '').strip()
     try:
-        data = request.get_json() or {}
+        parsed_key = uuid.UUID(key)
+        key = str(parsed_key)
+    except (ValueError, TypeError, AttributeError):
+        return jsonify(status='error', message='A valid Idempotency-Key UUID is required.'), 400
+    request_hash = hashlib.sha256(json.dumps(data, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+    try:
         location = resolve_location(data.get('location_id'))
+        existing = IdempotencyKey.query.filter_by(key=key).first()
+        if existing:
+            if existing.created_by != g.user.username or existing.location_id != location.id:
+                return jsonify(status='error', message='This checkout key belongs to a different cashier or outlet.'), 409
+            if existing.request_hash != request_hash:
+                return jsonify(status='error', message='This idempotency key was already used for a different checkout.'), 409
+            return jsonify(status='success', data=existing.response_json, already_processed=True)
         till = active_till(location.id, g.user.username, lock=True)
         if not till:
             raise ValueError('Open a till session for this outlet before completing a sale.')
         data['location_id'] = location.id
         data['till_session_id'] = till.id
-        result = process_full_pos_checkout(data)
-        return jsonify({'status': 'success', 'data': result})
+        result = process_full_pos_checkout(data, idempotency_key=key, request_hash=request_hash,
+                                           created_by=g.user.username)
+        return jsonify(status='success', data=result)
+    except IntegrityError:
+        db.session.rollback()
+        existing = IdempotencyKey.query.filter_by(key=key).first()
+        if (existing and existing.request_hash == request_hash
+                and existing.created_by == g.user.username and existing.location_id == location.id):
+            return jsonify(status='success', data=existing.response_json, already_processed=True)
+        return jsonify(status='error', message='Checkout conflicted with another request. Retry with the same key.'), 409
     except Exception as e:
+        db.session.rollback()
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
 @pos_bp.route('/api/till/current')
@@ -420,6 +466,47 @@ def receive_inventory_transfer(transfer_id):
         return jsonify(status='success', transfer_no=transfer.transfer_no,
                        received_quantity_kg=transfer.received_quantity_kg,
                        remaining_quantity_kg=max(0.0, round(transfer.quantity_kg - transfer.received_quantity_kg, 6)),
+                       transfer_status=transfer.status)
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+
+@pos_bp.route('/api/inventory/transfers/<int:transfer_id>/close-short', methods=['POST'])
+@roles_required('admin', 'sales', 'warehouse')
+def close_transfer_shortfall(transfer_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        transfer = InventoryTransfer.query.filter_by(id=transfer_id).with_for_update().first()
+        if not transfer:
+            return jsonify(status='error', message='Transfer not found.'), 404
+        location = resolve_location(transfer.to_location_id if g.user.role == 'admin' else None)
+        if location.id != transfer.to_location_id:
+            raise ValueError('Only the receiving outlet can close this transfer short.')
+        if transfer.status not in ('IN_TRANSIT', 'PARTIALLY_RECEIVED'):
+            raise ValueError('This transfer is already closed.')
+        reason = str(data.get('reason') or '').strip()
+        if len(reason) < 4 or len(reason) > 200 or any(ch in reason for ch in '<>'):
+            raise ValueError('Enter a shortfall reason (4–200 characters).')
+        shortfall = round((transfer.quantity_kg or 0.0) - (transfer.received_quantity_kg or 0.0), 6)
+        if shortfall <= 0:
+            raise ValueError('There is no remaining quantity to close short.')
+        loss_value = round(shortfall * (transfer.unit_cost_per_kg or 0.0), 2)
+        ref = f'{transfer.transfer_no}-SHORT'
+        if loss_value > 0:
+            from services.ledger_service import post_gl_entry
+            posted = post_gl_entry(ref, '5100', loss_value, 0.0, 'TRANSFER_SHORTFALL', transfer.id)
+            posted = post_gl_entry(ref, '1200', 0.0, loss_value, 'TRANSFER_SHORTFALL', transfer.id) and posted
+            if not posted:
+                raise RuntimeError('Could not post the transfer shortfall loss to the ledger.')
+        from datetime import datetime
+        transfer.shortfall_quantity_kg = shortfall
+        transfer.shortfall_reason = reason
+        transfer.closed_by = g.user.username
+        transfer.status = 'RECEIVED_SHORT'
+        transfer.completed_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify(status='success', transfer_no=transfer.transfer_no,
+                       shortfall_quantity_kg=shortfall, loss_value=loss_value,
                        transfer_status=transfer.status)
     except Exception as exc:
         db.session.rollback()

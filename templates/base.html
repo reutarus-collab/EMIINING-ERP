@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EMINING ERP - Feed PWA</title>
-  <link rel="manifest" href="/manifest.json">
+  <title>EMINING ERP - Online</title>
+  <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#007bff">
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background-color: #f4f6f9; color: #333; }
@@ -24,24 +24,21 @@
     <h2>EMINING Feed ERP System</h2>
     <nav>
       <a href="/">Dashboard</a>
-      <span id="network-status" class="status-badge online">ONLINE</span>
+      <span id="network-status" class="status-badge online" aria-live="polite">ONLINE · SERVER REQUIRED</span>
     </nav>
   </header>
   <div class="container">
     {% block content %}{% endblock %}
   </div>
-  <script src="/static/js/outbox.js"></script>
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js');
-    }
+    if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(reg => reg.unregister()));
     function updateStatus() {
       const badge = document.getElementById('network-status');
       if (navigator.onLine) {
-        badge.textContent = 'ONLINE';
+        badge.textContent = 'ONLINE · SERVER REQUIRED';
         badge.className = 'status-badge online';
       } else {
-        badge.textContent = 'OFFLINE';
+        badge.textContent = 'OFFLINE · RECORD ON PAPER';
         badge.className = 'status-badge offline';
       }
     }

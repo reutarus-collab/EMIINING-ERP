@@ -4,19 +4,23 @@ let customersCache = [];
 let searchResultsCache = [];
 let activeLocationId = '';
 let currentTill = null;
+let pendingCheckoutAttempt = null;
+try { pendingCheckoutAttempt = JSON.parse(sessionStorage.getItem('pendingCheckoutAttempt') || 'null'); } catch (_) {}
 async function initOutletTill() {
   try {
     const [meRes, locationsRes] = await Promise.all([fetch('/api/me'), fetch('/api/locations')]);
     const me = await meRes.json();
+    window.currentUsername = me.username;
     const locations = await locationsRes.json();
     const select = document.getElementById('pos-location');
     select.innerHTML = locations.map(l => `<option value="${l.id}">${escHtml(l.name)}</option>`).join('');
-    const identity = String(me.location || '').toLowerCase();
-    const assigned = locations.find(l => [String(l.id), l.code, l.name, l.type].some(v => String(v || '').toLowerCase() === identity))
-      || locations.find(l => identity.includes('factory') && String(l.type || '').toLowerCase().includes('factory'))
-      || locations.find(l => (identity.includes('branch') || identity.includes('retail')) && /branch|retail|store/i.test(l.type || ''));
+    const assigned = locations.find(l => String(l.id) === String(me.location_id));
     if (assigned) select.value = assigned.id;
     if (!['admin', 'accountant'].includes(me.role)) select.disabled = true;
+    if (!['admin', 'accountant'].includes(me.role) && !assigned) {
+      document.getElementById('till-state').textContent = 'Outlet assignment required. Ask an administrator to assign your exact outlet.';
+      return;
+    }
     activeLocationId = select.value;
     window.activeLocationId = activeLocationId;
     await refreshTill();
@@ -214,96 +218,95 @@ function addPaymentLine() {
     document.getElementById('payment-lines').innerHTML += `<div class="split-row" style="margin-bottom: 10px;"><select class="p-method" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;" /></div>`; 
 }
 let checkoutInFlight = false;
+function newCheckoutUuid() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+  const b = new Uint8Array(16);
+  window.crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40; b[8] = (b[8] & 0x3f) | 0x80;
+  return [...b].map((v, i) => ([4, 6, 8, 10].includes(i) ? '-' : '') + v.toString(16).padStart(2, '0')).join('');
+}
 
 async function completeCheckout() {
-  if (cart.length === 0) return alert('Cart is empty!');
-  const custId = document.getElementById('customer-select').value;
-  
-  let rawSubtotal = cart.reduce((sum, c) => sum + (c.qty * c.unit_price), 0);
-  let discVal = parseFloat(document.getElementById('discount-val').value) || 0;
-  let discType = document.getElementById('discount-type').value;
-  let absoluteDisc = discType === 'PCT' ? (rawSubtotal * (discVal / 100)) : discVal;
-  
-  if (absoluteDisc < 0) return alert("Negative discounts are strictly prohibited.");
-  
-  let totalDue = Math.max(0, rawSubtotal - absoluteDisc);
-
-  // --- NEW STRICT BLOCKER ---
-  if (totalDue <= 0) {
-      return alert("Cannot complete sale: Total amount due is KSh 0.00. Please check if all items have prices set.");
+  if (checkoutInFlight) return;
+  if (pendingCheckoutAttempt && pendingCheckoutAttempt.owner !== window.currentUsername) {
+    return alert('A checkout from another cashier has an unresolved response in this browser session. Ask that cashier to retry it before switching users.');
   }
-  // --- NEW: AUTO-CREDIT CALCULATOR ---
-  let explicitTotal = 0;
-  let emptyCreditRow = null;
-  
-  document.querySelectorAll('.split-row').forEach(row => {
+  let attempt = pendingCheckoutAttempt;
+  if (!attempt) {
+    if (cart.length === 0) return alert('Cart is empty!');
+    const custId = document.getElementById('customer-select').value;
+    const rawSubtotal = cart.reduce((sum, c) => sum + (c.qty * c.unit_price), 0);
+    const discVal = parseFloat(document.getElementById('discount-val').value) || 0;
+    const discType = document.getElementById('discount-type').value;
+    const absoluteDisc = discType === 'PCT' ? (rawSubtotal * (discVal / 100)) : discVal;
+    if (absoluteDisc < 0) return alert('Negative discounts are strictly prohibited.');
+    const totalDue = Math.max(0, rawSubtotal - absoluteDisc);
+    if (totalDue <= 0) return alert('Cannot complete sale: total amount due is KSh 0.00. Check that items have prices.');
+    let explicitTotal = 0, emptyCreditRow = null;
+    document.querySelectorAll('.split-row').forEach(row => {
       const method = row.querySelector('.p-method').value;
       const amt = parseFloat(row.querySelector('.p-amount').value) || 0;
       explicitTotal += amt;
-      
-      // Detect if they chose CREDIT but left amount blank
-      if (method === 'CREDIT' && amt === 0) {
-          emptyCreditRow = row;
+      if (method === 'CREDIT' && amt === 0) emptyCreditRow = row;
+    });
+    if (emptyCreditRow && explicitTotal < totalDue) {
+      emptyCreditRow.querySelector('.p-amount').value = parseFloat((totalDue - explicitTotal).toFixed(2));
+      calculateChange();
+    }
+    const payments = [];
+    let isValid = true, totalEntered = 0;
+    document.querySelectorAll('.split-row').forEach(row => {
+      const amtStr = row.querySelector('.p-amount').value;
+      if (amtStr && parseFloat(amtStr) > 0) {
+        const amt = parseFloat(amtStr);
+        if (amt < 0) isValid = false;
+        payments.push({payment_method:row.querySelector('.p-method').value, amount:amt,
+          reference:row.querySelector('.p-ref').value});
+        totalEntered += amt;
       }
-  });
-
-  // Auto-fill the missing balance
-  if (emptyCreditRow && explicitTotal < totalDue) {
-      const short = parseFloat((totalDue - explicitTotal).toFixed(2));
-      emptyCreditRow.querySelector('.p-amount').value = short;
-      calculateChange(); 
+    });
+    if (!isValid) return alert('Negative payments are strictly prohibited.');
+    if (totalEntered < totalDue - 0.01) return alert(`Payment incomplete! You are short by KSh ${(totalDue - totalEntered).toFixed(2)}.`);
+    const cartPayload = cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}));
+    attempt = {key:newCheckoutUuid(), owner:window.currentUsername,
+      cartFingerprint:JSON.stringify(cartPayload), payload:{customer_id:custId ? parseInt(custId) : null,
+        location_id:activeLocationId, discount_amount:absoluteDisc, cart:cartPayload, payments}};
+    pendingCheckoutAttempt = attempt;
+    try { sessionStorage.setItem('pendingCheckoutAttempt', JSON.stringify(attempt)); } catch (_) {}
   }
-  // -----------------------------------
-
-  let payments = []; 
-  let isValid = true;
-  let totalEntered = 0;
-  
-  document.querySelectorAll('.split-row').forEach(row => { 
-      const amtStr = row.querySelector('.p-amount').value; 
-      if(amtStr && parseFloat(amtStr) > 0) {
-          const amt = parseFloat(amtStr);
-          if (amt < 0) isValid = false;
-          payments.push({ payment_method: row.querySelector('.p-method').value, amount: amt, reference: row.querySelector('.p-ref').value }); 
-          totalEntered += amt;
-      }
-  });
-
-  if (!isValid) return alert("Negative payments are strictly prohibited.");
-  
-  // STRICT PAYMENT CHECK
-  if (totalEntered < (totalDue - 0.01)) { 
-      const short = (totalDue - totalEntered).toFixed(2);
-      return alert(`Payment incomplete! You are short by KSh ${short}.`);
-  }
-
-    if (checkoutInFlight) return;
   checkoutInFlight = true;
   try {
       const res = await fetch('/api/pos/checkout', {
           method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-              customer_id: custId ? parseInt(custId) : null,
-              location_id: activeLocationId,
-              discount_amount: absoluteDisc,
-              cart: cart.map(c => ({ ingredient_id: c.id, unit_type: c.unit_type, qty: c.qty, bag_size_kg: c.bag_size_kg })),
-              payments: payments
-          })
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key':attempt.key },
+          body: JSON.stringify(attempt.payload)
       });
       if (res.status === 401) {
-          return alert('Session expired. Sale NOT recorded. Cart is kept. Log in again in a new tab, then press Complete again.');
+          return alert('Session expired. The sale was not accepted. Sign in again, then retry this checkout with the same key.');
       }
-      if (res.status === 403) return alert('Your role is not allowed to do this.');
+      if (res.status === 403) {
+          pendingCheckoutAttempt = null;
+          try { sessionStorage.removeItem('pendingCheckoutAttempt'); } catch (_) {}
+          return alert('Your role is not allowed to complete this sale.');
+      }
       const data = await res.json();
       if (data.status === 'success') {
+          pendingCheckoutAttempt = null;
+          try { sessionStorage.removeItem('pendingCheckoutAttempt'); } catch (_) {}
           await loadCustomers();
           renderReceipt(data.data);
-          clearCart();
+          if (JSON.stringify(cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}))) === attempt.cartFingerprint) clearCart();
+          else alert('The earlier checkout was confirmed. Your current cart was kept separate.');
           searchProducts();
-      } else { alert('Sale Failed: ' + data.message); }
+      } else {
+          if (res.status === 400) {
+              pendingCheckoutAttempt = null;
+              try { sessionStorage.removeItem('pendingCheckoutAttempt'); } catch (_) {}
+          }
+          alert('Sale failed: ' + data.message + (res.status === 409 ? ' Keep this tab open and contact an administrator before retrying.' : ''));
+      }
   } catch(err) {
-      alert('No connection or system error. Sale NOT recorded. Cart is kept. (' + err.message + ')');
+      alert('Online only: no connection or response. The sale may have reached the server. Keep this tab open and retry before re-entering the sale; the same checkout key will prevent duplicates.');
   } finally { checkoutInFlight = false; }
 }
 function renderReceipt(data) {
@@ -458,13 +461,15 @@ async function processDebtRepayment() {
         const res = await fetch(`/api/customers/${custId}/repay`, {
             method: 'POST', 
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ amount: amt })
+            body: JSON.stringify({ amount: amt, payment_method: document.getElementById('repay-method').value,
+              location_id: activeLocationId })
         });
         const data = await res.json();
         
         if(data.status === 'success') {
             alert(`Repayment successful! New balance: KSh ${data.new_balance.toFixed(2)}`);
             document.getElementById('repay-amount').value = '';
+            await refreshTill();
             await loadCustomers(); 
         } else {
             alert('Repayment Failed: ' + data.message);

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from services.db import db
-from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement, ItemPrice, TillSession
+from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement, ItemPrice, TillSession, IdempotencyKey
 from services.inventory import location_stock, change_stock
 
 import math
@@ -27,7 +27,7 @@ def _num(value, name):
     if not math.isfinite(v):
         raise Exception(f"Invalid {name}.")
     return v
-def process_full_pos_checkout(data):
+def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, created_by=None):
     customer_id = data.get('customer_id')
     discount_amount = round(_num(data.get('discount_amount', 0.0), 'discount amount'), 2)
     if discount_amount < 0:
@@ -164,8 +164,6 @@ def process_full_pos_checkout(data):
         db.session.rollback()
         raise Exception(f"Sale blocked: accounting ledger failed to post ({e}). No stock or payment was recorded - try again or check ledger_service.py.")
 
-    db.session.commit()
-
     res_items = []
     for line in order_lines:
         res_items.append({
@@ -175,7 +173,13 @@ def process_full_pos_checkout(data):
             "subtotal": line.subtotal
         })
 
-    return { 
+    response = {
         "sale_id": sale_id, "total_amount": final_due, "paid_amount": total_paid, 
         "change_due": change_due, "credit_amount": credit_amount, "items": res_items 
     }
+    if idempotency_key:
+        db.session.add(IdempotencyKey(key=idempotency_key, request_hash=request_hash,
+                                      response_json=response, created_by=created_by,
+                                      location_id=location_id))
+    db.session.commit()
+    return response

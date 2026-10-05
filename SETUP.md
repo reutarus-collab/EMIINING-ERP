@@ -1,25 +1,47 @@
-# Emining ERP — clean rebuild: setup
+# Emining ERP setup and launch operations
 
-## Local
-1. `pip install -r requirements.txt`
-2. `export SECRET_KEY=$(python -c "import secrets;print(secrets.token_hex(32))")`
-3. `flask --app app.py init-db`
-4. `python seed.py` — copy down the generated passwords it prints, they're shown once
-5. `flask --app app.py run`
+## Install and start
 
-## PythonAnywhere deploy
-1. New repo, new deploy — don't point the WSGI file at the old EMIINING-ERP checkout.
-2. Set `SECRET_KEY` as an environment variable in the Web tab. Never hardcode it in `app.py`.
-3. Set `SEED_ADMIN_PASSWORD` / `SEED_FACTORY_PASSWORD` / `SEED_BRANCH_PASSWORD` as env vars before running `seed.py`, or copy down the generated ones immediately and store them somewhere real (password manager, not a notes file in the repo).
-4. Confirm the WSGI file imports `app` from *this* `app.py` — don't assume.
-5. Add `erp.db`, `.env`, `__pycache__/` to `.gitignore` before your first commit. Nothing with real credentials or real data goes into git.
+1. Install the pinned/runtime dependencies with `pip install -r requirements.txt`.
+2. Set a long random `SECRET_KEY` environment variable.
+3. Set `DATABASE_URL` to the intended database. Back up any existing business database before deploying schema changes.
+4. Run `flask --app app.py init-db` once, then create users with `python create_user.py`.
+5. Start with `flask --app app.py run` locally or the configured WSGI server in production.
 
-## Roles
-- `admin` — not tied to a location. Manages items, suppliers, purchase orders, payments. This is what "admin access" means now — it's an enforced role, not a shared login.
-- `factory` / `branch` — tied to one location. Can log sales and sync offline transactions for that location only.
+`seed.py` is optional demo data only. It refuses to run unless `ALLOW_DEMO_SEED=1`, refuses a non-empty business database, and never drops tables. Do not use it on production data.
 
-## What this does NOT include yet
-- The frontend (`static/`) from the old repo still needs updating to send `payment_method`, `customer_name`, and a `type` field per queued transaction — the API contract changed. Don't deploy the old static files unmodified against this backend.
-- Goods-receiving (ordered vs. received variance) — purchases post to stock immediately on PO creation.
-- Transfers between factory and branch — schema supports `TRANSFER_OUT`/`TRANSFER_IN` as transaction types; no route uses them yet.
-- General ledger / P&L — deferred on purpose. Query `transactions` directly for now.
+## PythonAnywhere launch settings
+
+- Set `SECRET_KEY` and `COOKIE_SECURE=1` in the web app environment. Serve the app over HTTPS.
+- Use a unique PIN of 6–8 digits for sales and warehouse accounts; avoid repeated digits or common sequences. Admin and accounting passwords must be at least 10 characters.
+- Assign each cashier and warehouse user to an exact `location_id`. Staff cannot choose another outlet. Admin/accounting users may select an exact location ID.
+- Schedule the backup command below as a PythonAnywhere daily task, replacing paths with the account's actual paths. Create the backup directory first.
+
+## Online-only checkout
+
+Checkout needs a working server connection. If the till shows **OFFLINE · RECORD ON PAPER**, do not retry by making a new sale after an uncertain response. Keep the same browser tab and use its retry for the same pending checkout; the server idempotency key prevents a duplicate. If the device is closed or its browser storage is cleared before confirmation, reconcile the paper record and sales history before entering the sale again. Old IndexedDB offline queue records are not uploaded; review and reconcile any historical queued sales manually.
+
+## Daily SQLite backup and restore check
+
+The backup utility uses SQLite's online backup API (the safe equivalent of `.backup`), checks database integrity, atomically publishes `erp-YYYY-MM-DD.db`, and removes matching backups older than 14 days.
+
+Example PythonAnywhere daily task (use the configured Python executable and absolute paths):
+
+```sh
+python /path/to/project/scripts/backup_sqlite.py --database /path/to/project/emining_erp.db --backup-dir /home/yourname/backups
+```
+
+Run a restore verification against a backup when validating operations:
+
+```sh
+python /path/to/project/scripts/backup_sqlite.py --database /path/to/project/emining_erp.db --backup-dir /home/yourname/backups --verify-restore
+```
+
+`--verify-restore` restores the newest backup into a temporary database and runs SQLite integrity checks; it does not overwrite the source database. Keep backup storage outside the repository and restrict its filesystem permissions.
+
+## Inventory and cashier workflows
+
+- Inter-location stock movement is dispatched, remains in transit, and is received by the destination cashier/warehouse user. A short delivery must be closed with a reason; the variance is posted to account 5100 at dispatch cost.
+- Customer cash repayments require an open till and update both till expected cash and the cash ledger. Non-cash repayments require an explicit payment method.
+- Refunds record the cash/ledger refund. Returned goods are not automatically restored to inventory; use the stock adjustment workflow after inspection.
+- Formulation and milling routes that are not implemented return an explicit unavailable response.

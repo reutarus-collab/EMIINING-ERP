@@ -1,12 +1,7 @@
 Flask
 Flask-SQLAlchemy
-Flask-WTF
-WTForms
+Flask-Migrate
 scipy
 numpy
-stripe
-alembic
 psycopg2-binary
-python-dotenv
 gunicorn
-requests

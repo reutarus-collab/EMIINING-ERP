@@ -19,7 +19,7 @@
     </div>
     <h3>Incoming stock transfers</h3>
     <p>Receive factory or warehouse dispatches into this outlet. Partial receipts remain open until the balance is received.</p>
-    <table class="data-table"><thead><tr><th>Transfer</th><th>From</th><th>Item</th><th>Dispatched</th><th>Received</th><th>Remaining</th><th>Receive now (kg)</th><th>Note</th><th></th></tr></thead>
+    <table class="data-table"><thead><tr><th>Transfer</th><th>From</th><th>Item</th><th>Dispatched</th><th>Received</th><th>Remaining</th><th>Receive now (kg)</th><th>Note</th><th>Actions</th></tr></thead>
       <tbody id="incoming-transfer-body"><tr><td colspan="9">Loading incoming transfers…</td></tr></tbody></table>
     <input id="stock-filter" placeholder="Filter items..." oninput="renderStock()"
            style="padding:10px;width:100%;max-width:320px;margin-bottom:10px">
@@ -94,7 +94,7 @@ async function loadIncomingTransfers() {
     <td>${Number(t.quantity_kg).toFixed(2)} kg</td><td>${Number(t.received_quantity_kg).toFixed(2)} kg</td><td>${Number(t.remaining_quantity_kg).toFixed(2)} kg</td>
     <td><input type="number" min="0.01" max="${Number(t.remaining_quantity_kg)}" step="0.01" id="transfer-receive-qty-${t.id}" value="${Number(t.remaining_quantity_kg)}" style="width:110px"></td>
     <td><input id="transfer-receive-note-${t.id}" maxlength="200" placeholder="Optional note" style="width:130px"></td>
-    <td><button class="btn-sm btn-success" onclick="receiveTransfer(${t.id})">Receive</button></td></tr>`).join('') || '<tr><td colspan="9">No stock transfers are waiting for receipt.</td></tr>';
+    <td><button class="btn-sm btn-success" onclick="receiveTransfer(${t.id})">Receive</button> <button class="btn-sm btn-danger" onclick="closeTransferShort(${t.id}, ${Number(t.remaining_quantity_kg)})">Close short</button></td></tr>`).join('') || '<tr><td colspan="9">No stock transfers are waiting for receipt.</td></tr>';
 }
 async function receiveTransfer(id) {
   const body = {quantity_kg:document.getElementById('transfer-receive-qty-' + id).value,
@@ -104,6 +104,17 @@ async function receiveTransfer(id) {
   const d = await r.json().catch(() => ({}));
   if (!r.ok) return alert(d.message || 'Could not receive this transfer.');
   alert(`${d.transfer_no}: receipt saved. ${Number(d.remaining_quantity_kg).toFixed(2)} kg remains in transit.`);
+  await loadStock();
+}
+async function closeTransferShort(id, remaining) {
+  if (!confirm(`Close ${Number(remaining).toFixed(2)} kg as missing in transit? This posts the value to inventory loss.`)) return;
+  const reason = (prompt('Required shortfall reason (for example, seal broken or quantity discrepancy):') || '').trim();
+  if (reason.length < 4) return alert('Enter a shortfall reason of at least 4 characters.');
+  const r = await fetch('/api/inventory/transfers/' + id + '/close-short', {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(d.message || 'Could not close transfer short.');
+  alert(`${d.transfer_no}: ${Number(d.shortfall_quantity_kg).toFixed(2)} kg recorded as a loss (KSh ${Number(d.loss_value).toFixed(2)}).`);
   await loadStock();
 }
 async function loadOutletUsers() {

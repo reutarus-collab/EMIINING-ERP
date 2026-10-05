@@ -31,6 +31,18 @@ class Customer(db.Model):
     current_balance = db.Column(db.Float, default=0.0)
     credit_limit = db.Column(db.Float, default=0.0)
 
+class CustomerPayment(db.Model):
+    __tablename__ = 'customer_payments'
+    id = db.Column(db.Integer, primary_key=True)
+    reference = db.Column(db.String(50), unique=True, nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
+    amount = db.Column(db.Float, nullable=False)
+    payment_method = db.Column(db.String(20), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
 class Location(db.Model):
     __tablename__ = 'locations'
     id = db.Column(db.Integer, primary_key=True)
@@ -78,6 +90,7 @@ class AnimalRequirement(db.Model):
 
 class TillSession(db.Model):
     __tablename__ = 'till_sessions'
+    __table_args__ = (db.Index('uq_till_open_key', 'open_key', unique=True),)
     id = db.Column(db.Integer, primary_key=True)
     cashier_name = db.Column(db.String(50))
     opening_cash = db.Column(db.Float, default=0.0)
@@ -88,7 +101,7 @@ class TillSession(db.Model):
     status = db.Column(db.String(20), nullable=False, default='OPEN')
     counted_cash = db.Column(db.Float)
     cash_variance = db.Column(db.Float)
-    open_key = db.Column(db.String(120), unique=True)
+    open_key = db.Column(db.String(120))
 
 class OrderHeader(db.Model):
     __tablename__ = 'order_headers'
@@ -127,6 +140,9 @@ class IdempotencyKey(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     key = db.Column(db.String(100), unique=True)
     response_json = db.Column(db.JSON)
+    request_hash = db.Column(db.String(64))
+    created_by = db.Column(db.String(50))
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class StockMovement(db.Model):
@@ -155,6 +171,9 @@ class InventoryTransfer(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     received_by = db.Column(db.String(50))
     completed_at = db.Column(db.DateTime)
+    shortfall_quantity_kg = db.Column(db.Float, nullable=False, default=0.0)
+    shortfall_reason = db.Column(db.String(200))
+    closed_by = db.Column(db.String(50))
 
 class InventoryTransferReceipt(db.Model):
     __tablename__ = 'inventory_transfer_receipts'
@@ -175,6 +194,30 @@ class OperatingExpense(db.Model):
     amount = db.Column(db.Float, nullable=False)
     payment_method = db.Column(db.String(20), nullable=False)
     description = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class OwnerWithdrawal(db.Model):
+    __tablename__ = 'owner_withdrawals'
+    id = db.Column(db.Integer, primary_key=True)
+    reference = db.Column(db.String(50), unique=True, nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    payment_method = db.Column(db.String(20), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
+    reason = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class CashWalkOpening(db.Model):
+    __tablename__ = 'cash_walk_openings'
+    id = db.Column(db.Integer, primary_key=True)
+    as_of_date = db.Column(db.Date, unique=True, nullable=False)
+    cash = db.Column(db.Float, nullable=False, default=0.0)
+    inventory = db.Column(db.Float, nullable=False, default=0.0)
+    debtors = db.Column(db.Float, nullable=False, default=0.0)
+    creditors = db.Column(db.Float, nullable=False, default=0.0)
+    equipment = db.Column(db.Float, nullable=False, default=0.0)
     created_by = db.Column(db.String(50), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -328,12 +371,19 @@ class User(db.Model):
     full_name = db.Column(db.String(100))
     role = db.Column(db.String(20), nullable=False)       # admin / accountant / sales / warehouse
     location = db.Column(db.String(30), nullable=False)   # factory / branch1
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
     active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     failed_attempts = db.Column(db.Integer, default=0)
     locked_until = db.Column(db.DateTime)
 
     def set_password(self, pw):
+        if self.role in ('sales', 'warehouse'):
+            weak = {'123456', '654321', '000000', '111111', '121212', '123123'}
+            if not pw.isdigit() or not 6 <= len(pw) <= 8 or pw in weak or len(set(pw)) <= 1:
+                raise ValueError('Cashier and warehouse PINs must be a non-obvious 6–8 digit number.')
+        elif len(pw) < 10:
+            raise ValueError('Admin and accountant passwords must be at least 10 characters.')
         self.password_hash = generate_password_hash(pw)
 
     def check_password(self, pw):

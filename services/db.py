@@ -17,6 +17,8 @@ def _migrate_location_schema():
         'stock_movements': {'location_id': 'INTEGER', 'reason': 'VARCHAR(200)'},
         'order_headers': {'location_id': 'INTEGER', 'till_session_id': 'INTEGER'},
         'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT', 'open_key': 'VARCHAR(120)'},
+        'app_users': {'location_id': 'INTEGER'},
+        'idempotency_keys': {'request_hash': 'VARCHAR(64)', 'created_by': 'VARCHAR(50)', 'location_id': 'INTEGER'},
         'production_runs': {'location_id': 'INTEGER'},
         'goods_receipt_lines': {'qty_rejected_po_uom': 'FLOAT'},
         'goods_receipt_notes': {'location_id': 'INTEGER'},
@@ -29,6 +31,9 @@ def _migrate_location_schema():
             'status': "VARCHAR(30) NOT NULL DEFAULT 'RECEIVED'",
             'received_by': 'VARCHAR(50)',
             'completed_at': 'DATETIME',
+            'shortfall_quantity_kg': 'FLOAT NOT NULL DEFAULT 0',
+            'shortfall_reason': 'VARCHAR(200)',
+            'closed_by': 'VARCHAR(50)',
         },
     }
     if db.engine.dialect.name != 'sqlite':
@@ -44,7 +49,7 @@ def _migrate_location_schema():
                     conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {declaration}'))
         if 'inventory_transfers' in inspector.get_table_names():
             conn.execute(text("UPDATE inventory_transfers SET received_quantity_kg = quantity_kg WHERE status = 'RECEIVED' AND received_quantity_kg = 0"))
-    from services.models import FeedIngredient, Location, LocationStock, PurchaseOrderHeader, Account, StockMovement, GoodsReceiptNote
+    from services.models import FeedIngredient, Location, LocationStock, PurchaseOrderHeader, Account, StockMovement, GoodsReceiptNote, User
     if Location.query.count() == 0:
         legacy = Location(name='Legacy Main Store', code='LEGACY-01', location_type='STORE')
         db.session.add(legacy)
@@ -92,6 +97,25 @@ def _migrate_location_schema():
                     grn.location_id = int(po.location_id)
                 except (TypeError, ValueError):
                     grn.location_id = migration_location.id
+    locations = Location.query.all()
+    for user in User.query.filter(User.role.notin_(('admin', 'accountant'))).all():
+        if db.session.get(Location, user.location_id):
+            continue
+        identity = str(user.location or '').strip().lower()
+        matches = [loc for loc in locations if identity in (
+            str(loc.id).lower(), (loc.code or '').strip().lower(), (loc.name or '').strip().lower())]
+        # Legacy aliases can be migrated only if they identify one unique type.
+        if not matches and 'factory' in identity:
+            matches = [loc for loc in locations if 'factory' in (loc.location_type or '').lower()]
+        elif not matches and any(token in identity for token in ('branch', 'retail', 'outlet', 'store')):
+            matches = [loc for loc in locations if any(token in (loc.location_type or '').lower()
+                                                       for token in ('branch', 'retail', 'store'))]
+        if len(matches) == 1:
+            user.location_id = matches[0].id
+        else:
+            # Leave ambiguous/unknown accounts unassigned; runtime access will
+            # be denied until an admin chooses the exact outlet.
+            user.location_id = None
     # Assign unique identity keys only after legacy sessions without a location
     # have been closed and outlet-scoped.
     from services.models import TillSession
@@ -105,8 +129,10 @@ def _migrate_location_schema():
         till.open_key = key
     db.session.flush()
     db.session.commit()
-    from sqlalchemy import Index
-    Index('uq_till_open_key', TillSession.open_key, unique=True).create(bind=db.engine, checkfirst=True)
+    index_names = {index['name'] for index in inspect(db.engine).get_indexes('till_sessions')}
+    if 'uq_till_open_key' not in index_names:
+        with db.engine.begin() as conn:
+            conn.execute(text('CREATE UNIQUE INDEX uq_till_open_key ON till_sessions (open_key)'))
     for code, name, category in (('1010', 'M-Pesa Clearing', 'ASSET'),
                                  ('1020', 'Bank Account', 'ASSET'),
                                  ('1100', 'Cash in Safe / Float Clearing', 'ASSET'),

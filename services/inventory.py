@@ -1,35 +1,23 @@
 from flask import g
 from services.db import db
 from services.models import FeedIngredient, Location, LocationStock, TillSession
+from sqlalchemy import update
 
 
 def resolve_location(requested_id=None):
     user = getattr(g, 'user', None)
     role = getattr(user, 'role', '')
-    if role in ('admin', 'accountant') and requested_id not in (None, ''):
+    if role in ('admin', 'accountant'):
+        identity = requested_id if requested_id not in (None, '') else getattr(user, 'location_id', None)
         try:
-            location = db.session.get(Location, int(requested_id))
+            location = db.session.get(Location, int(identity)) if identity is not None else None
         except (TypeError, ValueError):
             location = None
     else:
-        identity = str(getattr(user, 'location', '') or '').strip().lower()
-        location = next((loc for loc in Location.query.all()
-                         if identity in (str(loc.id).lower(), (loc.code or '').lower(),
-                                         (loc.name or '').lower(), (loc.location_type or '').lower())), None)
-        if not location and 'factory' in identity:
-            location = next((loc for loc in Location.query.all() if 'factory' in (loc.location_type or '').lower()), None)
-        if not location and ('branch' in identity or 'retail' in identity or 'outlet' in identity):
-            location = next((loc for loc in Location.query.all()
-                             if any(token in (loc.location_type or '').lower() for token in ('branch', 'retail', 'store'))), None)
-        if not location and requested_id not in (None, '') and role in ('admin', 'accountant'):
-            try:
-                location = db.session.get(Location, int(requested_id))
-            except (TypeError, ValueError):
-                pass
-    if not location and Location.query.count() == 1:
-        location = Location.query.first()
+        location_id = getattr(user, 'location_id', None)
+        location = db.session.get(Location, location_id) if location_id is not None else None
     if not location:
-        raise ValueError('Your user must be assigned to a valid outlet/location.')
+        raise ValueError('Your user must be assigned to a specific valid outlet by an administrator.')
     return location
 
 
@@ -63,10 +51,25 @@ def reserved_quantity(location_id, ingredient_id):
 def change_stock(location_id, ingredient, delta_kg, movement_type, reference_id=None, reason=None):
     from services.models import StockMovement
     row = location_stock(location_id, ingredient.id, lock=True)
-    new_qty = round((row.quantity_kg or 0.0) + delta_kg, 6)
-    if new_qty < -0.000001:
-        raise ValueError(f'Insufficient stock for {ingredient.name}. Available: {row.quantity_kg:.2f} kg.')
-    row.quantity_kg = max(0.0, new_qty)
+    delta_kg = float(delta_kg)
+    if delta_kg < 0:
+        # A conditional database update prevents two SQLite requests from both
+        # passing a stale read and overselling the same outlet's balance.
+        result = db.session.execute(
+            update(LocationStock)
+            .where(LocationStock.id == row.id,
+                   LocationStock.quantity_kg + 0.000001 >= -delta_kg,
+                   LocationStock.quantity_kg - LocationStock.reserved_quantity_kg + 0.000001 >= -delta_kg)
+            .values(quantity_kg=LocationStock.quantity_kg + delta_kg)
+            .execution_options(synchronize_session='fetch')
+        )
+        if result.rowcount != 1:
+            raise ValueError(f'Insufficient stock for {ingredient.name}. Available: {row.quantity_kg:.2f} kg.')
+    else:
+        row.quantity_kg = round((row.quantity_kg or 0.0) + delta_kg, 6)
+    row = db.session.get(LocationStock, row.id)
+    if row.quantity_kg is not None and row.quantity_kg < 0:
+        raise ValueError(f'Insufficient stock for {ingredient.name}.')
     # Rebuild legacy aggregate fields from outlet balances; outlet valuation is
     # authoritative and the aggregate cost is only a weighted summary.
     refresh_global_valuation(ingredient)

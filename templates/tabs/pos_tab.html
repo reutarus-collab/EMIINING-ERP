@@ -6,6 +6,9 @@ window.escHtml = window.escHtml || function (s) {
 };
 </script>
 <div id="pos-tab" class="tab-content active">
+  <div role="alert" style="background:#fff3cd;border:1px solid #e0a800;color:#6b4f00;padding:12px 16px;border-radius:6px;margin-bottom:12px;font-weight:600">
+    Online only: checkout requires a live server connection. If the connection is down, record the sale on paper and enter it after service returns. An unanswered checkout must be retried in this tab before entering it again.
+  </div>
   <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
     <label>Outlet <select id="pos-location" onchange="changePosLocation()"></select></label>
     <span id="till-state">Loading till…</span>
@@ -72,6 +75,7 @@ window.escHtml = window.escHtml || function (s) {
           <hr style="border-top: 1px solid #b6d4fe; margin: 12px 0;" />
           <div style="display:flex; gap:10px; align-items:center;">
              <input type="number" id="repay-amount" placeholder="Amount to pay" style="flex:2; height: 45px; font-size: 16px; padding: 10px;" min="1" />
+             <select id="repay-method" style="flex:1"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option></select>
              <button class="btn-sm btn-success" style="flex:1; height: 45px; font-size: 16px;" onclick="processDebtRepayment()">Settle Debt</button>
           </div>
         </div>

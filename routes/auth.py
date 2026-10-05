@@ -15,7 +15,7 @@ MAX_FAILS = 5
 WINDOW = 600  # seconds
 
 ROLE_ALLOW = {
-    'sales': ('/', '/api/me', '/api/sync', '/api/customers', '/api/inventory',
+    'sales': ('/', '/api/me', '/api/customers', '/api/inventory',
               '/api/locations', '/api/products', '/api/pos', '/api/sales-history',
               '/api/stock', '/api/reports', '/api/till', '/api/expenses'),
     'warehouse': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
@@ -39,8 +39,9 @@ LOGIN_HTML = """<!doctype html>
 
 
 def _ip():
-    fwd = request.headers.get('X-Forwarded-For', request.remote_addr or '')
-    return fwd.split(',')[0].strip()
+    # X-Forwarded-For is supplied by the client unless a trusted proxy has
+    # explicitly normalized it. Use the socket peer for this in-app throttle.
+    return request.remote_addr or 'unknown'
 
 
 def _blocked(ip):
@@ -76,16 +77,19 @@ def login():
             if u and u.locked_until and u.locked_until > now:
                 error = 'Account locked. Try again in 15 minutes.'
             elif u and u.active and u.check_password(pw):
-                u.failed_attempts = 0
-                u.locked_until = None
-                db.session.commit()
-                session.clear()
-                session['user_id'] = u.id
-                session.permanent = True
-                nxt = request.args.get('next', '/')
-                if not nxt.startswith('/') or nxt.startswith('//'):
-                    nxt = '/'
-                return redirect(nxt)
+                if u.role in ('sales', 'warehouse') and (not pw.isdigit() or not 6 <= len(pw) <= 8 or len(set(pw)) < 3 or pw in {'123456', '1234567', '12345678', '000000', '111111', '654321'}):
+                    error = 'Your PIN must be reset to a stronger 6–8 digit PIN before you can sign in.'
+                else:
+                    u.failed_attempts = 0
+                    u.locked_until = None
+                    db.session.commit()
+                    session.clear()
+                    session['user_id'] = u.id
+                    session.permanent = True
+                    nxt = request.args.get('next', '/')
+                    if not nxt.startswith('/') or nxt.startswith('//'):
+                        nxt = '/'
+                    return redirect(nxt)
             else:
                 if u:
                     u.failed_attempts = (u.failed_attempts or 0) + 1
@@ -107,7 +111,7 @@ def logout():
 @auth_bp.route('/api/me')
 def me():
     return jsonify(username=g.user.username, role=g.user.role,
-                   location=g.user.location)
+                   location=g.user.location, location_id=g.user.location_id)
 
 
 def roles_required(*roles):
@@ -139,6 +143,7 @@ def assign_user_location(user_id):
     if not user or not location:
         return jsonify(status='error', message='Choose a valid user and outlet.'), 404
     user.location = location.code or str(location.id)
+    user.location_id = location.id
     db.session.commit()
     return jsonify(status='success', username=user.username, location=location.name)
 

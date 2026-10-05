@@ -16,7 +16,8 @@ pw2 = getpass.getpass('Repeat it: ')
 if pw != pw2:
     raise SystemExit('They did not match. Nothing changed.')
 if role in ('sales', 'warehouse'):
-    ok = pw.isdigit() and 6 <= len(pw) <= 8
+    weak = {'123456', '654321', '000000', '111111', '121212', '123123'}
+    ok = pw.isdigit() and 6 <= len(pw) <= 8 and pw not in weak and len(set(pw)) > 1
     rule = 'PIN must be 6 to 8 digits'
 else:
     ok = len(pw) >= 10
