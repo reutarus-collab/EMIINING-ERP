@@ -12,7 +12,7 @@ from services.models import (
     ProductionRunLine,
     StockMovement,
 )
-from services.inventory import resolve_location, location_stock, change_stock
+from services.inventory import resolve_location, location_stock, change_stock, receive_stock
 
 factory_bp = Blueprint('factory', __name__)
 
@@ -113,7 +113,8 @@ def record_production_run():
         input_cost = 0.0
         for ingredient_id, planned_qty, actual_qty in inputs:
             ingredient = by_id[ingredient_id]
-            unit_cost = ingredient.cost_per_kg or 0.0
+            input_stock = location_stock(location.id, ingredient.id, lock=True)
+            unit_cost = input_stock.unit_cost_per_kg or 0.0
             line_cost = round(actual_qty * unit_cost, 2)
             input_cost += line_cost
             change_stock(location.id, ingredient, -actual_qty, 'PRODUCTION_CONSUMPTION', batch_no)
@@ -126,14 +127,11 @@ def record_production_run():
                 line_cost=line_cost,
             ))
 
-        output_stock = location_stock(location.id, output_item.id, lock=True)
-        prior_output_global_qty = output_item.stock_quantity_kg or 0.0
-        prior_output_value = prior_output_global_qty * (output_item.cost_per_kg or 0.0)
         input_cost = round(input_cost, 2)
         loss_cost = round(input_cost * loss_kg / input_total, 2) if input_total else 0.0
         output_cost = round(input_cost - loss_cost, 2)
-        change_stock(location.id, output_item, actual_output, 'PRODUCTION_OUTPUT', batch_no)
-        output_item.cost_per_kg = (prior_output_value + output_cost) / output_item.stock_quantity_kg
+        receive_stock(location.id, output_item, actual_output, output_cost / actual_output,
+                      'PRODUCTION_OUTPUT', batch_no)
         run.total_input_cost = input_cost
         run.loss_cost = loss_cost
         from services.ledger_service import post_gl_entry

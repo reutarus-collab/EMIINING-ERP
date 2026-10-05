@@ -1,9 +1,9 @@
 ﻿import math
 from datetime import datetime, timedelta
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 from sqlalchemy import func
 from routes.auth import roles_required
-from services.models import db, Customer, FeedIngredient, OrderHeader, PaymentSplit, ItemPrice, TillSession
+from services.models import db, Customer, FeedIngredient, OrderHeader, PaymentSplit, ItemPrice, TillSession, LocationStock, OperatingExpense, SalesRefund, TillCashMovement
 from services.inventory import resolve_location, stock_quantity
 retail_bp = Blueprint('retail', __name__)
 @retail_bp.route('/api/stock')
@@ -13,22 +13,38 @@ def stock():
     except ValueError as exc:
         return jsonify(status='error', message=str(exc)), 400
     rows = FeedIngredient.query.order_by(FeedIngredient.name).all()
-    return jsonify([{
+    show_cost = g.user.role in ('admin', 'accountant', 'warehouse')
+    result = []
+    for i in rows:
+        balance = LocationStock.query.filter_by(location_id=location.id, ingredient_id=i.id).first()
+        qty = round(stock_quantity(location.id, i.id), 2)
+        row = {
         'id': i.id,
         'name': i.name,
         'category': i.category or '',
-        'stock_kg': round(stock_quantity(location.id, i.id), 2),
+        'stock_kg': qty,
         'location_id': location.id, 'location_name': location.name,
         'bag_size_kg': i.bag_size_kg or 0,
         'retail_price_per_kg': i.retail_price_per_kg or 0,
         'priced': (i.retail_price_per_kg or 0) > 0,
-    } for i in rows])
+        }
+        if show_cost:
+            cost = (balance.unit_cost_per_kg if balance else 0.0) or 0.0
+            row.update(unit_cost_per_kg=round(cost, 4), stock_value=round(qty * cost, 2))
+        result.append(row)
+    return jsonify(result)
+
+def _max_outlet_unit_cost(ingredient_id, fallback=0.0):
+    costs = [row[0] or 0.0 for row in db.session.query(LocationStock.unit_cost_per_kg)
+             .filter(LocationStock.ingredient_id == ingredient_id,
+                     LocationStock.quantity_kg > 0).all()]
+    return max(costs or [fallback or 0.0])
 @retail_bp.route('/api/admin/prices')
 @roles_required('admin')
 def prices_list():
     out = []
     for i in FeedIngredient.query.order_by(FeedIngredient.name).all():
-        cost = i.cost_per_kg or 0
+        cost = _max_outlet_unit_cost(i.id, i.cost_per_kg or 0)
         price = i.retail_price_per_kg or 0
         margin = round((price - cost) / price * 100, 1) if price > 0 else None
         out.append({'id': i.id, 'name': i.name, 'cost_per_kg': cost,
@@ -47,7 +63,7 @@ def prices_save():
         return jsonify(status='error', message='Item not found.'), 404
     if not math.isfinite(price) or price <= 0:
         return jsonify(status='error', message='Price must be above 0.'), 400
-    cost = item.cost_per_kg or 0
+    cost = _max_outlet_unit_cost(item.id, item.cost_per_kg or 0)
     if price <= cost:
         return jsonify(status='error',
                        message=f'Price {price:.2f} is not above cost {cost:.2f}. Fix the cost or raise the price.'), 400
@@ -76,7 +92,11 @@ def daily_report():
                 .filter(PaymentSplit.order_id.in_(ids))
                 .group_by(PaymentSplit.payment_method).all())
         by_method = {m: round(a or 0, 2) for m, a in rows if m != 'CREDIT'}
-        cash_change = round(sum(min(o.change_due or 0, sum(p.amount for p in PaymentSplit.query.filter_by(order_id=o.id, payment_method='CASH').all())) for o in orders), 2)
+        cash_rows = (db.session.query(PaymentSplit.order_id, func.sum(PaymentSplit.amount))
+                     .filter(PaymentSplit.order_id.in_(ids), PaymentSplit.payment_method == 'CASH')
+                     .group_by(PaymentSplit.order_id).all())
+        cash_by_order = {order_id: amount or 0.0 for order_id, amount in cash_rows}
+        cash_change = round(sum(min(o.change_due or 0, cash_by_order.get(o.id, 0.0)) for o in orders), 2)
         if cash_change:
             by_method['CASH'] = round(max(0.0, by_method.get('CASH', 0.0) - cash_change), 2)
     tills = TillSession.query.filter(
@@ -84,6 +104,19 @@ def daily_report():
         TillSession.closed_at >= start,
         TillSession.closed_at < end,
         TillSession.status == 'CLOSED').order_by(TillSession.closed_at.desc()).all()
+    expenses = OperatingExpense.query.filter(OperatingExpense.location_id == location.id,
+                                             OperatingExpense.created_at >= start,
+                                             OperatingExpense.created_at < end).all()
+    refunds = SalesRefund.query.filter(SalesRefund.location_id == location.id,
+                                       SalesRefund.created_at >= start,
+                                       SalesRefund.created_at < end).all()
+    till_movements = (TillCashMovement.query.join(TillSession)
+                      .filter(TillSession.location_id == location.id,
+                              TillCashMovement.created_at >= start,
+                              TillCashMovement.created_at < end).all())
+    expense_categories = {}
+    for expense in expenses:
+        expense_categories[expense.category] = round(expense_categories.get(expense.category, 0.0) + (expense.amount or 0.0), 2)
     return jsonify(
         date=start_eat.strftime('%Y-%m-%d'),
         location_id=location.id, location_name=location.name,
@@ -96,7 +129,12 @@ def daily_report():
                         'counted_cash': round(t.counted_cash or 0, 2),
                         'variance': round(t.cash_variance or 0, 2),
                         'closed_at': t.closed_at.strftime('%H:%M') if t.closed_at else ''} for t in tills],
-        credit_sales=round(sum(o.credit_amount or 0 for o in orders), 2))
+        credit_sales=round(sum(o.credit_amount or 0 for o in orders), 2),
+        expenses_total=round(sum(e.amount or 0 for e in expenses), 2),
+        expenses_by_category=expense_categories,
+        refunds_total=round(sum(r.amount or 0 for r in refunds), 2),
+        cash_paid_in=round(sum(m.amount or 0 for m in till_movements if m.movement_type == 'PAID_IN'), 2),
+        cash_paid_out=round(sum(m.amount or 0 for m in till_movements if m.movement_type == 'PAID_OUT'), 2))
 
 
 @retail_bp.route('/api/admin/customers/<int:customer_id>/credit-limit', methods=['POST'])
@@ -128,7 +166,7 @@ def packs_list():
     for i in FeedIngredient.query.order_by(FeedIngredient.name).all():
         prices = by_item.get(i.id, {})
         out.append({'id': i.id, 'name': i.name,
-                    'cost_per_kg': i.cost_per_kg or 0,
+                    'cost_per_kg': _max_outlet_unit_cost(i.id, i.cost_per_kg or 0),
                     'kg_price': i.retail_price_per_kg or 0,
                     'p50': prices.get(50), 'p70': prices.get(70)})
     return jsonify(out)
@@ -142,7 +180,7 @@ def packs_save():
         return jsonify(status='error', message='Bad item.'), 400
     if not item:
         return jsonify(status='error', message='Item not found.'), 404
-    cost = item.cost_per_kg or 0
+    cost = _max_outlet_unit_cost(item.id, item.cost_per_kg or 0)
     new_prices = {}
     for size in PACK_SIZES:
         raw = data.get('p%d' % size)

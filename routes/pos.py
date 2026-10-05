@@ -3,10 +3,11 @@ import math
 from flask import g
 import uuid
 from flask import Blueprint, request, jsonify
+from sqlalchemy.exc import IntegrityError
 from services.db import db
-from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer
+from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund
 from services.pos_service import process_full_pos_checkout
-from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till
+from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
 from routes.auth import roles_required
 
 pos_bp = Blueprint('pos_bp', __name__)
@@ -142,12 +143,15 @@ def till_open():
         if active_till(location.id, g.user.username):
             raise ValueError('You already have an open till at this outlet.')
         till = TillSession(location_id=location.id, cashier_name=g.user.username,
-                           opening_cash=opening, expected_cash=opening, status='OPEN')
+                           opening_cash=opening, expected_cash=opening, status='OPEN',
+                           open_key=f'{location.id}:{g.user.username}')
         db.session.add(till)
         db.session.commit()
         return jsonify(status='success', session_id=till.id, location_name=location.name)
     except Exception as exc:
         db.session.rollback()
+        if isinstance(exc, IntegrityError):
+            return jsonify(status='error', message='A till was opened for you at this outlet in another request. Refresh the till status.'), 409
         return jsonify(status='error', message=str(exc)), 400
 
 @pos_bp.route('/api/till/close', methods=['POST'])
@@ -164,6 +168,7 @@ def till_close():
         from datetime import datetime
         variance = round(counted - (till.expected_cash or 0.0), 2)
         till.status = 'CLOSED'
+        till.open_key = None
         till.closed_at = datetime.utcnow()
         till.counted_cash = round(counted, 2)
         till.cash_variance = variance
@@ -181,6 +186,115 @@ def till_close():
         db.session.commit()
         return jsonify(status='success', expected_cash=round(till.expected_cash, 2),
                        counted_cash=round(counted, 2), variance=variance)
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+
+@pos_bp.route('/api/till/cash-movements', methods=['GET', 'POST'])
+@roles_required('admin', 'accountant', 'sales')
+def till_cash_movements():
+    if request.method == 'GET':
+        try:
+            location = resolve_location(request.args.get('location_id'))
+        except ValueError as exc:
+            return jsonify(status='error', message=str(exc)), 400
+        rows = (TillCashMovement.query.join(TillSession)
+                .filter(TillSession.location_id == location.id)
+                .order_by(TillCashMovement.created_at.desc()).limit(50).all())
+        return jsonify(movements=[{'reference': m.reference, 'type': m.movement_type,
+                                   'amount': m.amount, 'reason': m.reason,
+                                   'created_by': m.created_by,
+                                   'created_at': m.created_at.strftime('%Y-%m-%d %H:%M') if m.created_at else ''}
+                                  for m in rows])
+    data = request.get_json(silent=True) or {}
+    try:
+        location = resolve_location(data.get('location_id'))
+        movement_type = str(data.get('movement_type') or '').strip().upper()
+        amount = round(float(data.get('amount')), 2)
+        reason = str(data.get('reason') or '').strip()
+        if movement_type not in ('PAID_IN', 'PAID_OUT'):
+            raise ValueError('Choose cash paid-in or paid-out.')
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError('Cash movement amount must be above zero.')
+        if len(reason) < 4 or len(reason) > 200 or any(ch in reason for ch in '<>'):
+            raise ValueError('Enter a valid reason (4–200 characters).')
+        till = active_till(location.id, g.user.username, lock=True)
+        if not till:
+            raise ValueError('Open your outlet till before recording a cash movement.')
+        if movement_type == 'PAID_OUT' and amount > (till.expected_cash or 0.0) + 0.001:
+            raise ValueError('Cash paid-out exceeds the expected till cash.')
+        ref = 'TILL-' + uuid.uuid4().hex[:10].upper()
+        db.session.add(TillCashMovement(reference=ref, till_session_id=till.id,
+                                        movement_type=movement_type, amount=amount,
+                                        reason=reason, created_by=g.user.username))
+        sign = 1 if movement_type == 'PAID_IN' else -1
+        till.expected_cash = round((till.expected_cash or 0.0) + sign * amount, 2)
+        from services.ledger_service import post_gl_entry
+        if movement_type == 'PAID_IN':
+            posted = post_gl_entry(ref, '1000', amount, 0.0, 'TILL_CASH_MOVEMENT', till.id)
+            posted = post_gl_entry(ref, '1100', 0.0, amount, 'TILL_CASH_MOVEMENT', till.id) and posted
+        else:
+            posted = post_gl_entry(ref, '1100', amount, 0.0, 'TILL_CASH_MOVEMENT', till.id)
+            posted = post_gl_entry(ref, '1000', 0.0, amount, 'TILL_CASH_MOVEMENT', till.id) and posted
+        if not posted:
+            raise RuntimeError('Could not post the cash movement to the ledger.')
+        db.session.commit()
+        return jsonify(status='success', reference=ref, expected_cash=till.expected_cash), 201
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+
+@pos_bp.route('/api/pos/orders/<int:order_id>/refund', methods=['POST'])
+@roles_required('admin', 'accountant', 'sales')
+def refund_sale(order_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        order = db.session.get(OrderHeader, order_id)
+        if not order:
+            return jsonify(status='error', message='Sale not found.'), 404
+        location = resolve_location(order.location_id if g.user.role in ('admin', 'accountant') else None)
+        if location.id != order.location_id:
+            raise ValueError('This sale belongs to another outlet.')
+        amount = round(float(data.get('amount')), 2)
+        method = str(data.get('payment_method') or '').strip().upper()
+        reason = str(data.get('reason') or '').strip()
+        if method not in ('CASH', 'MPESA', 'BANK'):
+            raise ValueError('Choose a valid refund method.')
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError('Refund amount must be above zero.')
+        if len(reason) < 4 or len(reason) > 200 or any(ch in reason for ch in '<>'):
+            raise ValueError('Enter a refund reason (4–200 characters).')
+        original = PaymentSplit.query.filter_by(order_id=order.id, payment_method=method).all()
+        original_amount = sum(p.amount or 0.0 for p in original)
+        if method == 'CASH':
+            original_amount = max(0.0, original_amount - (order.change_due or 0.0))
+        already_method = sum(r.amount or 0.0 for r in SalesRefund.query.filter_by(order_id=order.id, payment_method=method).all())
+        already_total = sum(r.amount or 0.0 for r in SalesRefund.query.filter_by(order_id=order.id).all())
+        net_paid = max(0.0, (order.paid_amount or 0.0) - (order.change_due or 0.0))
+        if amount > original_amount - already_method + 0.001 or amount > net_paid - already_total + 0.001:
+            raise ValueError('Refund exceeds the amount this sale received by that payment method.')
+        till = None
+        if method == 'CASH':
+            till = active_till(location.id, g.user.username, lock=True)
+            if not till:
+                raise ValueError('Open your outlet till before issuing a cash refund.')
+            if amount > (till.expected_cash or 0.0) + 0.001:
+                raise ValueError('Cash refund exceeds the expected cash available in this till.')
+        ref = 'REF-' + uuid.uuid4().hex[:10].upper()
+        refund = SalesRefund(reference=ref, order_id=order.id, location_id=location.id,
+                             till_session_id=till.id if till else None, amount=amount,
+                             payment_method=method, reason=reason, created_by=g.user.username)
+        db.session.add(refund)
+        if till:
+            till.expected_cash = round((till.expected_cash or 0.0) - amount, 2)
+        from services.ledger_service import post_gl_entry
+        payment_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
+        posted = post_gl_entry(ref, '4100', amount, 0.0, 'SALES_REFUND', order.id)
+        posted = post_gl_entry(ref, payment_account, 0.0, amount, 'SALES_REFUND', order.id) and posted
+        if not posted:
+            raise RuntimeError('Could not post the refund to the ledger.')
+        db.session.commit()
+        return jsonify(status='success', reference=ref), 201
     except Exception as exc:
         db.session.rollback()
         return jsonify(status='error', message=str(exc)), 400
@@ -207,15 +321,16 @@ def adjust_inventory():
         return jsonify(status='error', message=str(exc)), 400
 
 @pos_bp.route('/api/inventory/transfers', methods=['POST'])
-@roles_required('admin')
+@roles_required('admin', 'warehouse')
 def transfer_inventory():
     data = request.get_json(silent=True) or {}
     try:
-        source_id, destination_id = int(data.get('from_location_id')), int(data.get('to_location_id'))
+        source = resolve_location(data.get('from_location_id'))
+        destination_id = int(data.get('to_location_id'))
         ingredient = db.session.get(FeedIngredient, int(data.get('ingredient_id')))
         quantity = float(data.get('quantity_kg'))
         reason = str(data.get('reason') or '').strip()
-        source, destination = db.session.get(Location, source_id), db.session.get(Location, destination_id)
+        destination = db.session.get(Location, destination_id)
         if not source or not destination or source.id == destination.id:
             raise ValueError('Choose two different valid outlets.')
         if not ingredient or not math.isfinite(quantity) or quantity <= 0:
@@ -223,14 +338,155 @@ def transfer_inventory():
         if len(reason) < 4 or len(reason) > 200:
             raise ValueError('Enter a transfer reason (4–200 characters).')
         ref = 'TRF-' + uuid.uuid4().hex[:10].upper()
+        source_stock = location_stock(source.id, ingredient.id, lock=True)
+        dispatch_cost = source_stock.unit_cost_per_kg or 0.0
         change_stock(source.id, ingredient, -quantity, 'TRANSFER_OUT', ref, reason)
-        change_stock(destination.id, ingredient, quantity, 'TRANSFER_IN', ref, reason)
         db.session.add(InventoryTransfer(transfer_no=ref, from_location_id=source.id,
                                          to_location_id=destination.id, ingredient_id=ingredient.id,
-                                         quantity_kg=quantity, reason=reason,
+                                         quantity_kg=quantity, received_quantity_kg=0.0,
+                                         unit_cost_per_kg=dispatch_cost,
+                                         status='IN_TRANSIT', reason=reason,
                                          created_by=g.user.username))
         db.session.commit()
-        return jsonify(status='success', transfer_no=ref)
+        return jsonify(status='success', transfer_no=ref, status_text='IN_TRANSIT')
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+
+@pos_bp.route('/api/inventory/transfers/incoming', methods=['GET'])
+@roles_required('admin', 'sales', 'warehouse')
+def incoming_inventory_transfers():
+    try:
+        location = resolve_location(request.args.get('location_id'))
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    query = InventoryTransfer.query.filter(
+        InventoryTransfer.to_location_id == location.id,
+        InventoryTransfer.status.in_(('IN_TRANSIT', 'PARTIALLY_RECEIVED')))
+    rows = []
+    for transfer in query.order_by(InventoryTransfer.created_at.asc()).all():
+        ingredient = db.session.get(FeedIngredient, transfer.ingredient_id)
+        source = db.session.get(Location, transfer.from_location_id)
+        remaining = round((transfer.quantity_kg or 0.0) - (transfer.received_quantity_kg or 0.0), 6)
+        rows.append({'id': transfer.id, 'transfer_no': transfer.transfer_no,
+                     'item': ingredient.name if ingredient else 'Deleted item',
+                     'from_location': source.name if source else 'Unknown location',
+                     'quantity_kg': transfer.quantity_kg,
+                     'received_quantity_kg': transfer.received_quantity_kg or 0.0,
+                     'remaining_quantity_kg': remaining, 'reason': transfer.reason,
+                     'created_by': transfer.created_by or '',
+                     'created_at': transfer.created_at.strftime('%Y-%m-%d %H:%M') if transfer.created_at else ''})
+    return jsonify(location_id=location.id, location_name=location.name, transfers=rows)
+
+@pos_bp.route('/api/inventory/transfers/<int:transfer_id>/receive', methods=['POST'])
+@roles_required('admin', 'sales', 'warehouse')
+def receive_inventory_transfer(transfer_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        transfer = InventoryTransfer.query.filter_by(id=transfer_id).with_for_update().first()
+        if not transfer:
+            return jsonify(status='error', message='Transfer not found.'), 404
+        location = resolve_location(transfer.to_location_id if g.user.role == 'admin' else None)
+        if location.id != transfer.to_location_id:
+            raise ValueError('This transfer is addressed to a different outlet.')
+        if transfer.status not in ('IN_TRANSIT', 'PARTIALLY_RECEIVED'):
+            raise ValueError('This transfer has already been received or closed.')
+        quantity = float(data.get('quantity_kg'))
+        note = str(data.get('note') or '').strip()
+        remaining = round((transfer.quantity_kg or 0.0) - (transfer.received_quantity_kg or 0.0), 6)
+        if not math.isfinite(quantity) or quantity <= 0 or quantity > remaining + 0.000001:
+            raise ValueError(f'Enter a receipt quantity above 0 and no more than {remaining:.2f} kg.')
+        if len(note) > 200 or any(ch in note for ch in '<>'):
+            raise ValueError('Receipt note must be 200 characters or fewer.')
+        ingredient = db.session.get(FeedIngredient, transfer.ingredient_id)
+        if not ingredient:
+            raise ValueError('The transferred inventory item no longer exists.')
+        receipt_ref = f'{transfer.transfer_no}-REC-{uuid.uuid4().hex[:6].upper()}'
+        receive_stock(location.id, ingredient, quantity, transfer.unit_cost_per_kg or 0.0,
+                      'TRANSFER_IN', receipt_ref,
+                      note or f'Received against {transfer.transfer_no}')
+        db.session.add(InventoryTransferReceipt(transfer_id=transfer.id, quantity_kg=quantity,
+                                                received_by=g.user.username, note=note or None))
+        transfer.received_quantity_kg = round((transfer.received_quantity_kg or 0.0) + quantity, 6)
+        transfer.received_by = g.user.username
+        if transfer.received_quantity_kg >= transfer.quantity_kg - 0.000001:
+            transfer.received_quantity_kg = transfer.quantity_kg
+            transfer.status = 'RECEIVED'
+            from datetime import datetime
+            transfer.completed_at = datetime.utcnow()
+        else:
+            transfer.status = 'PARTIALLY_RECEIVED'
+        db.session.commit()
+        return jsonify(status='success', transfer_no=transfer.transfer_no,
+                       received_quantity_kg=transfer.received_quantity_kg,
+                       remaining_quantity_kg=max(0.0, round(transfer.quantity_kg - transfer.received_quantity_kg, 6)),
+                       transfer_status=transfer.status)
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+
+EXPENSE_CATEGORIES = {
+    'TRANSPORT': ('Transport', '5300'), 'UTILITIES': ('KPLC / Utilities', '5310'),
+    'MEALS': ('Staff lunch / meals', '5320'), 'RENT': ('Rent', '5330'),
+    'REPAIRS': ('Repairs and maintenance', '5340'),
+    'SUPPLIES': ('Operating supplies', '5350'), 'OTHER': ('Other', '5390'),
+}
+
+@pos_bp.route('/api/expenses', methods=['GET', 'POST'])
+@roles_required('admin', 'accountant', 'sales', 'warehouse')
+def operating_expenses():
+    if request.method == 'GET':
+        try:
+            location = resolve_location(request.args.get('location_id'))
+        except ValueError as exc:
+            return jsonify(status='error', message=str(exc)), 400
+        records = OperatingExpense.query.filter_by(location_id=location.id).order_by(
+            OperatingExpense.created_at.desc()).limit(100).all()
+        return jsonify(location_id=location.id, location_name=location.name,
+                       expenses=[{'reference': e.reference, 'category': EXPENSE_CATEGORIES.get(e.category, (e.category, ''))[0],
+                                  'amount': e.amount, 'payment_method': e.payment_method,
+                                  'description': e.description, 'created_by': e.created_by,
+                                  'created_at': e.created_at.strftime('%Y-%m-%d %H:%M') if e.created_at else ''}
+                                 for e in records])
+    data = request.get_json(silent=True) or {}
+    try:
+        location = resolve_location(data.get('location_id'))
+        category = str(data.get('category') or '').strip().upper()
+        method = str(data.get('payment_method') or '').strip().upper()
+        description = str(data.get('description') or '').strip()
+        amount = round(float(data.get('amount')), 2)
+        if category not in EXPENSE_CATEGORIES:
+            raise ValueError('Choose a valid expense category.')
+        if method not in ('CASH', 'MPESA', 'BANK'):
+            raise ValueError('Choose Cash, M-Pesa, or Bank as the payment method.')
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError('Expense amount must be above zero.')
+        if not description or len(description) > 200 or any(ch in description for ch in '<>'):
+            raise ValueError('Enter a description of 1–200 characters.')
+        till = None
+        if method == 'CASH':
+            till = active_till(location.id, g.user.username, lock=True)
+            if not till:
+                raise ValueError('Open your outlet till before recording a cash expense.')
+            if amount > (till.expected_cash or 0.0) + 0.001:
+                raise ValueError('Cash expense exceeds the expected cash available in this till.')
+        ref = 'EXP-' + uuid.uuid4().hex[:10].upper()
+        expense = OperatingExpense(reference=ref, location_id=location.id,
+                                   till_session_id=till.id if till else None,
+                                   category=category, amount=amount, payment_method=method,
+                                   description=description, created_by=g.user.username)
+        db.session.add(expense)
+        if till:
+            till.expected_cash = round((till.expected_cash or 0.0) - amount, 2)
+        from services.ledger_service import post_gl_entry
+        expense_account = EXPENSE_CATEGORIES[category][1]
+        payment_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
+        if not post_gl_entry(ref, expense_account, amount, 0.0, 'OPERATING_EXPENSE', None):
+            raise RuntimeError('Could not post the expense debit to the ledger.')
+        if not post_gl_entry(ref, payment_account, 0.0, amount, 'OPERATING_EXPENSE', None):
+            raise RuntimeError('Could not post the payment credit to the ledger.')
+        db.session.commit()
+        return jsonify(status='success', reference=ref), 201
     except Exception as exc:
         db.session.rollback()
         return jsonify(status='error', message=str(exc)), 400
@@ -247,11 +503,22 @@ def get_sales_history():
         cust = db.session.get(Customer, o.customer_id) if o.customer_id else None
         lines = OrderLine.query.filter_by(order_id=o.id).all()
         splits = PaymentSplit.query.filter_by(order_id=o.id).all()
+        refunds = SalesRefund.query.filter_by(order_id=o.id).order_by(SalesRefund.created_at).all()
+        refunded = sum(r.amount or 0.0 for r in refunds)
+        net_paid = max(0.0, (o.paid_amount or 0.0) - (o.change_due or 0.0))
         out.append({
+            'order_id': o.id,
             'sale_id': o.sale_id, 'created_at': o.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             'customer_name': cust.name if cust else 'Walk-In Cash Customer',
             'total_amount': o.total_amount, 'paid_amount': o.paid_amount, 'credit_amount': o.credit_amount,
             'payments': [{'method': p.payment_method, 'amount': p.amount} for p in splits],
+            'refunded_amount': round(refunded, 2),
+            'refundable_amount': round(max(0.0, net_paid - refunded), 2),
+            'refunds': [{'reference': r.reference, 'amount': r.amount,
+                         'payment_method': r.payment_method, 'reason': r.reason,
+                         'created_by': r.created_by,
+                         'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else ''}
+                        for r in refunds],
             'items': [{'name': (getattr(db.session.get(FeedIngredient, l.ingredient_id), 'name', None) or '(deleted item)'), 'qty_entered': l.qty_entered, 'unit': l.unit_type, 'subtotal': l.subtotal} for l in lines]
         })
     return jsonify(out)

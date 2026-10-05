@@ -4,8 +4,8 @@ from flask import Blueprint, request, jsonify
 import uuid
 from services.db import db
 from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, FeedIngredient, StockMovement, GoodsReceiptNote, GoodsReceiptLine
-from services.po_service import create_purchase_order, post_goods_receipt
-from services.inventory import resolve_location, location_stock, stock_quantity, change_stock
+from services.po_service import create_purchase_order
+from services.inventory import resolve_location, location_stock, stock_quantity, change_stock, receive_stock
 
 po_bp = Blueprint('po_bp', __name__)
 
@@ -31,15 +31,6 @@ def create_po():
         data = request.get_json()
         po_number = create_purchase_order(data)
         return jsonify({'status': 'success', 'po_number': po_number})
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
-
-@po_bp.route('/api/po/<int:po_id>/receive', methods=['POST'])
-def receive_po(po_id):
-    try:
-        grn_data = request.get_json()
-        raise Exception('This receiving route is retired. Use the Receive screen on the Purchase Orders tab.')
-        return jsonify({'status': 'success', 'grn_number': grn_number})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 400
 
@@ -213,11 +204,19 @@ def receive_grpo_partial(po_id):
                 raise ValueError('Quantities must be zero or more.')
             if incoming_po_qty > 0 and incoming_kg <= 0:
                 raise ValueError('Enter the weight in kg for the goods received.')
+            if incoming_po_qty <= 0 and incoming_kg > 0:
+                raise ValueError('Accepted stock weight requires an accepted purchase quantity.')
 
             if incoming_po_qty <= 0 and rejected_po_qty <= 0: 
                 continue
 
             ing = db.session.get(FeedIngredient, line.ingredient_id)
+            if not ing:
+                raise ValueError('The received inventory item no longer exists.')
+            if incoming_po_qty > 0 and (ing.conversion_type or 'FIXED') == 'FIXED':
+                expected_kg = incoming_po_qty * (ing.conversion_factor or 1.0)
+                if abs(incoming_kg - expected_kg) > max(0.05, expected_kg * 0.01):
+                    raise ValueError(f'Entered kg for {ing.name} does not match its fixed UOM conversion ({expected_kg:.2f} kg expected).')
             ordered = getattr(line, 'qty_ordered', 0.0) or 0.0
             received = getattr(line, 'qty_received', 0.0) or 0.0
             rejected = getattr(line, 'qty_rejected', 0.0) or 0.0
@@ -226,25 +225,17 @@ def receive_grpo_partial(po_id):
             if (received + rejected + incoming_po_qty + rejected_po_qty) > ordered: 
                 raise ValueError(f"Exceeds PO limit for {ing.name}")
 
-            # Canonical Read: Current stock from ledger
             stock_row = location_stock(location.id, ing.id, lock=True)
-            current_stock = stock_row.quantity_kg or 0.0
             
             # NOTE: Using incoming_kg instead of incoming_qty to match po.py
             new_subtotal = incoming_po_qty * line.unit_cost
-            old_val = (ing.stock_quantity_kg or 0.0) * (ing.cost_per_kg or 0.0)
-            new_total_stock = (ing.stock_quantity_kg or 0.0) + incoming_kg
             if incoming_kg > 0 and incoming_po_qty > 0:
                 implied = new_subtotal / incoming_kg
-                known = ing.cost_per_kg or 0.0
+                known = stock_row.unit_cost_per_kg or 0.0
                 if known > 0 and not (known / 3.0 <= implied <= known * 3.0):
                     raise ValueError(f"Cost per kg works out to {implied:.2f} for {ing.name}, far from its current {known:.2f}. Check the quantity received and the unit cost on the PO.")
-            
-            # Update moving average cost based on true ledger stock
-            if new_total_stock > 0: 
-                ing.cost_per_kg = (old_val + new_subtotal) / new_total_stock
-            
-            change_stock(location.id, ing, incoming_kg, 'GRPO_RECEIPT', grpo_ref)
+            receive_stock(location.id, ing, incoming_kg, new_subtotal / incoming_kg,
+                          'GRPO_RECEIPT', grpo_ref)
             
             # Write back the PO units
             line.qty_received = received + incoming_po_qty

@@ -68,7 +68,7 @@ def process_full_pos_checkout(data):
         unit_type = 'KG' if abs(bag_size_kg - 1.0) < 0.0005 else ('%g' % bag_size_kg) + 'KG BAG'
         change_stock(location_id, ingredient, -total_kg_for_item, 'POS_SALE')
         total_bill += subtotal
-        total_cost += total_kg_for_item * (ingredient.cost_per_kg or 0.0)
+        total_cost += total_kg_for_item * (stock_row.unit_cost_per_kg or 0.0)
         order_lines.append(OrderLine(
             ingredient_id=ingredient.id,
             unit_type=unit_type,

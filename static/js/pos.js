@@ -49,6 +49,7 @@ async function refreshTill() {
     : `${d.location_name || 'Outlet'} · Till closed`;
   document.getElementById('till-open-btn').style.display = currentTill ? 'none' : '';
   document.getElementById('till-close-btn').style.display = currentTill ? '' : 'none';
+  await loadTillMovementHistory();
 }
 async function openTill() {
   const opening_cash = Number(document.getElementById('till-opening-cash').value || 0);
@@ -66,6 +67,26 @@ async function closeTill() {
   const d = await r.json();
   if (!r.ok) return alert(d.message || 'Could not close till.');
   alert(`Till closed. Expected KSh ${d.expected_cash.toFixed(2)}, counted KSh ${d.counted_cash.toFixed(2)}, variance KSh ${d.variance.toFixed(2)}.`);
+  await refreshTill();
+}
+async function loadTillMovementHistory() {
+  const el = document.getElementById('till-movement-history');
+  if (!el) return;
+  const r = await fetch('/api/till/cash-movements?location_id=' + encodeURIComponent(activeLocationId));
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { el.textContent = d.message || 'Could not load till movements.'; return; }
+  const rows = d.movements || [];
+  el.innerHTML = rows.length ? rows.map(m => `${escHtml(m.created_at)} · ${escHtml(m.type)} KSh ${Number(m.amount).toFixed(2)} · ${escHtml(m.reason)} · ${escHtml(m.created_by)}`).join('<br>') : 'No paid-in / paid-out movements recorded.';
+}
+async function recordTillMovement() {
+  const msg = document.getElementById('till-movement-message');
+  const r = await fetch('/api/till/cash-movements', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_id:activeLocationId, movement_type:document.getElementById('till-movement-type').value,
+      amount:document.getElementById('till-movement-amount').value, reason:document.getElementById('till-movement-reason').value})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { msg.textContent = d.message || 'Could not save cash movement.'; return; }
+  msg.textContent = `Saved ${d.reference}. Expected till cash KSh ${Number(d.expected_cash).toFixed(2)}.`;
+  document.getElementById('till-movement-amount').value = ''; document.getElementById('till-movement-reason').value = '';
   await refreshTill();
 }
 
@@ -459,9 +480,24 @@ async function loadSalesHistory() {
   const tbody = document.getElementById('sales-table-body'); 
   if(!tbody) return;
   tbody.innerHTML = '';
-  if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="7">No sales logged.</td></tr>'; return; }
+  if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="9">No sales logged.</td></tr>'; return; }
   history.forEach(s => {
-    tbody.innerHTML += `<tr><td><small>${s.created_at}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${s.total_amount.toFixed(2)}</b></td><td>KSh ${s.paid_amount.toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+s.credit_amount.toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${s.payments.map(p => `${p.method}: KSh${p.amount.toFixed(2)}`).join(', ') || 'CASH'}</small></td></tr>`;
+    const refundDetails = (s.refunds || []).map(r => `<small>${escHtml(r.reference)} · ${escHtml(r.payment_method)} KSh ${Number(r.amount).toFixed(2)} · ${escHtml(r.reason)} · ${escHtml(r.created_by)}</small>`).join('<br>');
+    tbody.innerHTML += `<tr><td><small>${escHtml(s.created_at)}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${Number(s.total_amount).toFixed(2)}</b></td><td>KSh ${Number(s.paid_amount).toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+Number(s.credit_amount).toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${(s.payments || []).map(p => `${escHtml(p.method)}: KSh${Number(p.amount).toFixed(2)}`).join(', ') || 'CASH'}</small></td><td>KSh ${Number(s.refunded_amount || 0).toFixed(2)}${refundDetails ? '<br>' + refundDetails : ''}</td><td><button class="btn-sm btn-warning" onclick="refundSale(${s.order_id}, ${Number(s.refundable_amount || 0)})" ${Number(s.refundable_amount || 0) <= 0 ? 'disabled' : ''}>Refund</button></td></tr>`;
   });
+}
+async function refundSale(orderId, refundable) {
+  if (refundable <= 0) return alert('No paid amount remains available to refund.');
+  const amount = prompt(`Maximum refundable: KSh ${Number(refundable).toFixed(2)}. Enter refund amount:`);
+  if (amount === null) return;
+  const method = (prompt('Refund through CASH, MPESA, or BANK?') || '').trim().toUpperCase();
+  const reason = (prompt('Refund reason:') || '').trim();
+  if (!['CASH','MPESA','BANK'].includes(method)) return alert('Use CASH, MPESA, or BANK.');
+  const r = await fetch(`/api/pos/orders/${orderId}/refund`, {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({amount, payment_method:method, reason})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(d.message || 'Could not record refund.');
+  alert(`Refund ${d.reference} recorded. If goods were physically returned, record their stock return separately.`);
+  await loadSalesHistory();
 }
 window.addEventListener('load', initOutletTill);

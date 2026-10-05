@@ -80,11 +80,16 @@ def post_goods_receipt(po_id, grn_data):
 
         qty_received = float(item.get('qty_received', 0.0))
         qty_rejected = float(item.get('qty_rejected', 0.0))
+        if not math.isfinite(qty_received) or not math.isfinite(qty_rejected) or qty_received < 0 or qty_rejected < 0 or qty_rejected > qty_received:
+            raise ValueError('Receipt and rejected quantities must be valid; rejected cannot exceed received.')
         qty_accepted = qty_received - qty_rejected
+        if (po_line.qty_received or 0.0) + (po_line.qty_rejected or 0.0) + qty_received > (po_line.qty_ordered or 0.0) + 0.000001:
+            raise ValueError(f'Receipt exceeds the ordered quantity for PO line {po_line.id}.')
 
-        past_receipts = db.session.query(db.func.sum(GoodsReceiptLine.qty_accepted)).filter_by(po_line_id=po_line.id).scalar() or 0.0
-        if qty_accepted > 0:
-            # 1. Create the GRN Line for audit
+        if qty_received > 0:
+            ing = db.session.get(FeedIngredient, po_line.ingredient_id)
+            if not ing:
+                raise ValueError('The received inventory item no longer exists.')
             grn_line = GoodsReceiptLine(
                 grn_id=grn.id,
                 po_line_id=po_line.id,
@@ -96,19 +101,19 @@ def post_goods_receipt(po_id, grn_data):
                 unit_cost=po_line.unit_cost
             )
             db.session.add(grn_line)
-            
+        if qty_accepted > 0:
             total_accepted_value += (qty_accepted * po_line.unit_cost)
 
-            # 2. Immutable Stock Movement (This IS the stock balance driver)
+            # Update outlet stock and capture the movement in the same transaction.
+            old_qty = ing.stock_quantity_kg or 0.0
+            old_value = old_qty * (ing.cost_per_kg or 0.0)
             change_stock(location.id, ing, qty_accepted, 'GRPO_RECEIPT', grn_number)
-            ing = FeedIngredient.query.get(po_line.ingredient_id)
-            if ing:
-                # Safely update average cost based on new inventory intake
-                ing.cost_per_kg = po_line.unit_cost 
+            new_qty = ing.stock_quantity_kg or 0.0
+            ing.cost_per_kg = (old_value + qty_accepted * po_line.unit_cost) / new_qty if new_qty > 0 else 0.0
+        po_line.qty_received = (po_line.qty_received or 0.0) + qty_accepted
+        po_line.qty_rejected = (po_line.qty_rejected or 0.0) + qty_rejected
 
-        total_accepted_historically = past_receipts + qty_accepted
-        
-        if total_accepted_historically < po_line.qty_ordered:
+        if (po_line.qty_received or 0.0) + (po_line.qty_rejected or 0.0) < (po_line.qty_ordered or 0.0):
             all_lines_fully_received = False
 
     # Update PO Status dynamically
@@ -119,11 +124,14 @@ def post_goods_receipt(po_id, grn_data):
         try:
             from services.ledger_service import post_gl_entry
             # Debit: Raw Materials Inventory Asset
-            post_gl_entry(grn_number, '1200', total_accepted_value, 0.0, 'GRN', grn.id)
+            posted = post_gl_entry(grn_number, '1200', total_accepted_value, 0.0, 'GRN', grn.id)
             # Credit: Goods Received Not Invoiced (Liability)
-            post_gl_entry(grn_number, '2010', 0.0, total_accepted_value, 'GRN', grn.id)
+            posted = post_gl_entry(grn_number, '2010', 0.0, total_accepted_value, 'GRN', grn.id) and posted
+            if not posted:
+                raise RuntimeError('Could not post GRN accounting entries.')
         except Exception as e:
-            print(f"GRNI Posting Error: {e}")
+            db.session.rollback()
+            raise RuntimeError(f'GRNI posting failed: {e}')
 
     db.session.commit()
     return grn_number

@@ -45,6 +45,7 @@ class LocationStock(db.Model):
     ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
     quantity_kg = db.Column(db.Float, nullable=False, default=0.0)
     reserved_quantity_kg = db.Column(db.Float, nullable=False, default=0.0)
+    unit_cost_per_kg = db.Column(db.Float, nullable=False, default=0.0)
     __table_args__ = (db.UniqueConstraint('location_id', 'ingredient_id', name='uq_location_stock_item'),)
 
 class Supplier(db.Model):
@@ -87,6 +88,7 @@ class TillSession(db.Model):
     status = db.Column(db.String(20), nullable=False, default='OPEN')
     counted_cash = db.Column(db.Float)
     cash_variance = db.Column(db.Float)
+    open_key = db.Column(db.String(120), unique=True)
 
 class OrderHeader(db.Model):
     __tablename__ = 'order_headers'
@@ -145,9 +147,60 @@ class InventoryTransfer(db.Model):
     to_location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
     ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
     quantity_kg = db.Column(db.Float, nullable=False)
+    unit_cost_per_kg = db.Column(db.Float, nullable=False, default=0.0)
+    received_quantity_kg = db.Column(db.Float, nullable=False, default=0.0)
+    status = db.Column(db.String(30), nullable=False, default='IN_TRANSIT')
     reason = db.Column(db.String(200), nullable=False)
     created_by = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    received_by = db.Column(db.String(50))
+    completed_at = db.Column(db.DateTime)
+
+class InventoryTransferReceipt(db.Model):
+    __tablename__ = 'inventory_transfer_receipts'
+    id = db.Column(db.Integer, primary_key=True)
+    transfer_id = db.Column(db.Integer, db.ForeignKey('inventory_transfers.id'), nullable=False)
+    quantity_kg = db.Column(db.Float, nullable=False)
+    received_by = db.Column(db.String(50), nullable=False)
+    received_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    note = db.Column(db.String(200))
+
+class OperatingExpense(db.Model):
+    __tablename__ = 'operating_expenses'
+    id = db.Column(db.Integer, primary_key=True)
+    reference = db.Column(db.String(50), unique=True, nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
+    category = db.Column(db.String(30), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    payment_method = db.Column(db.String(20), nullable=False)
+    description = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class TillCashMovement(db.Model):
+    __tablename__ = 'till_cash_movements'
+    id = db.Column(db.Integer, primary_key=True)
+    reference = db.Column(db.String(50), unique=True, nullable=False)
+    till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'), nullable=False)
+    movement_type = db.Column(db.String(20), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    reason = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class SalesRefund(db.Model):
+    __tablename__ = 'sales_refunds'
+    id = db.Column(db.Integer, primary_key=True)
+    reference = db.Column(db.String(50), unique=True, nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey('order_headers.id'), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
+    amount = db.Column(db.Float, nullable=False)
+    payment_method = db.Column(db.String(20), nullable=False)
+    reason = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 class LedgerEntry(db.Model):
     __tablename__ = 'ledger_entries'

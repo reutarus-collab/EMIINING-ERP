@@ -13,6 +13,17 @@ window.escHtml = window.escHtml || function (s) {
     <button class="btn-sm btn-success" id="till-open-btn" onclick="openTill()">Open till</button>
     <button class="btn-sm btn-warning" id="till-close-btn" onclick="closeTill()" style="display:none">Close till</button>
   </div>
+  <div class="card" data-roles="admin,accountant,sales">
+    <h4>Cash paid-in / paid-out (float and safe transfers)</h4>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <select id="till-movement-type"><option value="PAID_IN">Paid in from safe</option><option value="PAID_OUT">Paid out to safe</option></select>
+      <input id="till-movement-amount" type="number" min="0.01" step="0.01" placeholder="Amount (KSh)">
+      <input id="till-movement-reason" maxlength="200" placeholder="Reason / safe reference">
+      <button class="btn-sm btn-primary" onclick="recordTillMovement()">Record cash movement</button>
+    </div>
+    <div id="till-movement-message" style="margin-top:6px"></div>
+    <div id="till-movement-history" style="font-size:.85rem;margin-top:6px">No till movements loaded.</div>
+  </div>
   <div class="pos-grid">
     <div>
       <div class="card">

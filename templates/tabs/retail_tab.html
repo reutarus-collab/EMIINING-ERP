@@ -15,14 +15,35 @@
       <select id="stock-adjust-item"></select><input id="stock-adjust-qty" type="number" step="0.01" placeholder="Adjustment kg (+/-)">
       <input id="stock-adjust-reason" placeholder="Reason"><button class="btn-sm btn-primary" onclick="adjustStock()">Adjust stock</button>
       <select id="transfer-to"></select><input id="transfer-qty" type="number" min="0.01" step="0.01" placeholder="Transfer kg">
-      <input id="transfer-reason" placeholder="Transfer reason"><button class="btn-sm btn-warning" data-roles="admin" onclick="transferStock()">Transfer to outlet</button>
+      <input id="transfer-reason" placeholder="Transfer reason"><button class="btn-sm btn-warning" data-roles="admin,warehouse" onclick="transferStock()">Dispatch to outlet</button>
     </div>
+    <h3>Incoming stock transfers</h3>
+    <p>Receive factory or warehouse dispatches into this outlet. Partial receipts remain open until the balance is received.</p>
+    <table class="data-table"><thead><tr><th>Transfer</th><th>From</th><th>Item</th><th>Dispatched</th><th>Received</th><th>Remaining</th><th>Receive now (kg)</th><th>Note</th><th></th></tr></thead>
+      <tbody id="incoming-transfer-body"><tr><td colspan="9">Loading incoming transfers…</td></tr></tbody></table>
     <input id="stock-filter" placeholder="Filter items..." oninput="renderStock()"
            style="padding:10px;width:100%;max-width:320px;margin-bottom:10px">
     <table class="data-table">
-      <thead><tr><th>Item</th><th>Category</th><th>Stock (kg)</th><th>Bag (kg)</th><th>Retail / kg</th></tr></thead>
-      <tbody id="stock-body"><tr><td colspan="5">Loading...</td></tr></tbody>
+      <thead><tr><th>Item</th><th>Category</th><th>Stock (kg)</th><th>Bag (kg)</th><th>Retail / kg</th><th class="stock-cost-col">Outlet cost / kg</th><th class="stock-cost-col">Outlet value (KSh)</th></tr></thead>
+      <tbody id="stock-body"><tr><td colspan="7">Loading...</td></tr></tbody>
     </table>
+  </div>
+</div>
+<div id="expenses-tab" class="tab-content">
+  <div class="card">
+    <h3>Outlet operating expenses</h3>
+    <p>Record transport, KPLC, staff lunch, rent, repairs, supplies, and other outlet costs. Cash expenses reduce the logged-in cashier’s open till.</p>
+    <div data-roles="admin,accountant,sales,warehouse" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="expense-category"><option value="TRANSPORT">Transport</option><option value="UTILITIES">KPLC / Utilities</option><option value="MEALS">Staff lunch / meals</option><option value="RENT">Rent</option><option value="REPAIRS">Repairs and maintenance</option><option value="SUPPLIES">Operating supplies</option><option value="OTHER">Other</option></select>
+      <input id="expense-amount" type="number" min="0.01" step="0.01" placeholder="Amount (KSh)">
+      <select id="expense-method"><option value="CASH">Cash (from open till)</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option></select>
+      <input id="expense-description" maxlength="200" placeholder="Description / receipt reference">
+      <button class="btn-sm btn-primary" onclick="recordExpense()">Record expense</button>
+    </div>
+    <div id="expense-message" style="margin-top:8px"></div>
+    <h3>Recent outlet expenses</h3>
+    <table class="data-table"><thead><tr><th>Reference</th><th>Date</th><th>Category</th><th>Description</th><th>Paid by</th><th>Recorded by</th><th>Amount (KSh)</th></tr></thead>
+      <tbody id="expense-body"><tr><td colspan="7">Loading expenses…</td></tr></tbody></table>
   </div>
 </div>
 <div id="report-tab" class="tab-content">
@@ -60,6 +81,30 @@ async function loadStock() {
   }
   if (window.currentRole === 'admin') await loadOutletUsers();
   renderStock();
+  await loadIncomingTransfers();
+}
+async function loadIncomingTransfers() {
+  const body = document.getElementById('incoming-transfer-body');
+  if (!body) return;
+  const r = await fetch('/api/inventory/transfers/incoming?location_id=' + encodeURIComponent(activeLocationId), {credentials:'same-origin'});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { body.innerHTML = `<tr><td colspan="9">${retailEsc(d.message || 'Could not load incoming transfers.')}</td></tr>`; return; }
+  const rows = d.transfers || [];
+  body.innerHTML = rows.map(t => `<tr><td>${retailEsc(t.transfer_no)}</td><td>${retailEsc(t.from_location)}</td><td>${retailEsc(t.item)}</td>
+    <td>${Number(t.quantity_kg).toFixed(2)} kg</td><td>${Number(t.received_quantity_kg).toFixed(2)} kg</td><td>${Number(t.remaining_quantity_kg).toFixed(2)} kg</td>
+    <td><input type="number" min="0.01" max="${Number(t.remaining_quantity_kg)}" step="0.01" id="transfer-receive-qty-${t.id}" value="${Number(t.remaining_quantity_kg)}" style="width:110px"></td>
+    <td><input id="transfer-receive-note-${t.id}" maxlength="200" placeholder="Optional note" style="width:130px"></td>
+    <td><button class="btn-sm btn-success" onclick="receiveTransfer(${t.id})">Receive</button></td></tr>`).join('') || '<tr><td colspan="9">No stock transfers are waiting for receipt.</td></tr>';
+}
+async function receiveTransfer(id) {
+  const body = {quantity_kg:document.getElementById('transfer-receive-qty-' + id).value,
+    note:document.getElementById('transfer-receive-note-' + id).value};
+  const r = await fetch('/api/inventory/transfers/' + id + '/receive', {method:'POST', credentials:'same-origin',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(d.message || 'Could not receive this transfer.');
+  alert(`${d.transfer_no}: receipt saved. ${Number(d.remaining_quantity_kg).toFixed(2)} kg remains in transit.`);
+  await loadStock();
 }
 async function loadOutletUsers() {
   const [usersRes, locsRes] = await Promise.all([fetch('/api/admin/users'), fetch('/api/locations')]);
@@ -87,7 +132,28 @@ async function transferStock() {
     reason:document.getElementById('transfer-reason').value};
   const r = await fetch('/api/inventory/transfers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d = await r.json(); if (!r.ok) return alert(d.message || 'Transfer failed.');
-  alert(`Transfer ${d.transfer_no} posted.`); document.getElementById('transfer-qty').value=''; document.getElementById('transfer-reason').value=''; await loadStock();
+  alert(`Transfer ${d.transfer_no} dispatched. The receiving outlet must confirm the goods before its stock increases.`); document.getElementById('transfer-qty').value=''; document.getElementById('transfer-reason').value=''; await loadStock();
+}
+async function loadExpenses() {
+  const body = document.getElementById('expense-body');
+  if (!body) return;
+  const r = await fetch('/api/expenses?location_id=' + encodeURIComponent(activeLocationId), {credentials:'same-origin'});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { body.innerHTML = `<tr><td colspan="7">${retailEsc(d.message || 'Could not load expenses.')}</td></tr>`; return; }
+  body.innerHTML = (d.expenses || []).map(e => `<tr><td>${retailEsc(e.reference)}</td><td>${retailEsc(e.created_at)}</td><td>${retailEsc(e.category)}</td>
+    <td>${retailEsc(e.description)}</td><td>${retailEsc(e.payment_method)}</td><td>${retailEsc(e.created_by)}</td><td>${Number(e.amount).toFixed(2)}</td></tr>`).join('') || '<tr><td colspan="7">No expenses recorded for this outlet.</td></tr>';
+}
+async function recordExpense() {
+  const msg = document.getElementById('expense-message');
+  const r = await fetch('/api/expenses', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({location_id:activeLocationId, category:document.getElementById('expense-category').value,
+      amount:document.getElementById('expense-amount').value, payment_method:document.getElementById('expense-method').value,
+      description:document.getElementById('expense-description').value})});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { msg.innerHTML = `<span style="color:#b00">${retailEsc(d.message || 'Could not save expense.')}</span>`; return; }
+  msg.innerHTML = `<span style="color:green">Saved ${retailEsc(d.reference)}.</span>`;
+  document.getElementById('expense-amount').value = ''; document.getElementById('expense-description').value = '';
+  await loadExpenses();
 }
 async function createLocation() {
   const body = {name:document.getElementById('new-location-name').value, code:document.getElementById('new-location-code').value,
@@ -103,10 +169,12 @@ async function createLocation() {
 function renderStock() {
   const q = (document.getElementById('stock-filter').value || '').toLowerCase();
   const rows = stockRows.filter(i => (i.name || '').toLowerCase().includes(q));
+  const showCost = ['admin','accountant','warehouse'].includes(window.currentRole);
+  document.querySelectorAll('.stock-cost-col').forEach(el => el.style.display = showCost ? '' : 'none');
   document.getElementById('stock-body').innerHTML = rows.map(i =>
     `<tr><td>${retailEsc(i.name)}</td><td>${retailEsc(i.category)}</td><td>${i.stock_kg}</td><td>${i.bag_size_kg}</td><td>${
-      i.priced ? i.retail_price_per_kg.toFixed(2) : '<span style="color:#b00;font-weight:bold">NO PRICE</span>'}</td></tr>`
-  ).join('') || '<tr><td colspan="5">No items.</td></tr>';
+      i.priced ? Number(i.retail_price_per_kg).toFixed(2) : '<span style="color:#b00;font-weight:bold">NO PRICE</span>'}</td>${showCost ? `<td>${Number(i.unit_cost_per_kg || 0).toFixed(4)}</td><td>${Number(i.stock_value || 0).toFixed(2)}</td>` : ''}</tr>`
+  ).join('') || `<tr><td colspan="${showCost ? 7 : 5}">No items.</td></tr>`;
 }
 async function loadDailyReport() {
   const box = document.getElementById('rep-body');
@@ -117,7 +185,10 @@ async function loadDailyReport() {
   const methods = Object.entries(d.by_method).map(([m, a]) =>
     `<tr><td>${retailEsc(m)}</td><td>${a.toFixed(2)}</td></tr>`).join('');
   const tills = (d.till_closures || []).map(t => `<tr><td>${retailEsc(t.cashier)}</td><td>${t.closed_at}</td><td>${t.opening_cash.toFixed(2)}</td><td>${t.expected_cash.toFixed(2)}</td><td>${t.counted_cash.toFixed(2)}</td><td>${t.variance.toFixed(2)}</td></tr>`).join('');
+  const expenseBreakdown = Object.entries(d.expenses_by_category || {}).map(([category, amount]) => `<tr><td>${retailEsc(category)}</td><td>${Number(amount).toFixed(2)}</td></tr>`).join('');
   box.innerHTML = `<p>Sales: <b>${d.sales_count}</b> &nbsp; Total: <b>KSh ${d.total_sales.toFixed(2)}</b> &nbsp; Discounts: KSh ${d.discounts.toFixed(2)} &nbsp; On credit: KSh ${(d.credit_sales || 0).toFixed(2)}</p>
+    <p>Expenses: <b>KSh ${Number(d.expenses_total || 0).toFixed(2)}</b> &nbsp; Refunds: KSh ${Number(d.refunds_total || 0).toFixed(2)} &nbsp; Cash paid-in: KSh ${Number(d.cash_paid_in || 0).toFixed(2)} &nbsp; Cash paid-out: KSh ${Number(d.cash_paid_out || 0).toFixed(2)}</p>
+    <table class="data-table"><thead><tr><th>Expense category</th><th>KSh</th></tr></thead><tbody>${expenseBreakdown || '<tr><td colspan="2">No expenses today.</td></tr>'}</tbody></table>
     <table class="data-table"><thead><tr><th>Payment method</th><th>KSh</th></tr></thead>
     <tbody>${methods || '<tr><td colspan="2">No payments today.</td></tr>'}</tbody></table>
     <h4>Till close reconciliation</h4><table class="data-table"><thead><tr><th>Cashier</th><th>Closed</th><th>Opening cash</th><th>Expected</th><th>Counted</th><th>Variance</th></tr></thead>

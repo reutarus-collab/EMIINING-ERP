@@ -17,9 +17,9 @@ WINDOW = 600  # seconds
 ROLE_ALLOW = {
     'sales': ('/', '/api/me', '/api/sync', '/api/customers', '/api/inventory',
               '/api/locations', '/api/products', '/api/pos', '/api/sales-history',
-              '/api/stock', '/api/reports', '/api/till'),
+              '/api/stock', '/api/reports', '/api/till', '/api/expenses'),
     'warehouse': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
-                  '/api/po', '/api/suppliers', '/api/factory', '/api/stock'),
+                  '/api/po', '/api/suppliers', '/api/factory', '/api/stock', '/api/expenses'),
 }
 
 LOGIN_HTML = """<!doctype html>
@@ -138,7 +138,7 @@ def assign_user_location(user_id):
         location = None
     if not user or not location:
         return jsonify(status='error', message='Choose a valid user and outlet.'), 404
-    user.location = location.code
+    user.location = location.code or str(location.id)
     db.session.commit()
     return jsonify(status='success', username=user.username, location=location.name)
 

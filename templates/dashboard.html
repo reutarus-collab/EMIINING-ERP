@@ -47,6 +47,7 @@ select {
 <div class="nav-tabs">
   <button class="tab-btn active" onclick="showTab('pos-tab')">🛒 Point of Sale (POS)</button>
   <button class="tab-btn" onclick="showTab('stock-tab'); loadStock();">📦 Stock</button>
+  <button class="tab-btn" data-roles="admin,accountant,sales,warehouse" onclick="showTab('expenses-tab'); loadExpenses();">💸 Expenses</button>
   <button class="tab-btn" onclick="showTab('report-tab'); loadDailyReport();">📊 Daily Report</button>
   <button class="tab-btn" data-roles="admin" onclick="showTab('pricing-tab'); loadPrices();">💰 Retail Pricing</button>
   <button class="tab-btn" data-roles="admin" onclick="showTab('bags-tab'); loadBagPrices();">Bag Prices</button>
@@ -70,6 +71,6 @@ select {
 
 <!-- ==================== SCRIPTS ==================== -->
 <script src="/static/js/main.js?v=8"></script>
-<script src="/static/js/pos.js?v=11"></script>
+<script src="/static/js/pos.js?v=12"></script>
 <script src="/static/js/factory.js?v=10"></script>
 {% endblock %}

@@ -43,7 +43,8 @@ def location_stock(location_id, ingredient_id, lock=False):
     item = db.session.get(FeedIngredient, ingredient_id)
     if not item:
         raise ValueError('Inventory item not found.')
-    row = LocationStock(location_id=location_id, ingredient_id=ingredient_id, quantity_kg=0.0)
+    row = LocationStock(location_id=location_id, ingredient_id=ingredient_id, quantity_kg=0.0,
+                       unit_cost_per_kg=item.cost_per_kg or 0.0)
     db.session.add(row)
     db.session.flush()
     return row
@@ -66,11 +67,39 @@ def change_stock(location_id, ingredient, delta_kg, movement_type, reference_id=
     if new_qty < -0.000001:
         raise ValueError(f'Insufficient stock for {ingredient.name}. Available: {row.quantity_kg:.2f} kg.')
     row.quantity_kg = max(0.0, new_qty)
-    # Keep the old field as an aggregate cache while location balances are authoritative.
-    ingredient.stock_quantity_kg = round((ingredient.stock_quantity_kg or 0.0) + delta_kg, 6)
+    # Rebuild legacy aggregate fields from outlet balances; outlet valuation is
+    # authoritative and the aggregate cost is only a weighted summary.
+    refresh_global_valuation(ingredient)
     db.session.add(StockMovement(ingredient_id=ingredient.id, location_id=location_id,
                                  movement_type=movement_type, qty_kg=delta_kg,
                                  reference_id=reference_id, reason=reason))
+    return row
+
+
+def refresh_global_valuation(ingredient):
+    rows = LocationStock.query.filter_by(ingredient_id=ingredient.id).all()
+    total_qty = sum(max(0.0, row.quantity_kg or 0.0) for row in rows)
+    total_value = sum(max(0.0, row.quantity_kg or 0.0) * max(0.0, row.unit_cost_per_kg or 0.0)
+                      for row in rows)
+    ingredient.stock_quantity_kg = round(total_qty, 6)
+    if total_qty > 0:
+        ingredient.cost_per_kg = round(total_value / total_qty, 6)
+
+
+def receive_stock(location_id, ingredient, quantity_kg, unit_cost_per_kg,
+                  movement_type, reference_id=None, reason=None):
+    """Receive stock and value it at this location's weighted-average cost."""
+    quantity_kg = float(quantity_kg)
+    unit_cost_per_kg = float(unit_cost_per_kg or 0.0)
+    if quantity_kg <= 0 or unit_cost_per_kg < 0:
+        raise ValueError('Received quantity and unit cost must be valid.')
+    row = location_stock(location_id, ingredient.id, lock=True)
+    old_qty = max(0.0, row.quantity_kg or 0.0)
+    old_cost = max(0.0, row.unit_cost_per_kg or 0.0)
+    change_stock(location_id, ingredient, quantity_kg, movement_type, reference_id, reason)
+    new_qty = old_qty + quantity_kg
+    row.unit_cost_per_kg = round(((old_qty * old_cost) + (quantity_kg * unit_cost_per_kg)) / new_qty, 6)
+    refresh_global_valuation(ingredient)
     return row
 
 

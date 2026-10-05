@@ -16,11 +16,20 @@ def _migrate_location_schema():
     additions = {
         'stock_movements': {'location_id': 'INTEGER', 'reason': 'VARCHAR(200)'},
         'order_headers': {'location_id': 'INTEGER', 'till_session_id': 'INTEGER'},
-        'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT'},
+        'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT', 'open_key': 'VARCHAR(120)'},
         'production_runs': {'location_id': 'INTEGER'},
         'goods_receipt_lines': {'qty_rejected_po_uom': 'FLOAT'},
         'goods_receipt_notes': {'location_id': 'INTEGER'},
-        'location_stocks': {'reserved_quantity_kg': 'FLOAT DEFAULT 0'},
+        'location_stocks': {'reserved_quantity_kg': 'FLOAT DEFAULT 0', 'unit_cost_per_kg': 'FLOAT NOT NULL DEFAULT 0'},
+        # Existing transfers already changed both outlet balances, so preserve
+        # them as completed while new dispatches start in transit.
+        'inventory_transfers': {
+            'received_quantity_kg': 'FLOAT NOT NULL DEFAULT 0',
+            'unit_cost_per_kg': 'FLOAT NOT NULL DEFAULT 0',
+            'status': "VARCHAR(30) NOT NULL DEFAULT 'RECEIVED'",
+            'received_by': 'VARCHAR(50)',
+            'completed_at': 'DATETIME',
+        },
     }
     if db.engine.dialect.name != 'sqlite':
         additions['till_sessions']['opened_at'] = 'TIMESTAMP'
@@ -33,6 +42,8 @@ def _migrate_location_schema():
             for name, declaration in columns.items():
                 if name not in existing:
                     conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {declaration}'))
+        if 'inventory_transfers' in inspector.get_table_names():
+            conn.execute(text("UPDATE inventory_transfers SET received_quantity_kg = quantity_kg WHERE status = 'RECEIVED' AND received_quantity_kg = 0"))
     from services.models import FeedIngredient, Location, LocationStock, PurchaseOrderHeader, Account, StockMovement, GoodsReceiptNote
     if Location.query.count() == 0:
         legacy = Location(name='Legacy Main Store', code='LEGACY-01', location_type='STORE')
@@ -49,11 +60,17 @@ def _migrate_location_schema():
             if not row:
                 db.session.add(LocationStock(location_id=migration_location.id,
                                              ingredient_id=item.id,
-                                             quantity_kg=item.stock_quantity_kg or 0.0))
+                                             quantity_kg=item.stock_quantity_kg or 0.0,
+                                             unit_cost_per_kg=item.cost_per_kg or 0.0))
                 if (item.stock_quantity_kg or 0.0) > 0:
                     db.session.add(StockMovement(ingredient_id=item.id, location_id=migration_location.id,
                                                  movement_type='OPENING_BALANCE', qty_kg=item.stock_quantity_kg,
                                                  reference_id='MIGRATION-OPENING', reason='Legacy global stock assigned to initial outlet'))
+            elif (row.unit_cost_per_kg or 0.0) <= 0 and (item.cost_per_kg or 0.0) > 0:
+                row.unit_cost_per_kg = item.cost_per_kg
+            for stock_row in LocationStock.query.filter_by(ingredient_id=item.id).all():
+                if (stock_row.unit_cost_per_kg or 0.0) <= 0 and (item.cost_per_kg or 0.0) > 0:
+                    stock_row.unit_cost_per_kg = item.cost_per_kg
         # Historical records had no outlet dimension. Assign them to the legacy
         # stock's location so reports retain a consistent default scope.
         db.session.execute(text('UPDATE order_headers SET location_id = :loc WHERE location_id IS NULL'), {'loc': migration_location.id})
@@ -75,9 +92,33 @@ def _migrate_location_schema():
                     grn.location_id = int(po.location_id)
                 except (TypeError, ValueError):
                     grn.location_id = migration_location.id
+    # Assign unique identity keys only after legacy sessions without a location
+    # have been closed and outlet-scoped.
+    from services.models import TillSession
+    open_sessions = TillSession.query.filter_by(status='OPEN').order_by(TillSession.id).all()
+    seen_open = set()
+    for till in open_sessions:
+        key = f'{till.location_id}:{till.cashier_name}'
+        if key in seen_open:
+            raise RuntimeError(f'Duplicate open tills exist for {key}; close/reconcile older sessions before starting the app.')
+        seen_open.add(key)
+        till.open_key = key
+    db.session.flush()
+    db.session.commit()
+    from sqlalchemy import Index
+    Index('uq_till_open_key', TillSession.open_key, unique=True).create(bind=db.engine, checkfirst=True)
     for code, name, category in (('1010', 'M-Pesa Clearing', 'ASSET'),
                                  ('1020', 'Bank Account', 'ASSET'),
-                                 ('5200', 'Cash Over/Short', 'INCOME')):
+                                 ('1100', 'Cash in Safe / Float Clearing', 'ASSET'),
+                                 ('4100', 'Sales Returns and Refunds', 'CONTRA_INCOME'),
+                                 ('5200', 'Cash Over/Short', 'INCOME'),
+                                 ('5300', 'Transport Expense', 'EXPENSE'),
+                                 ('5310', 'Utilities Expense', 'EXPENSE'),
+                                 ('5320', 'Staff Meals Expense', 'EXPENSE'),
+                                 ('5330', 'Rent Expense', 'EXPENSE'),
+                                 ('5340', 'Repairs and Maintenance Expense', 'EXPENSE'),
+                                 ('5350', 'Operating Supplies Expense', 'EXPENSE'),
+                                 ('5390', 'Other Operating Expense', 'EXPENSE')):
         if not Account.query.filter_by(account_code=code).first():
             db.session.add(Account(account_code=code, name=name, category=category))
     db.session.commit()
