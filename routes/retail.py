@@ -64,13 +64,17 @@ def daily_report():
         rows = (db.session.query(PaymentSplit.payment_method, func.sum(PaymentSplit.amount))
                 .filter(PaymentSplit.order_id.in_(ids))
                 .group_by(PaymentSplit.payment_method).all())
-        by_method = {m: round(a or 0, 2) for m, a in rows}
+        by_method = {m: round(a or 0, 2) for m, a in rows if m != 'CREDIT'}
+        change_total = round(sum(o.change_due or 0 for o in orders), 2)
+        if change_total and 'CASH' in by_method:
+            by_method['CASH'] = round(by_method['CASH'] - change_total, 2)
     return jsonify(
         date=start_eat.strftime('%Y-%m-%d'),
         sales_count=len(orders),
         total_sales=round(sum(o.total_amount or 0 for o in orders), 2),
         discounts=round(sum(o.discount_amount or 0 for o in orders), 2),
-        by_method=by_method)
+        by_method=by_method,
+        credit_sales=round(sum(o.credit_amount or 0 for o in orders), 2))
 
 
 @retail_bp.route('/api/admin/customers/<int:customer_id>/credit-limit', methods=['POST'])

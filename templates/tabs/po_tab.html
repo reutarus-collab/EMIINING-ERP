@@ -137,6 +137,7 @@
         </div>
         <div style="display:flex; gap:10px; margin-bottom:15px;">
             <input type="text" id="grn-delivery-note" placeholder="Delivery Note No." style="flex:1; padding:8px;">
+            <select id="grn-payment-method" style="flex:1; padding:8px;"><option value="">-- How was this paid? --</option><option value="CASH">Paid - Cash</option><option value="MPESA">Paid - M-Pesa</option><option value="BANK">Paid - Bank</option><option value="ON_ACCOUNT">Owed to supplier</option></select>
         </div>
         <table class="data-table">
             <thead>
@@ -408,6 +409,7 @@ async function viewPO(poId) {
                 `;
             });
             
+            document.getElementById('grn-payment-method').value = '';
             document.getElementById('receive-grn-modal').style.display = 'block';
         } catch (err) { alert("Error loading PO details."); }
     }
@@ -555,7 +557,7 @@ async function submitGRN() {
             const res = await fetch(`/api/po/${po_activeReceiving.id}/grpo`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ received_items: receiptLines })
+                body: JSON.stringify({ received_items: receiptLines, payment_method: document.getElementById('grn-payment-method').value })
             });
             
             const data = await res.json();

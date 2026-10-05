@@ -13,8 +13,27 @@
         <h4>2. Finished Feed Batch Production</h4>
         <div class="form-group"><label>Formula Name:</label><input type="text" id="prod-formula" value="Emining Layers High-Protein" /></div>
         <div class="form-group"><label>Target Finished Feed:</label><select id="prod-output-select"></select></div>
-        <button class="btn-success" onclick="alert('Production order queued.')">Execute Production Order</button>
+        <div class="form-group"><label>Planned output (kg):</label><input type="number" min="0.01" step="0.01" id="prod-planned-output" /></div>
+        <div class="form-group"><label>Actual output weighed (kg):</label><input type="number" min="0.01" step="0.01" id="prod-actual-output" /></div>
+        <h5>Formula inputs (planned vs actually used)</h5>
+        <table class="data-table">
+          <thead><tr><th>Ingredient</th><th>Planned kg</th><th>Actual kg</th><th></th></tr></thead>
+          <tbody id="prod-inputs"><tr><td colspan="4">Add ingredients from the formula.</td></tr></tbody>
+        </table>
+        <button type="button" class="btn-sm btn-info" onclick="addProductionInput()">+ Add ingredient</button>
+        <div class="form-group"><label>Loss reason (required when input exceeds output):</label><input type="text" id="prod-loss-reason" maxlength="200" placeholder="e.g. spillage, dust extraction, moisture loss" /></div>
+    <p id="prod-loss-preview">Enter ingredient quantities and actual output to calculate loss.</p>
+        <button class="btn-success" onclick="submitProductionBatch()">Record production batch</button>
+        <div id="prod-message" role="status" style="margin-top:10px"></div>
       </div>
     </div>
+  </div>
+  <div class="card">
+    <h4>Recent production batches and losses</h4>
+    <button type="button" class="btn-sm btn-info" onclick="loadProductionRuns()">Refresh</button>
+    <table class="data-table">
+      <thead><tr><th>Batch</th><th>Formula / output</th><th>Input kg</th><th>Planned output kg</th><th>Actual output kg</th><th>Output variance kg</th><th>Loss kg</th><th>Loss %</th><th>Loss cost (KSh)</th><th>Reason</th><th>Total input cost (KSh)</th><th>When</th><th>Details</th></tr></thead>
+      <tbody id="prod-history"><tr><td colspan="13">Loading...</td></tr></tbody>
+    </table>
   </div>
 </div>

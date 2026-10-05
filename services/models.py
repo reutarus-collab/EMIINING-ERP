@@ -145,6 +145,33 @@ class MillingRun(db.Model):
     input_qty_kg = db.Column(db.Float, default=0.0)
     output_qty_kg = db.Column(db.Float, default=0.0)
     variance_loss_kg = db.Column(db.Float, default=0.0)
+
+class ProductionRun(db.Model):
+    __tablename__ = 'production_runs'
+    id = db.Column(db.Integer, primary_key=True)
+    batch_no = db.Column(db.String(50), unique=True, nullable=False)
+    formula_name = db.Column(db.String(100), nullable=False)
+    output_ingredient_id = db.Column(db.Integer, nullable=False)
+    planned_output_kg = db.Column(db.Float, nullable=False)
+    actual_output_kg = db.Column(db.Float, nullable=False)
+    total_input_kg = db.Column(db.Float, nullable=False)
+    loss_kg = db.Column(db.Float, nullable=False, default=0.0)
+    loss_pct = db.Column(db.Float, nullable=False, default=0.0)
+    loss_reason = db.Column(db.String(200))
+    total_input_cost = db.Column(db.Float, nullable=False, default=0.0)
+    loss_cost = db.Column(db.Float, nullable=False, default=0.0)
+    created_by = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class ProductionRunLine(db.Model):
+    __tablename__ = 'production_run_lines'
+    id = db.Column(db.Integer, primary_key=True)
+    production_run_id = db.Column(db.Integer, nullable=False)
+    ingredient_id = db.Column(db.Integer, nullable=False)
+    planned_qty_kg = db.Column(db.Float, nullable=False, default=0.0)
+    actual_qty_kg = db.Column(db.Float, nullable=False)
+    cost_per_kg = db.Column(db.Float, nullable=False, default=0.0)
+    line_cost = db.Column(db.Float, nullable=False, default=0.0)
     
 class PurchaseOrderHeader(db.Model):
     __tablename__ = 'purchase_order_headers'
@@ -224,3 +251,17 @@ class User(db.Model):
 
     def check_password(self, pw):
         return check_password_hash(self.password_hash, pw)
+
+
+class SupplierTxn(db.Model):
+    __tablename__ = 'supplier_txns'
+    id = db.Column(db.Integer, primary_key=True)
+    supplier_id = db.Column(db.Integer, nullable=False)
+    po_id = db.Column(db.Integer)
+    ref = db.Column(db.String(50))
+    kind = db.Column(db.String(20), nullable=False)   # PURCHASE (owed) or PAYMENT
+    amount = db.Column(db.Float, nullable=False)
+    method = db.Column(db.String(20))
+    note = db.Column(db.String(200))
+    created_by = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)

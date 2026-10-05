@@ -1,3 +1,4 @@
+from flask import g
 import math
 from flask import Blueprint, request, jsonify
 import uuid
@@ -168,6 +169,9 @@ def receive_grpo_partial(po_id):
             raise ValueError("Purchase Order not found.")
         if po.status in ('FULLY_RECEIVED', 'CLOSED', 'CANCELLED'):
             raise ValueError("This purchase order is already closed.")
+        payment_method = str(data.get('payment_method') or '').strip().upper()
+        if payment_method not in ('CASH', 'MPESA', 'BANK', 'ON_ACCOUNT'):
+            raise ValueError('Choose how this purchase was paid.')
             
         grpo_total_value = 0.0
         grpo_ref = f"GRPO-{uuid.uuid4().hex[:6].upper()}"
@@ -230,7 +234,13 @@ def receive_grpo_partial(po_id):
             if (line.qty_received + line.qty_rejected) < ordered: 
                 all_lines_fully_received = False
 
+        db.session.flush()
+        all_po_lines = PurchaseOrderLine.query.filter_by(po_header_id=po.id).all()
+        all_lines_fully_received = all(((l.qty_received or 0.0) + (l.qty_rejected or 0.0)) >= (l.qty_ordered or 0.0) - 0.0001 for l in all_po_lines)
         po.status = 'FULLY_RECEIVED' if all_lines_fully_received else 'PARTIAL_RECEIVED'
+        if grpo_total_value > 0:
+            from routes.payables import record_purchase
+            record_purchase(po.supplier_id, po.id, grpo_ref, grpo_total_value, payment_method, g.user.username)
 
         db.session.commit()
         return jsonify({'status': 'success', 'grpo_no': grpo_ref, 'po_status': po.status})

@@ -108,6 +108,6 @@ def get_sales_history():
             'customer_name': cust.name if cust else 'Walk-In Cash Customer',
             'total_amount': o.total_amount, 'paid_amount': o.paid_amount, 'credit_amount': o.credit_amount,
             'payments': [{'method': p.payment_method, 'amount': p.amount} for p in splits],
-            'items': [{'name': db.session.get(FeedIngredient, l.ingredient_id).name, 'qty_entered': l.qty_entered, 'unit': l.unit_type, 'subtotal': l.subtotal} for l in lines]
+            'items': [{'name': (getattr(db.session.get(FeedIngredient, l.ingredient_id), 'name', None) or '(deleted item)'), 'qty_entered': l.qty_entered, 'unit': l.unit_type, 'subtotal': l.subtotal} for l in lines]
         })
     return jsonify(out)

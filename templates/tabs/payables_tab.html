@@ -1,0 +1,42 @@
+<div id="payables-tab" class="tab-content">
+  <div class="card">
+    <h3>Supplier Payables (admin / accountant)</h3>
+    <p>Total owed to suppliers: <b>KSh <span id="pay-total">0.00</span></b></p>
+    <table class="data-table">
+      <thead><tr><th>Supplier</th><th>Owed (KSh)</th><th>Pay now</th><th>Method</th><th></th></tr></thead>
+      <tbody id="pay-body"><tr><td colspan="5">Loading...</td></tr></tbody>
+    </table>
+    <div id="pay-msg" style="margin-top:10px"></div>
+  </div>
+</div>
+<script>
+async function loadPayables() {
+  const body = document.getElementById('pay-body');
+  const r = await fetch('/api/admin/payables', {credentials: 'same-origin'});
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="5">Cannot load payables.</td></tr>'; return; }
+  const d = await r.json();
+  document.getElementById('pay-total').textContent = d.total_owed.toFixed(2);
+  const rows = d.suppliers.filter(s => s.owed > 0.004);
+  body.innerHTML = rows.map(s =>
+    `<tr><td>${retailEsc(s.name)}</td><td>${s.owed.toFixed(2)}</td>
+     <td><input type="number" min="0" step="0.01" id="pay-amt-${s.supplier_id}" value="${s.owed}" style="width:120px;padding:6px"></td>
+     <td><select id="pay-method-${s.supplier_id}" style="padding:6px"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option></select></td>
+     <td><button class="btn-sm btn-primary" onclick="paySupplier(${s.supplier_id})">Pay</button></td></tr>`
+  ).join('') || '<tr><td colspan="5">No supplier debts.</td></tr>';
+}
+async function paySupplier(id) {
+  const amount = parseFloat(document.getElementById('pay-amt-' + id).value);
+  const method = document.getElementById('pay-method-' + id).value;
+  const msg = document.getElementById('pay-msg');
+  const r = await fetch('/api/admin/payables/' + id + '/pay', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({amount: amount, method: method})
+  });
+  const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
+  msg.innerHTML = d.status === 'success'
+    ? '<span style="color:green">Paid. Reference ' + retailEsc(d.ref) + '.</span>'
+    : '<span style="color:red">' + retailEsc(d.message) + '</span>';
+  if (d.status === 'success') loadPayables();
+}
+</script>

@@ -150,6 +150,9 @@ def process_full_pos_checkout(data):
             post_gl_entry(sale_id, '1000', actual_cash_kept, 0.0, 'POS', order.id)
         if credit_amount > 0:
             post_gl_entry(sale_id, '1300', credit_amount, 0.0, 'POS', order.id)
+        if total_cost > 0:
+            post_gl_entry(sale_id, '5000', total_cost, 0.0, 'POS', order.id)
+            post_gl_entry(sale_id, '1200', 0.0, total_cost, 'POS', order.id)
     except Exception as e:
         db.session.rollback()
         raise Exception(f"Sale blocked: accounting ledger failed to post ({e}). No stock or payment was recorded - try again or check ledger_service.py.")

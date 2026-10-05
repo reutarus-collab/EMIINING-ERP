@@ -52,7 +52,7 @@ async function loadDailyReport() {
   document.getElementById('rep-date').textContent = '(' + d.date + ')';
   const methods = Object.entries(d.by_method).map(([m, a]) =>
     `<tr><td>${retailEsc(m)}</td><td>${a.toFixed(2)}</td></tr>`).join('');
-  box.innerHTML = `<p>Sales: <b>${d.sales_count}</b> &nbsp; Total: <b>KSh ${d.total_sales.toFixed(2)}</b> &nbsp; Discounts: KSh ${d.discounts.toFixed(2)}</p>
+  box.innerHTML = `<p>Sales: <b>${d.sales_count}</b> &nbsp; Total: <b>KSh ${d.total_sales.toFixed(2)}</b> &nbsp; Discounts: KSh ${d.discounts.toFixed(2)} &nbsp; On credit: KSh ${(d.credit_sales || 0).toFixed(2)}</p>
     <table class="data-table"><thead><tr><th>Payment method</th><th>KSh</th></tr></thead>
     <tbody>${methods || '<tr><td colspan="2">No payments today.</td></tr>'}</tbody></table>`;
 }

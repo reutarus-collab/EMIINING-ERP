@@ -5,6 +5,8 @@ from services.db import db, init_db
 from services.models import FeedIngredient, Supplier, Location, PurchaseOrderHeader, PurchaseOrderLine, StockMovement
 from routes.auth import auth_bp, init_auth
 from routes.retail import retail_bp
+from routes.payables import payables_bp
+from routes.factory import factory_bp
 
 # 1. Import our new helpers and blueprints
 from routes.pos import pos_bp
@@ -22,6 +24,8 @@ init_db(app)
 migrate = Migrate(app, db)
 app.register_blueprint(auth_bp)
 app.register_blueprint(retail_bp)
+app.register_blueprint(payables_bp)
+app.register_blueprint(factory_bp)
 init_auth(app)
 app.register_blueprint(pos_bp)
 from routes.po import po_bp
@@ -166,8 +170,5 @@ def run_formulation():
 @app.route('/api/factory/mill', methods=['POST'])
 def process_milling():
     return jsonify({"status": "error", "message": "Milling is not available in the ERP yet. Nothing was recorded."}), 501
-@app.route('/api/factory/produce', methods=['POST'])
-def process_production():
-    return jsonify({"status": "error", "message": "Production is not available in the ERP yet. Nothing was recorded."}), 501
 if __name__ == '__main__':
     app.run(debug=os.environ.get('FLASK_DEBUG') == '1', host='127.0.0.1')
