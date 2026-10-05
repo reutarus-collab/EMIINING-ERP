@@ -5,7 +5,7 @@ from functools import wraps
 
 from flask import (Blueprint, request, session, redirect, url_for,
                    jsonify, g, abort, render_template_string)
-from services.models import db, User
+from services.models import db, User, Location
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -17,7 +17,7 @@ WINDOW = 600  # seconds
 ROLE_ALLOW = {
     'sales': ('/', '/api/me', '/api/sync', '/api/customers', '/api/inventory',
               '/api/locations', '/api/products', '/api/pos', '/api/sales-history',
-              '/api/stock', '/api/reports'),
+              '/api/stock', '/api/reports', '/api/till'),
     'warehouse': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
                   '/api/po', '/api/suppliers', '/api/factory', '/api/stock'),
 }
@@ -119,6 +119,28 @@ def roles_required(*roles):
             return f(*a, **kw)
         return wrapper
     return deco
+
+@auth_bp.route('/api/admin/users', methods=['GET'])
+@roles_required('admin')
+def list_users_for_location_admin():
+    return jsonify([{'id': u.id, 'username': u.username, 'full_name': u.full_name or '',
+                     'role': u.role, 'location': u.location, 'active': bool(u.active)}
+                    for u in User.query.order_by(User.username).all()])
+
+@auth_bp.route('/api/admin/users/<int:user_id>/location', methods=['POST'])
+@roles_required('admin')
+def assign_user_location(user_id):
+    data = request.get_json(silent=True) or {}
+    user = db.session.get(User, user_id)
+    try:
+        location = db.session.get(Location, int(data.get('location_id')))
+    except (TypeError, ValueError):
+        location = None
+    if not user or not location:
+        return jsonify(status='error', message='Choose a valid user and outlet.'), 404
+    user.location = location.code
+    db.session.commit()
+    return jsonify(status='success', username=user.username, location=location.name)
 
 
 def init_auth(app):

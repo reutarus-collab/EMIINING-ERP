@@ -1,36 +1,24 @@
 import uuid
 from datetime import datetime
 from services.db import db
-from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement
+from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement, ItemPrice, TillSession
+from services.inventory import location_stock, change_stock
 
 import math
 from flask import g
 # Max discount as % of the bill, per role. A role not listed gets 0%.
 DISCOUNT_CAP_PCT = {'sales': 5.0, 'accountant': 10.0, 'admin': 30.0}
-def _num(value, name):
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        raise Exception(f"Invalid {name}.")
-    if not math.isfinite(v):
-        raise Exception(f"Invalid {name}.")
-    return v
-import math
-from flask import g
-# Max discount as % of the bill, per role. A role not listed gets 0%.
-DISCOUNT_CAP_PCT = {'sales': 5.0, 'accountant': 10.0, 'admin': 30.0}
-def _num(value, name):
-    try:
-        v = float(value)
-    except (TypeError, ValueError):
-        raise Exception(f"Invalid {name}.")
-    if not math.isfinite(v):
-        raise Exception(f"Invalid {name}.")
-    return v
-import math
-from flask import g
-# Max discount as % of the bill, per role. A role not listed gets 0%.
-DISCOUNT_CAP_PCT = {'sales': 5.0, 'accountant': 10.0, 'admin': 30.0}
+def _unit_price(ingredient, pack_kg):
+    """Price of ONE pack of the given size. No fallback to cost, no guessing."""
+    if abs(pack_kg - 1.0) < 0.0005:
+        price = ingredient.retail_price_per_kg or 0.0
+        if price <= 0:
+            raise Exception(f"'{ingredient.name}' has no per-kg price. An admin must set it under Retail Pricing.")
+        return price
+    for row in ItemPrice.query.filter_by(ingredient_id=ingredient.id).all():
+        if abs(row.pack_kg - pack_kg) < 0.0005 and (row.price or 0) > 0:
+            return row.price
+    raise Exception(f"'{ingredient.name}' has no price for a {pack_kg:g} kg pack. An admin must set it under Bag Prices.")
 def _num(value, name):
     try:
         v = float(value)
@@ -46,6 +34,8 @@ def process_full_pos_checkout(data):
         raise Exception("Invalid discount amount.")
     cart = data.get('cart', [])
     payments = data.get('payments', [])
+    location_id = int(data.get('location_id'))
+    till_session_id = int(data.get('till_session_id'))
     if not isinstance(payments, list):
         raise Exception('Invalid payments.')
     for p in payments:
@@ -69,13 +59,14 @@ def process_full_pos_checkout(data):
         ingredient = FeedIngredient.query.get(ing_id)
         if not ingredient:
             raise Exception(f"Ingredient ID {ing_id} not found.")
-        if ingredient.stock_quantity_kg < total_kg_for_item:
-            raise Exception(f"Insufficient stock for {ingredient.name}. Available: {ingredient.stock_quantity_kg}kg")
-        price_per_kg = ingredient.retail_price_per_kg or 0.0
-        if price_per_kg <= 0:
-            raise Exception(f"'{ingredient.name}' has no retail price. An admin must set it under Retail Pricing before it can be sold.")
-        subtotal = qty * (price_per_kg * bag_size_kg)
-        ingredient.stock_quantity_kg -= total_kg_for_item
+        stock_row = location_stock(location_id, ingredient.id, lock=True)
+        available = (stock_row.quantity_kg or 0.0) - (stock_row.reserved_quantity_kg or 0.0)
+        if available < total_kg_for_item:
+            raise Exception(f"Insufficient stock at this outlet for {ingredient.name}. Available: {available}kg")
+        unit_price = _unit_price(ingredient, bag_size_kg)
+        subtotal = qty * unit_price
+        unit_type = 'KG' if abs(bag_size_kg - 1.0) < 0.0005 else ('%g' % bag_size_kg) + 'KG BAG'
+        change_stock(location_id, ingredient, -total_kg_for_item, 'POS_SALE')
         total_bill += subtotal
         total_cost += total_kg_for_item * (ingredient.cost_per_kg or 0.0)
         order_lines.append(OrderLine(
@@ -83,11 +74,6 @@ def process_full_pos_checkout(data):
             unit_type=unit_type,
             qty_entered=qty,
             subtotal=subtotal
-        ))
-        db.session.add(StockMovement(
-            ingredient_id=ingredient.id,
-            movement_type='POS_SALE',
-            qty_kg=-total_kg_for_item
         ))
     role = getattr(getattr(g, 'user', None), 'role', None)
     max_pct = DISCOUNT_CAP_PCT.get(role, 0.0)
@@ -110,6 +96,10 @@ def process_full_pos_checkout(data):
         raise Exception(f"Payment incomplete! KSh {total_tendered:.2f} tendered but KSh {final_due:.2f} is due. Select 'Credit' as the payment method and enter the amount if this is a debt sale.")
 
     change_due = max(0.0, total_paid - final_due) if credit_amount == 0 else 0.0
+    cash_tendered = sum(_num(p.get('amount', 0.0), 'payment amount') for p in payments
+                        if p.get('payment_method') == 'CASH')
+    if change_due > cash_tendered + 0.01:
+        raise Exception('Change can only be issued from the cash tender. Reduce non-cash overpayment or enter exact payment amounts.')
 
     if credit_amount > 0:
         if not customer_id:
@@ -128,7 +118,7 @@ def process_full_pos_checkout(data):
         paid_amount=total_paid,
         change_due=change_due,
         credit_amount=credit_amount,
-        status='COMPLETED'
+        status='COMPLETED', location_id=location_id, till_session_id=till_session_id
     )
     db.session.add(order)
     db.session.flush() 
@@ -142,12 +132,29 @@ def process_full_pos_checkout(data):
         if amt > 0:
             db.session.add(PaymentSplit(order_id=order.id, payment_method=p.get('payment_method'), amount=amt, reference=p.get('reference', '')))
 
+    till = TillSession.query.filter_by(id=till_session_id, location_id=location_id,
+                                       cashier_name=getattr(g.user, 'username', ''),
+                                       status='OPEN').with_for_update().first()
+    if not till:
+        raise Exception('Till session is no longer open. Open a till and retry.')
+    cash_change = min(change_due, cash_tendered)
+    till.expected_cash = round((till.expected_cash or 0.0) + cash_tendered - cash_change, 2)
+
     try:
         from services.ledger_service import post_gl_entry
         post_gl_entry(sale_id, '4000', 0.0, final_due, 'POS', order.id)
         if total_paid > 0:
-            actual_cash_kept = total_paid - change_due
-            post_gl_entry(sale_id, '1000', actual_cash_kept, 0.0, 'POS', order.id)
+            change_remaining = change_due
+            account_by_method = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}
+            for payment in payments:
+                method = payment.get('payment_method')
+                if method == 'CREDIT':
+                    continue
+                amount = _num(payment.get('amount', 0.0), 'payment amount')
+                returned = min(change_remaining, amount) if method == 'CASH' else 0.0
+                change_remaining -= returned
+                if amount > returned:
+                    post_gl_entry(sale_id, account_by_method[method], amount - returned, 0.0, 'POS', order.id)
         if credit_amount > 0:
             post_gl_entry(sale_id, '1300', credit_amount, 0.0, 'POS', order.id)
         if total_cost > 0:

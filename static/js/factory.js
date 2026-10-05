@@ -21,7 +21,7 @@ async function runFormulation() {
 }
 
 async function loadFactoryDropdowns() {
-    const res = await fetch('/api/inventory', { credentials: 'same-origin' });
+    const res = await fetch('/api/inventory?location_id=' + encodeURIComponent(window.activeLocationId || ''), { credentials: 'same-origin' });
     if (!res.ok) return;
     factoryInventory = await res.json();
     const millIn = document.getElementById('mill-input-select');
@@ -118,6 +118,7 @@ async function submitProductionBatch() {
         planned_output_kg: document.getElementById('prod-planned-output').value,
         actual_output_kg: document.getElementById('prod-actual-output').value,
         loss_reason: document.getElementById('prod-loss-reason').value,
+        location_id: window.activeLocationId || '',
         inputs
     };
     try {
@@ -149,7 +150,7 @@ async function loadProductionRuns() {
     const body = document.getElementById('prod-history');
     if (!body) return;
     try {
-        const res = await fetch('/api/factory/production-runs', { credentials: 'same-origin' });
+        const res = await fetch('/api/factory/production-runs?location_id=' + encodeURIComponent(window.activeLocationId || ''), { credentials: 'same-origin' });
         if (!res.ok) throw new Error('Could not load production history.');
         const rows = await res.json();
         body.innerHTML = rows.map(run => `<tr>
@@ -173,7 +174,7 @@ async function toggleProductionLines(batchNo, button) {
     cell.textContent = 'Loading ingredient use…';
     row.hidden = false;
     try {
-        const res = await fetch(`/api/factory/production-runs/${encodeURIComponent(batchNo)}/lines`, { credentials: 'same-origin' });
+        const res = await fetch(`/api/factory/production-runs/${encodeURIComponent(batchNo)}/lines?location_id=${encodeURIComponent(window.activeLocationId || '')}`, { credentials: 'same-origin' });
         const lines = await res.json();
         if (!res.ok) throw new Error('Unable to load batch inputs.');
         cell.innerHTML = `<table class="data-table"><thead><tr><th>Ingredient</th><th>Planned kg</th><th>Actual kg</th><th>Variance kg</th><th>Unit cost</th><th>Line cost</th></tr></thead><tbody>${lines.map(line => `<tr>

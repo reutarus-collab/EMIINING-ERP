@@ -2,47 +2,124 @@ let cart = [];
 let heldCart = [];
 let customersCache = [];
 let searchResultsCache = [];
+let activeLocationId = '';
+let currentTill = null;
+async function initOutletTill() {
+  try {
+    const [meRes, locationsRes] = await Promise.all([fetch('/api/me'), fetch('/api/locations')]);
+    const me = await meRes.json();
+    const locations = await locationsRes.json();
+    const select = document.getElementById('pos-location');
+    select.innerHTML = locations.map(l => `<option value="${l.id}">${escHtml(l.name)}</option>`).join('');
+    const identity = String(me.location || '').toLowerCase();
+    const assigned = locations.find(l => [String(l.id), l.code, l.name, l.type].some(v => String(v || '').toLowerCase() === identity))
+      || locations.find(l => identity.includes('factory') && String(l.type || '').toLowerCase().includes('factory'))
+      || locations.find(l => (identity.includes('branch') || identity.includes('retail')) && /branch|retail|store/i.test(l.type || ''));
+    if (assigned) select.value = assigned.id;
+    if (!['admin', 'accountant'].includes(me.role)) select.disabled = true;
+    activeLocationId = select.value;
+    window.activeLocationId = activeLocationId;
+    await refreshTill();
+    if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
+    if (typeof loadProductionRuns === 'function') loadProductionRuns();
+    if (typeof loadStock === 'function') loadStock();
+    if (typeof loadDailyReport === 'function') loadDailyReport();
+  } catch (e) {
+    const state = document.getElementById('till-state');
+    if (state) state.textContent = 'Outlet setup required: assign this user to a valid location.';
+  }
+}
+async function changePosLocation() {
+  activeLocationId = document.getElementById('pos-location').value;
+  window.activeLocationId = activeLocationId;
+  await refreshTill();
+  searchProducts();
+  if (typeof loadStock === 'function') loadStock();
+  if (typeof loadDailyReport === 'function') loadDailyReport();
+  if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
+  if (typeof loadProductionRuns === 'function') loadProductionRuns();
+}
+async function refreshTill() {
+  const q = activeLocationId ? `?location_id=${encodeURIComponent(activeLocationId)}` : '';
+  const r = await fetch('/api/till/current' + q);
+  const d = await r.json();
+  currentTill = d.session;
+  document.getElementById('till-state').textContent = currentTill
+    ? `${d.location_name} · Open till #${currentTill.id} · Expected cash KSh ${Number(currentTill.expected_cash).toFixed(2)}`
+    : `${d.location_name || 'Outlet'} · Till closed`;
+  document.getElementById('till-open-btn').style.display = currentTill ? 'none' : '';
+  document.getElementById('till-close-btn').style.display = currentTill ? '' : 'none';
+}
+async function openTill() {
+  const opening_cash = Number(document.getElementById('till-opening-cash').value || 0);
+  const r = await fetch('/api/till/open', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({location_id:activeLocationId, opening_cash})});
+  const d = await r.json();
+  if (!r.ok) return alert(d.message || 'Could not open till.');
+  await refreshTill();
+}
+async function closeTill() {
+  const entry = prompt('Enter the physical cash counted in the drawer:');
+  if (entry === null) return;
+  const counted_cash = Number(entry);
+  if (!Number.isFinite(counted_cash) || counted_cash < 0) return;
+  const r = await fetch('/api/till/close', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({location_id:activeLocationId, counted_cash})});
+  const d = await r.json();
+  if (!r.ok) return alert(d.message || 'Could not close till.');
+  alert(`Till closed. Expected KSh ${d.expected_cash.toFixed(2)}, counted KSh ${d.counted_cash.toFixed(2)}, variance KSh ${d.variance.toFixed(2)}.`);
+  await refreshTill();
+}
 
 async function searchProducts() {
   const q = document.getElementById('search-input').value;
   const cat = document.getElementById('category-filter').value;
-  const res = await fetch(`/api/products/search?q=${q}&category=${cat}`);
+  const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&location_id=${encodeURIComponent(activeLocationId)}`);
   searchResultsCache = await res.json();
   const div = document.getElementById('search-results');
   div.innerHTML = '';
   if (searchResultsCache.length === 0) { div.innerHTML = '<div style="padding:10px;">No items match query.</div>'; return; }
   searchResultsCache.forEach(i => {
-    const priceText = i.priced ? `KSh ${i.retail_price_kg}/kg` : '<b style="color:#b00">NO PRICE</b>';
+    const tiers = [];
+    if ((i.retail_price_kg || 0) > 0) tiers.push('KSh ' + i.retail_price_kg + '/kg');
+    (i.packs || []).forEach(p => tiers.push(p.pack_kg + 'kg bag KSh ' + p.price));
+    const priceText = tiers.length ? tiers.join(' | ') : '<b style="color:#b00">NO PRICE</b>';
     const btn = i.priced
       ? `<button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button>`
       : `<button class="btn-sm" disabled>No price</button>`;
     div.innerHTML += `<div class="product-row">
-      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>Stock: ${i.available_stock_kg} kg | ${priceText} | Bag: ${i.bag_size_kg}kg</small></div>
+      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>Stock: ${i.available_stock_kg} kg | ${priceText}</small></div>
       ${btn}</div>`;
   });
 }
 
+function buildPackOptions(item) {
+  const out = [];
+  if ((item.retail_price_kg || 0) > 0) out.push({ pack_kg: 1, price: item.retail_price_kg, label: 'KG' });
+  (item.packs || []).forEach(p => out.push({ pack_kg: p.pack_kg, price: p.price, label: p.pack_kg + ' kg bag' }));
+  return out;
+}
 function addToCart(itemId) {
   const item = searchResultsCache.find(i => i.id === itemId);
-  if(!item) return;
-  const existing = cart.find(c => c.id === item.id);
-  if (existing) { 
-      existing.qty += 1; 
-  } else { 
-      cart.push({ id: item.id, name: item.name, base_bag_size: item.bag_size_kg, unit_type: 'KG', bag_size_kg: 1.0, qty: 1, retail_price_kg: item.retail_price_kg }); 
+  if (!item) return;
+  const options = buildPackOptions(item);
+  if (options.length === 0) return alert('This item has no price set.');
+  const first = options[0];
+  const existing = cart.find(c => c.id === item.id && c.bag_size_kg === first.pack_kg);
+  if (existing) {
+      existing.qty += 1;
+  } else {
+      cart.push({ id: item.id, name: item.name, options: options, bag_size_kg: first.pack_kg,
+                  unit_type: first.pack_kg === 1 ? 'KG' : 'BAG', unit_price: first.price, qty: 1 });
   }
   renderCart();
 }
-
-function updateCartUnit(idx, newUnit) {
-    if(newUnit === 'BAG') {
-        cart[idx].unit_type = 'BAG';
-        cart[idx].bag_size_kg = cart[idx].base_bag_size;
-    } else {
-        cart[idx].unit_type = 'KG';
-        cart[idx].bag_size_kg = 1.0; 
-    }
-    renderCart();
+function updateCartUnit(idx, packKg) {
+  const line = cart[idx];
+  const opt = line.options.find(o => o.pack_kg === parseFloat(packKg));
+  if (!opt) return;
+  line.bag_size_kg = opt.pack_kg;
+  line.unit_type = opt.pack_kg === 1 ? 'KG' : 'BAG';
+  line.unit_price = opt.price;
+  renderCart();
 }
 
 function calculateChange() {
@@ -60,42 +137,34 @@ function renderCart() {
   const tbody = document.getElementById('cart-body');
   tbody.innerHTML = '';
   let subtotal = 0;
-  
   if (cart.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #888; padding: 20px;">Cart is empty.</td></tr>';
     document.getElementById('cart-total').textContent = '0.00';
     calculateChange();
     return;
   }
-  
   cart.forEach((c, idx) => {
-    const linePricePerUnit = c.retail_price_kg * c.bag_size_kg;
-    const lineTotal = c.qty * linePricePerUnit;
+    const lineTotal = c.qty * c.unit_price;
     subtotal += lineTotal;
-    
+    const opts = c.options.map(o =>
+      `<option value="${o.pack_kg}" ${o.pack_kg === c.bag_size_kg ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('');
     tbody.innerHTML += `<tr>
       <td><b>${escHtml(c.name)}</b></td>
       <td><input type="number" value="${c.qty}" step="any" min="0.1" onchange="cart[${idx}].qty=Math.max(0.1, parseFloat(this.value)); renderCart()" style="width: 80px; text-align: center; padding: 10px; font-size: 16px; height: 50px;" /></td>
       <td>
-        <select onchange="updateCartUnit(${idx}, this.value)" style="height: 50px; font-size: 16px; width: 100%; min-width: 120px;">
-            <option value="KG" ${c.unit_type === 'KG' ? 'selected' : ''}>KG</option>
-            <option value="BAG" ${c.unit_type === 'BAG' ? 'selected' : ''}>Bag (${c.base_bag_size}kg)</option>
-        </select>
+        <select onchange="updateCartUnit(${idx}, this.value)" style="height: 50px; font-size: 16px; width: 100%; min-width: 120px;">${opts}</select>
       </td>
-      <td style="font-size: 16px;">${linePricePerUnit.toFixed(2)}</td>
+      <td style="font-size: 16px;">${c.unit_price.toFixed(2)}</td>
       <td style="font-size: 16px;"><b>${lineTotal.toFixed(2)}</b></td>
       <td><button class="btn-sm btn-danger" style="height: 50px;" onclick="cart.splice(${idx}, 1); renderCart()">x</button></td>
     </tr>`;
   });
-
   let discVal = parseFloat(document.getElementById('discount-val').value) || 0;
   let discType = document.getElementById('discount-type').value;
   let absoluteDisc = discType === 'PCT' ? (subtotal * (discVal / 100)) : discVal;
-
   document.getElementById('cart-total').textContent = Math.max(0, subtotal - absoluteDisc).toFixed(2);
   calculateChange();
 }
-
 function clearCart() { 
     cart = []; 
     renderCart();
@@ -129,7 +198,7 @@ async function completeCheckout() {
   if (cart.length === 0) return alert('Cart is empty!');
   const custId = document.getElementById('customer-select').value;
   
-  let rawSubtotal = cart.reduce((sum, c) => sum + (c.qty * c.retail_price_kg * c.bag_size_kg), 0);
+  let rawSubtotal = cart.reduce((sum, c) => sum + (c.qty * c.unit_price), 0);
   let discVal = parseFloat(document.getElementById('discount-val').value) || 0;
   let discType = document.getElementById('discount-type').value;
   let absoluteDisc = discType === 'PCT' ? (rawSubtotal * (discVal / 100)) : discVal;
@@ -195,6 +264,7 @@ async function completeCheckout() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
               customer_id: custId ? parseInt(custId) : null,
+              location_id: activeLocationId,
               discount_amount: absoluteDisc,
               cart: cart.map(c => ({ ingredient_id: c.id, unit_type: c.unit_type, qty: c.qty, bag_size_kg: c.bag_size_kg })),
               payments: payments
@@ -384,7 +454,7 @@ async function processDebtRepayment() {
 }
 
 async function loadSalesHistory() {
-  const res = await fetch('/api/sales-history'); 
+  const res = await fetch('/api/sales-history?location_id=' + encodeURIComponent(activeLocationId));
   const history = await res.json();
   const tbody = document.getElementById('sales-table-body'); 
   if(!tbody) return;
@@ -394,3 +464,4 @@ async function loadSalesHistory() {
     tbody.innerHTML += `<tr><td><small>${s.created_at}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${s.total_amount.toFixed(2)}</b></td><td>KSh ${s.paid_amount.toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+s.credit_amount.toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${s.payments.map(p => `${p.method}: KSh${p.amount.toFixed(2)}`).join(', ') || 'CASH'}</small></td></tr>`;
   });
 }
+window.addEventListener('load', initOutletTill);

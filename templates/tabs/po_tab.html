@@ -52,6 +52,7 @@
             <select id="po-supplier" style="flex:1; padding:8px;"></select>
             <button type="button" class="btn btn-info" onclick="document.getElementById('create-supplier-modal').style.display='block'">+ New</button>
         </div>
+        <div style="margin-bottom:12px"><label>Receiving outlet <select id="po-location"></select></label></div>
         <div style="display:flex; gap:10px; margin-bottom:20px; background:#f8f9fa; padding:15px; border-radius:5px;">
             <select id="po-item-select" style="flex:2;"></select>
             <input type="number" id="po-qty" placeholder="Qty (kg)" style="flex:1;">
@@ -65,7 +66,7 @@
         <div style="text-align:right; font-size:18px; margin-bottom:20px; margin-top: 15px;">
             Total: <b>KSh <span id="po-cart-total">0.00</span></b>
         </div>
-        <<div style="text-align:right; margin-top: 15px;">
+        <div style="text-align:right; margin-top: 15px;">
             <button type="button" class="btn btn-secondary" style="margin-right: 10px;" onclick="document.getElementById('create-po-modal').style.display='none'">Close</button>
             <button type="button" class="btn btn-primary" onclick="submitPO()">Commit Purchase Order</button>
         </div>
@@ -137,6 +138,7 @@
         </div>
         <div style="display:flex; gap:10px; margin-bottom:15px;">
             <input type="text" id="grn-delivery-note" placeholder="Delivery Note No." style="flex:1; padding:8px;">
+            <input type="text" id="grn-vehicle-reg" placeholder="Vehicle Registration" style="flex:1; padding:8px;">
             <select id="grn-payment-method" style="flex:1; padding:8px;"><option value="">-- How was this paid? --</option><option value="CASH">Paid - Cash</option><option value="MPESA">Paid - M-Pesa</option><option value="BANK">Paid - Bank</option><option value="ON_ACCOUNT">Owed to supplier</option></select>
         </div>
         <table class="data-table">
@@ -210,12 +212,22 @@
     document.addEventListener('DOMContentLoaded', async () => {
         try {
             const r = await fetch('/api/me', {credentials: 'same-origin'});
-            const me = await r.json();
+        const me = await r.json();
             if (['admin', 'accountant', 'warehouse'].includes(me.role)) initPOModule();
         } catch (e) { console.error('PO init skipped', e); }
     });
 
     async function initPOModule() {
+        const [locRes, meRes] = await Promise.all([fetch('/api/locations'), fetch('/api/me')]);
+        const locs = await locRes.json();
+        const me = await meRes.json();
+        const locSelect = document.getElementById('po-location');
+        if (locSelect) {
+            locSelect.innerHTML = locs.map(l => `<option value="${l.id}">${escHtml(l.name)}</option>`).join('');
+            if (activeLocationId) locSelect.value = activeLocationId;
+            if (!['admin', 'accountant'].includes(me.role)) locSelect.disabled = true;
+            locSelect.onchange = () => { po_loadInventory(); po_loadHistory(); };
+        }
         await po_loadSuppliers();
         await po_loadInventory();
         await po_loadHistory();
@@ -236,7 +248,8 @@
 
     async function po_loadInventory() {
         try {
-            const res = await fetch('/api/po/inventory');
+            const locId = document.getElementById('po-location')?.value || activeLocationId || '';
+            const res = await fetch('/api/po/inventory?location_id=' + encodeURIComponent(locId));
             po_inventoryList = await res.json();
             
             const sel = document.getElementById('po-item-select');
@@ -277,7 +290,8 @@
 
  async function po_loadHistory() {
         try {
-            const res = await fetch('/api/po');
+            const locId = document.getElementById('po-location')?.value || activeLocationId || '';
+            const res = await fetch('/api/po?location_id=' + encodeURIComponent(locId));
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             
             po_orderHistory = await res.json();
@@ -336,7 +350,7 @@ async function viewPO(poId) {
         if (dateEl) dateEl.innerText = po.created_at;
 
         try {
-            const res = await fetch(`/api/po/${poId}/lines`);
+            const res = await fetch(`/api/po/${poId}/lines?location_id=${encodeURIComponent(document.getElementById('po-location')?.value || activeLocationId || '')}`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             
@@ -372,7 +386,7 @@ async function viewPO(poId) {
         if(!po) return alert("Could not find PO reference in local history.");
         
         try {
-            const res = await fetch(`/api/po/${poId}/lines`);
+            const res = await fetch(`/api/po/${poId}/lines?location_id=${encodeURIComponent(document.getElementById('po-location')?.value || activeLocationId || '')}`);
             const poData = await res.json();
             
             po_activeReceiving = poData;
@@ -492,13 +506,14 @@ async function submitPO() {
         if(po_currentCart.length === 0) return alert("Add at least one item to the order.");
 
         try {
+            const locationId = document.getElementById('po-location').value;
             // FIX: Changed to match your exact backend route
             const res = await fetch('/api/po', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ 
                     supplier_id: parseInt(supplierId), 
-                    location_id: 1, 
+                    location_id: parseInt(locationId),
                     items: po_currentCart 
                 })
             });
@@ -546,7 +561,8 @@ async function submitGRN() {
                     line_id: parseInt(poLineId),
                     qty_po_uom: accUnits,           // Send Accepted Bags
                     qty_rejected_po_uom: rej,       // Send Rejected Bags
-                    qty_kg_accepted: kgInput        // Send Stock KG
+                    qty_kg_accepted: kgInput,        // Send Stock KG
+                    batch_number: row.querySelector('.grn-batch').value
                 });
             }
         }
@@ -557,7 +573,9 @@ async function submitGRN() {
             const res = await fetch(`/api/po/${po_activeReceiving.id}/grpo`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ received_items: receiptLines, payment_method: document.getElementById('grn-payment-method').value })
+                body: JSON.stringify({ received_items: receiptLines, payment_method: document.getElementById('grn-payment-method').value,
+                    delivery_note: document.getElementById('grn-delivery-note').value,
+                    vehicle_reg: document.getElementById('grn-vehicle-reg').value })
             });
             
             const data = await res.json();

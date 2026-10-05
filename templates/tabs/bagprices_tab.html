@@ -1,0 +1,47 @@
+<div id="bags-tab" class="tab-content">
+  <div class="card">
+    <h3>Bag Prices (admin only)</h3>
+    <p style="font-size:.9rem;color:#666">Enter the price for ONE bag. Leave blank if the item is not sold in that bag. The per-kg price is set under Retail Pricing. A bag price must be above the cost of the bag.</p>
+    <table class="data-table">
+      <thead><tr><th>Item</th><th>Cost / kg</th><th>Per-kg price</th><th>50 kg bag</th><th>70 kg bag</th><th>Margin</th><th></th></tr></thead>
+      <tbody id="bags-body"><tr><td colspan="7">Loading...</td></tr></tbody>
+    </table>
+    <div id="bags-msg" style="margin-top:10px"></div>
+  </div>
+</div>
+<script>
+function bagMargin(cost, price, size) {
+  if (!price || price <= 0) return '';
+  return size + ' kg: ' + (((price - cost * size) / price) * 100).toFixed(1) + '%';
+}
+async function loadBagPrices() {
+  const body = document.getElementById('bags-body');
+  const r = await fetch('/api/admin/packs', {credentials: 'same-origin'});
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="7">Cannot load bag prices.</td></tr>'; return; }
+  const rows = await r.json();
+  body.innerHTML = rows.map(i =>
+    `<tr><td>${retailEsc(i.name)}</td><td>${i.cost_per_kg.toFixed(2)}</td>
+     <td>${i.kg_price ? i.kg_price.toFixed(2) : '<span style="color:#b00">none</span>'}</td>
+     <td><input type="number" min="0" step="0.01" id="p50-${i.id}" value="${i.p50 || ''}" style="width:110px;padding:6px"></td>
+     <td><input type="number" min="0" step="0.01" id="p70-${i.id}" value="${i.p70 || ''}" style="width:110px;padding:6px"></td>
+     <td><small>${[bagMargin(i.cost_per_kg, i.p50, 50), bagMargin(i.cost_per_kg, i.p70, 70)].filter(Boolean).join(' | ') || '-'}</small></td>
+     <td><button class="btn-sm btn-primary" onclick="saveBagPrices(${i.id})">Save</button></td></tr>`
+  ).join('') || '<tr><td colspan="7">No items.</td></tr>';
+}
+async function saveBagPrices(id) {
+  const msg = document.getElementById('bags-msg');
+  const payload = {id: id,
+                   p50: document.getElementById('p50-' + id).value,
+                   p70: document.getElementById('p70-' + id).value};
+  const r = await fetch('/api/admin/packs', {
+    method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
+  msg.innerHTML = d.status === 'success'
+    ? '<span style="color:green">Saved.</span>'
+    : '<span style="color:red">' + retailEsc(d.message) + '</span>';
+  if (d.status === 'success') loadBagPrices();
+}
+</script>

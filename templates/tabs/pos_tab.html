@@ -6,6 +6,13 @@ window.escHtml = window.escHtml || function (s) {
 };
 </script>
 <div id="pos-tab" class="tab-content active">
+  <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <label>Outlet <select id="pos-location" onchange="changePosLocation()"></select></label>
+    <span id="till-state">Loading till…</span>
+    <label>Opening cash (KSh) <input id="till-opening-cash" type="number" min="0" step="0.01" value="0" style="width:130px"></label>
+    <button class="btn-sm btn-success" id="till-open-btn" onclick="openTill()">Open till</button>
+    <button class="btn-sm btn-warning" id="till-close-btn" onclick="closeTill()" style="display:none">Close till</button>
+  </div>
   <div class="pos-grid">
     <div>
       <div class="card">

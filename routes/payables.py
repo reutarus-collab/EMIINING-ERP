@@ -9,6 +9,8 @@ payables_bp = Blueprint('payables', __name__)
 ACC_INVENTORY = '1200'
 ACC_CASH = '1000'
 ACC_PAYABLE = '2000'
+def _payment_account(method):
+    return {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}.get(method, ACC_CASH)
 def _balances():
     bought = dict(db.session.query(SupplierTxn.supplier_id, func.sum(SupplierTxn.amount))
                   .filter(SupplierTxn.kind == 'PURCHASE').group_by(SupplierTxn.supplier_id).all())
@@ -31,7 +33,7 @@ def record_purchase(supplier_id, po_id, ref, amount, method, username):
                                    kind='PURCHASE', amount=amount, method='ON_ACCOUNT',
                                    created_by=username))
     else:
-        post_gl_entry(ref, ACC_CASH, 0.0, amount, 'PURCHASE', po_id)
+        post_gl_entry(ref, _payment_account(method), 0.0, amount, 'PURCHASE', po_id)
 @payables_bp.route('/api/admin/payables')
 @roles_required('admin', 'accountant')
 def payables_list():
@@ -77,7 +79,7 @@ def pay_supplier(supplier_id):
     try:
         from services.ledger_service import post_gl_entry
         post_gl_entry(ref, ACC_PAYABLE, amount, 0.0, 'SUPPLIER_PAYMENT', supplier_id)
-        post_gl_entry(ref, ACC_CASH, 0.0, amount, 'SUPPLIER_PAYMENT', supplier_id)
+        post_gl_entry(ref, _payment_account(method), 0.0, amount, 'SUPPLIER_PAYMENT', supplier_id)
         db.session.add(SupplierTxn(supplier_id=supplier_id, ref=ref, kind='PAYMENT',
                                    amount=amount, method=method, note=note,
                                    created_by=g.user.username))

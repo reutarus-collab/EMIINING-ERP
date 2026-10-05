@@ -38,6 +38,15 @@ class Location(db.Model):
     code = db.Column(db.String(20))
     location_type = db.Column(db.String(20))
 
+class LocationStock(db.Model):
+    __tablename__ = 'location_stocks'
+    id = db.Column(db.Integer, primary_key=True)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
+    quantity_kg = db.Column(db.Float, nullable=False, default=0.0)
+    reserved_quantity_kg = db.Column(db.Float, nullable=False, default=0.0)
+    __table_args__ = (db.UniqueConstraint('location_id', 'ingredient_id', name='uq_location_stock_item'),)
+
 class Supplier(db.Model):
     __tablename__ = 'suppliers'
     id = db.Column(db.Integer, primary_key=True)
@@ -72,6 +81,12 @@ class TillSession(db.Model):
     cashier_name = db.Column(db.String(50))
     opening_cash = db.Column(db.Float, default=0.0)
     expected_cash = db.Column(db.Float, default=0.0)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    opened_at = db.Column(db.DateTime, default=datetime.utcnow)
+    closed_at = db.Column(db.DateTime)
+    status = db.Column(db.String(20), nullable=False, default='OPEN')
+    counted_cash = db.Column(db.Float)
+    cash_variance = db.Column(db.Float)
 
 class OrderHeader(db.Model):
     __tablename__ = 'order_headers'
@@ -85,6 +100,8 @@ class OrderHeader(db.Model):
     credit_amount = db.Column(db.Float, default=0.0)
     status = db.Column(db.String(20), default='COMPLETED')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
 
 class OrderLine(db.Model):
     __tablename__ = 'order_lines'
@@ -117,6 +134,20 @@ class StockMovement(db.Model):
     movement_type = db.Column(db.String(50))
     qty_kg = db.Column(db.Float, default=0.0)
     reference_id = db.Column(db.String(100))
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    reason = db.Column(db.String(200))
+
+class InventoryTransfer(db.Model):
+    __tablename__ = 'inventory_transfers'
+    id = db.Column(db.Integer, primary_key=True)
+    transfer_no = db.Column(db.String(50), unique=True, nullable=False)
+    from_location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    to_location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
+    quantity_kg = db.Column(db.Float, nullable=False)
+    reason = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class LedgerEntry(db.Model):
     __tablename__ = 'ledger_entries'
@@ -162,6 +193,7 @@ class ProductionRun(db.Model):
     loss_cost = db.Column(db.Float, nullable=False, default=0.0)
     created_by = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
 
 class ProductionRunLine(db.Model):
     __tablename__ = 'production_run_lines'
@@ -208,6 +240,7 @@ class GoodsReceiptNote(db.Model):
     delivery_note = db.Column(db.String(100))
     vehicle_reg = db.Column(db.String(20))
     status = db.Column(db.String(20), default='POSTED')
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
 
 class GoodsReceiptLine(db.Model):
     __tablename__ = 'goods_receipt_lines'
@@ -218,6 +251,7 @@ class GoodsReceiptLine(db.Model):
     qty_received = db.Column(db.Float, default=0.0)
     qty_accepted = db.Column(db.Float, default=0.0)
     qty_rejected = db.Column(db.Float, default=0.0)
+    qty_rejected_po_uom = db.Column(db.Float, default=0.0)
     batch_number = db.Column(db.String(50))
     expiry_date = db.Column(db.DateTime)
     unit_cost = db.Column(db.Float, default=0.0) # Captured at time of receipt
@@ -265,3 +299,11 @@ class SupplierTxn(db.Model):
     note = db.Column(db.String(200))
     created_by = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ItemPrice(db.Model):
+    __tablename__ = 'item_prices'
+    id = db.Column(db.Integer, primary_key=True)
+    ingredient_id = db.Column(db.Integer, nullable=False)
+    pack_kg = db.Column(db.Float, nullable=False)   # 50, 70 ... (1 kg uses retail_price_per_kg)
+    price = db.Column(db.Float, nullable=False)     # price of ONE pack

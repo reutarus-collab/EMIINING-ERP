@@ -12,6 +12,7 @@ from services.models import (
     ProductionRunLine,
     StockMovement,
 )
+from services.inventory import resolve_location, location_stock, change_stock
 
 factory_bp = Blueprint('factory', __name__)
 
@@ -39,6 +40,7 @@ def record_production_run():
         return jsonify(status='error', message='Loss reason must be 200 characters or fewer.'), 400
 
     try:
+        location = resolve_location(data.get('location_id'))
         output_id = int(data.get('output_ingredient_id'))
         planned_output = _positive_number(data.get('planned_output_kg'), 'Planned output')
         actual_output = _positive_number(data.get('actual_output_kg'), 'Actual output')
@@ -75,7 +77,7 @@ def record_production_run():
         for ingredient_id, _, actual_qty in inputs:
             requested_by_item[ingredient_id] = requested_by_item.get(ingredient_id, 0.0) + actual_qty
         for ingredient_id, requested in requested_by_item.items():
-            available = by_id[ingredient_id].stock_quantity_kg or 0.0
+            available = location_stock(location.id, ingredient_id, lock=True).quantity_kg or 0.0
             if requested > available + 0.000001:
                 raise ValueError(
                     f'Insufficient stock for {by_id[ingredient_id].name}. '
@@ -83,6 +85,8 @@ def record_production_run():
                 )
 
         input_total = sum(row[2] for row in inputs)
+        if actual_output > input_total + 0.01:
+            raise ValueError('Actual output exceeds total ingredient input. Verify the scale readings and include every material added to the batch.')
         loss_kg = max(0.0, input_total - actual_output)
         loss_pct = (loss_kg / input_total * 100.0) if input_total else 0.0
         if loss_kg > 0.01 and not loss_reason:
@@ -101,6 +105,7 @@ def record_production_run():
             loss_reason=loss_reason or None,
             created_by=g.user.username,
             created_at=datetime.utcnow(),
+            location_id=location.id,
         )
         db.session.add(run)
         db.session.flush()
@@ -111,7 +116,7 @@ def record_production_run():
             unit_cost = ingredient.cost_per_kg or 0.0
             line_cost = round(actual_qty * unit_cost, 2)
             input_cost += line_cost
-            ingredient.stock_quantity_kg = (ingredient.stock_quantity_kg or 0.0) - actual_qty
+            change_stock(location.id, ingredient, -actual_qty, 'PRODUCTION_CONSUMPTION', batch_no)
             db.session.add(ProductionRunLine(
                 production_run_id=run.id,
                 ingredient_id=ingredient_id,
@@ -120,28 +125,17 @@ def record_production_run():
                 cost_per_kg=unit_cost,
                 line_cost=line_cost,
             ))
-            db.session.add(StockMovement(
-                ingredient_id=ingredient_id,
-                movement_type='PRODUCTION_CONSUMPTION',
-                qty_kg=-actual_qty,
-                reference_id=batch_no,
-            ))
 
-        prior_output_qty = output_item.stock_quantity_kg or 0.0
-        prior_output_value = prior_output_qty * (output_item.cost_per_kg or 0.0)
+        output_stock = location_stock(location.id, output_item.id, lock=True)
+        prior_output_global_qty = output_item.stock_quantity_kg or 0.0
+        prior_output_value = prior_output_global_qty * (output_item.cost_per_kg or 0.0)
         input_cost = round(input_cost, 2)
         loss_cost = round(input_cost * loss_kg / input_total, 2) if input_total else 0.0
         output_cost = round(input_cost - loss_cost, 2)
-        output_item.stock_quantity_kg = prior_output_qty + actual_output
+        change_stock(location.id, output_item, actual_output, 'PRODUCTION_OUTPUT', batch_no)
         output_item.cost_per_kg = (prior_output_value + output_cost) / output_item.stock_quantity_kg
         run.total_input_cost = input_cost
         run.loss_cost = loss_cost
-        db.session.add(StockMovement(
-            ingredient_id=output_item.id,
-            movement_type='PRODUCTION_OUTPUT',
-            qty_kg=actual_output,
-            reference_id=batch_no,
-        ))
         from services.ledger_service import post_gl_entry
         ledger_ok = post_gl_entry(batch_no, '1200', output_cost, 0.0, 'PRODUCTION', run.id)
         if loss_cost > 0:
@@ -172,7 +166,11 @@ def record_production_run():
 @factory_bp.route('/api/factory/production-runs', methods=['GET'])
 @roles_required('admin', 'accountant', 'warehouse')
 def production_run_history():
-    runs = ProductionRun.query.order_by(ProductionRun.created_at.desc()).limit(100).all()
+    try:
+        location = resolve_location(request.args.get('location_id'))
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    runs = ProductionRun.query.filter_by(location_id=location.id).order_by(ProductionRun.created_at.desc()).limit(100).all()
     item_names = {item.id: item.name for item in FeedIngredient.query.all()}
     return jsonify([{
         'batch_no': run.batch_no,
@@ -195,7 +193,11 @@ def production_run_history():
 @factory_bp.route('/api/factory/production-runs/<batch_no>/lines', methods=['GET'])
 @roles_required('admin', 'accountant', 'warehouse')
 def production_run_lines(batch_no):
-    run = ProductionRun.query.filter_by(batch_no=batch_no).first()
+    try:
+        location = resolve_location(request.args.get('location_id'))
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    run = ProductionRun.query.filter_by(batch_no=batch_no, location_id=location.id).first()
     if not run:
         return jsonify(status='error', message='Production batch not found.'), 404
     rows = (db.session.query(ProductionRunLine, FeedIngredient.name)

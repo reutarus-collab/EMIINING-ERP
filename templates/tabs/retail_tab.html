@@ -1,6 +1,22 @@
 ﻿<div id="stock-tab" class="tab-content">
   <div class="card">
     <h3>Stock on Hand</h3>
+    <p>Outlet: <b id="stock-location-name">Current outlet</b></p>
+    <div data-roles="admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <input id="new-location-name" placeholder="New outlet name"><input id="new-location-code" placeholder="Outlet code">
+      <select id="new-location-type"><option value="BRANCH_STORE">Retail outlet</option><option value="FACTORY">Factory</option><option value="WAREHOUSE">Warehouse</option></select>
+      <button class="btn-sm btn-primary" onclick="createLocation()">Add outlet</button>
+    </div>
+    <div data-roles="admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <select id="outlet-user"></select><select id="outlet-user-location"></select>
+      <button class="btn-sm btn-primary" onclick="assignUserOutlet()">Assign staff outlet</button>
+    </div>
+    <div data-roles="admin,warehouse" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="stock-adjust-item"></select><input id="stock-adjust-qty" type="number" step="0.01" placeholder="Adjustment kg (+/-)">
+      <input id="stock-adjust-reason" placeholder="Reason"><button class="btn-sm btn-primary" onclick="adjustStock()">Adjust stock</button>
+      <select id="transfer-to"></select><input id="transfer-qty" type="number" min="0.01" step="0.01" placeholder="Transfer kg">
+      <input id="transfer-reason" placeholder="Transfer reason"><button class="btn-sm btn-warning" data-roles="admin" onclick="transferStock()">Transfer to outlet</button>
+    </div>
     <input id="stock-filter" placeholder="Filter items..." oninput="renderStock()"
            style="padding:10px;width:100%;max-width:320px;margin-bottom:10px">
     <table class="data-table">
@@ -31,10 +47,58 @@ let stockRows = [];
 const retailEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function loadStock() {
-  const r = await fetch('/api/stock', {credentials: 'same-origin'});
+  const r = await fetch('/api/stock?location_id=' + encodeURIComponent(activeLocationId), {credentials: 'same-origin'});
   if (!r.ok) { document.getElementById('stock-body').innerHTML = '<tr><td colspan="5">Cannot load stock.</td></tr>'; return; }
   stockRows = await r.json();
+  document.getElementById('stock-location-name').textContent = stockRows[0]?.location_name || document.getElementById('pos-location')?.selectedOptions[0]?.textContent || 'Outlet';
+  const items = document.getElementById('stock-adjust-item');
+  if (items) items.innerHTML = stockRows.map(i => `<option value="${i.id}">${retailEsc(i.name)}</option>`).join('');
+  const dest = document.getElementById('transfer-to');
+  if (dest) {
+    const locations = await (await fetch('/api/locations')).json();
+    dest.innerHTML = locations.filter(l => String(l.id) !== String(activeLocationId)).map(l => `<option value="${l.id}">${retailEsc(l.name)}</option>`).join('');
+  }
+  if (window.currentRole === 'admin') await loadOutletUsers();
   renderStock();
+}
+async function loadOutletUsers() {
+  const [usersRes, locsRes] = await Promise.all([fetch('/api/admin/users'), fetch('/api/locations')]);
+  if (!usersRes.ok || !locsRes.ok) return;
+  const users = await usersRes.json(), locs = await locsRes.json();
+  document.getElementById('outlet-user').innerHTML = users.map(u => `<option value="${u.id}">${retailEsc(u.username)} · ${retailEsc(u.role)} · ${retailEsc(u.location)}</option>`).join('');
+  document.getElementById('outlet-user-location').innerHTML = locs.map(l => `<option value="${l.id}">${retailEsc(l.name)}</option>`).join('');
+}
+async function assignUserOutlet() {
+  const id = document.getElementById('outlet-user').value;
+  const r = await fetch('/api/admin/users/' + id + '/location',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location_id:document.getElementById('outlet-user-location').value})});
+  const d = await r.json(); if (!r.ok) return alert(d.message || 'Could not assign user.');
+  alert(`${d.username} assigned to ${d.location}.`); await loadOutletUsers();
+}
+async function adjustStock() {
+  const body = {location_id:activeLocationId, ingredient_id:document.getElementById('stock-adjust-item').value,
+    delta_kg:document.getElementById('stock-adjust-qty').value, reason:document.getElementById('stock-adjust-reason').value};
+  const r = await fetch('/api/inventory/adjust',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json(); if (!r.ok) return alert(d.message || 'Adjustment failed.');
+  document.getElementById('stock-adjust-qty').value=''; document.getElementById('stock-adjust-reason').value=''; await loadStock();
+}
+async function transferStock() {
+  const body = {from_location_id:activeLocationId, to_location_id:document.getElementById('transfer-to').value,
+    ingredient_id:document.getElementById('stock-adjust-item').value, quantity_kg:document.getElementById('transfer-qty').value,
+    reason:document.getElementById('transfer-reason').value};
+  const r = await fetch('/api/inventory/transfers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json(); if (!r.ok) return alert(d.message || 'Transfer failed.');
+  alert(`Transfer ${d.transfer_no} posted.`); document.getElementById('transfer-qty').value=''; document.getElementById('transfer-reason').value=''; await loadStock();
+}
+async function createLocation() {
+  const body = {name:document.getElementById('new-location-name').value, code:document.getElementById('new-location-code').value,
+    type:document.getElementById('new-location-type').value};
+  const r = await fetch('/api/admin/locations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json(); if (!r.ok) return alert(d.message || 'Could not create outlet.');
+  const option = new Option(d.name, d.id);
+  document.getElementById('pos-location').add(option);
+  document.getElementById('transfer-to').add(new Option(d.name, d.id));
+  document.getElementById('new-location-name').value=''; document.getElementById('new-location-code').value='';
+  alert('Outlet created. Assign user accounts to its location code before staff can work there.');
 }
 function renderStock() {
   const q = (document.getElementById('stock-filter').value || '').toLowerCase();
@@ -46,15 +110,18 @@ function renderStock() {
 }
 async function loadDailyReport() {
   const box = document.getElementById('rep-body');
-  const r = await fetch('/api/reports/daily', {credentials: 'same-origin'});
+  const r = await fetch('/api/reports/daily?location_id=' + encodeURIComponent(activeLocationId), {credentials: 'same-origin'});
   if (!r.ok) { box.textContent = 'Cannot load report.'; return; }
   const d = await r.json();
   document.getElementById('rep-date').textContent = '(' + d.date + ')';
   const methods = Object.entries(d.by_method).map(([m, a]) =>
     `<tr><td>${retailEsc(m)}</td><td>${a.toFixed(2)}</td></tr>`).join('');
+  const tills = (d.till_closures || []).map(t => `<tr><td>${retailEsc(t.cashier)}</td><td>${t.closed_at}</td><td>${t.opening_cash.toFixed(2)}</td><td>${t.expected_cash.toFixed(2)}</td><td>${t.counted_cash.toFixed(2)}</td><td>${t.variance.toFixed(2)}</td></tr>`).join('');
   box.innerHTML = `<p>Sales: <b>${d.sales_count}</b> &nbsp; Total: <b>KSh ${d.total_sales.toFixed(2)}</b> &nbsp; Discounts: KSh ${d.discounts.toFixed(2)} &nbsp; On credit: KSh ${(d.credit_sales || 0).toFixed(2)}</p>
     <table class="data-table"><thead><tr><th>Payment method</th><th>KSh</th></tr></thead>
-    <tbody>${methods || '<tr><td colspan="2">No payments today.</td></tr>'}</tbody></table>`;
+    <tbody>${methods || '<tr><td colspan="2">No payments today.</td></tr>'}</tbody></table>
+    <h4>Till close reconciliation</h4><table class="data-table"><thead><tr><th>Cashier</th><th>Closed</th><th>Opening cash</th><th>Expected</th><th>Counted</th><th>Variance</th></tr></thead>
+    <tbody>${tills || '<tr><td colspan="6">No closed tills today.</td></tr>'}</tbody></table>`;
 }
 async function loadPrices() {
   const body = document.getElementById('price-body');
