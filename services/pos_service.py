@@ -73,7 +73,8 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
             ingredient_id=ingredient.id,
             unit_type=unit_type,
             qty_entered=qty,
-            subtotal=subtotal
+            subtotal=subtotal,
+            unit_cost_per_kg=stock_row.unit_cost_per_kg or 0.0
         ))
     role = getattr(getattr(g, 'user', None), 'role', None)
     max_pct = DISCOUNT_CAP_PCT.get(role, 0.0)

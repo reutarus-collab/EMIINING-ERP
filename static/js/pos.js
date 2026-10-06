@@ -479,12 +479,14 @@ async function processDebtRepayment() {
     }
 }
 
+let salesHistoryByOrder = {};
 async function loadSalesHistory() {
   const res = await fetch('/api/sales-history?location_id=' + encodeURIComponent(activeLocationId));
   const history = await res.json();
   const tbody = document.getElementById('sales-table-body'); 
   if(!tbody) return;
   tbody.innerHTML = '';
+  salesHistoryByOrder = Object.fromEntries(history.map(s => [s.order_id, s]));
   if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="9">No sales logged.</td></tr>'; return; }
   history.forEach(s => {
     const refundDetails = (s.refunds || []).map(r => `<small>${escHtml(r.reference)} · ${escHtml(r.payment_method)} KSh ${Number(r.amount).toFixed(2)} · ${escHtml(r.reason)} · ${escHtml(r.created_by)}</small>`).join('<br>');
@@ -498,11 +500,22 @@ async function refundSale(orderId, refundable) {
   const method = (prompt('Refund through CASH, MPESA, or BANK?') || '').trim().toUpperCase();
   const reason = (prompt('Refund reason:') || '').trim();
   if (!['CASH','MPESA','BANK'].includes(method)) return alert('Use CASH, MPESA, or BANK.');
+  const sale = salesHistoryByOrder[orderId];
+  const returned_items = [];
+  for (const item of (sale?.items || [])) {
+    const remaining = Math.max(0, Number(item.quantity_kg || 0) - Number(item.returned_kg || 0));
+    if (!remaining || !confirm(`Was any ${item.name} physically returned in saleable condition? Up to ${remaining.toFixed(2)} kg remains eligible.`)) continue;
+    const rawQty = prompt(`How many kg of ${item.name} should return to this outlet's stock?`, remaining.toFixed(2));
+    if (rawQty === null) return;
+    const quantity = Number(rawQty);
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > remaining + 0.000001) return alert('Enter a positive returned quantity no greater than the amount remaining on this sale line.');
+    returned_items.push({order_line_id:item.order_line_id, quantity_kg:quantity});
+  }
   const r = await fetch(`/api/pos/orders/${orderId}/refund`, {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({amount, payment_method:method, reason})});
+    body:JSON.stringify({amount, payment_method:method, reason, returned_items})});
   const d = await r.json().catch(() => ({}));
   if (!r.ok) return alert(d.message || 'Could not record refund.');
-  alert(`Refund ${d.reference} recorded. If goods were physically returned, record their stock return separately.`);
+  alert(`Refund ${d.reference} recorded. ${Number(d.restocked_kg || 0).toFixed(2)} kg returned to outlet stock.`);
   await loadSalesHistory();
 }
 window.addEventListener('load', initOutletTill);

@@ -13,7 +13,7 @@
 ## PythonAnywhere launch settings
 
 - Set `SECRET_KEY` and `COOKIE_SECURE=1` in the web app environment. Serve the app over HTTPS.
-- Use a unique PIN of 6–8 digits for sales and warehouse accounts; avoid repeated digits or common sequences. Admin and accounting passwords must be at least 10 characters.
+- Each user signs in with a username and four-digit PIN. Set a different PIN for each person; admin resets are done with `python reset_password.py`.
 - Assign each cashier and warehouse user to an exact `location_id`. Staff cannot choose another outlet. Admin/accounting users may select an exact location ID.
 - Schedule the backup command below as a PythonAnywhere daily task, replacing paths with the account's actual paths. Create the backup directory first.
 
@@ -43,13 +43,14 @@ python /path/to/project/scripts/backup_sqlite.py --database /path/to/project/emi
 
 - Inter-location stock movement is dispatched, remains in transit, and is received by the destination cashier/warehouse user. A short delivery must be closed with a reason; the variance is posted to account 5100 at dispatch cost.
 - Customer cash repayments require an open till and update both till expected cash and the cash ledger. Non-cash repayments require an explicit payment method.
-- Refunds record the cash/ledger refund. Returned goods are not automatically restored to inventory; use the stock adjustment workflow after inspection.
+- Refunds record the cash/ledger refund. At refund time, physically returned sale lines and accepted quantities can be received back into that outlet's inventory; COGS is reversed at the sale's recorded cost (legacy lines without a cost use the outlet's current average). Damaged goods should not be restocked.
 - Formulation and milling routes that are not implemented return an explicit unavailable response.
 
 ## Weekly money and leak reports
 
-- Admin and accountant users can open **Money & leaks**. Set opening cash, inventory, customer debt, supplier debt, and equipment balances for the start date. For today's opening date, the form suggests ledger/stock/customer balances; physically count cash and confirm the other figures before saving.
-- The cash walk uses posted ledger activity for profit, stock, debtors, creditors, owner withdrawals, and equipment. The difference between calculated closing cash and ledger cash is shown for reconciliation. It is a management report; it does not create opening journal entries.
+- Admin and accountant users can view **Money & leaks**. Only admins can record owner withdrawals. Opening balances default from the latest saved close plus posted ledger movements; for the first reporting period, enter the initial balances. Count cash and compare the opening count with the ledger cash figure before saving.
+- The cash walk compares counted opening cash with the ledger balance at that date, then shows the profit-based cash calculation, posted ledger close, and reconciliation difference. It is a management report; it does not create opening journal entries.
 - Use **Use closing balances as next week's opening** to carry the closing snapshot forward. Save a snapshot for each week before running later periods.
-- Leak rows are ranked by KSh value and show the previous period. Current stock/debtor/price exposure is a point-in-time measure, so it does not show a weekly trend until historical balance snapshots exist. Formulation over-processing, bag-weight giveaway, downtime, and debtor aging are marked untracked until those source records are added.
-- Purchase leakage compares received costs to the prior 90-day weighted average where history exists and includes rejected or short receipts. Price exposure estimates sales below current outlet cost; there is no target-margin setting yet.
+- The leak report separates **Money lost** from **Cash tied up** so the value of unsold/slow stock and customer debt is not presented as realized loss. Rows are ranked by estimated KSh value and show the prior period.
+- Purchase leakage compares received costs to the prior 90-day weighted average where history exists and includes rejected or short receipts. Price leakage estimates the 30-day sales gap against a 15% target gross margin by default; set `PRICE_TARGET_MARGIN_PCT` to change the target.
+- During a refund, confirm each physically returned item and enter the quantity in kilograms. The ERP adds inspected saleable goods back to outlet stock and reverses estimated COGS at the outlet's current weighted-average cost. Damaged goods should not be marked as returned to stock; record them through stock adjustment instead.

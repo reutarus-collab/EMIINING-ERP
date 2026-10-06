@@ -126,6 +126,7 @@ class OrderLine(db.Model):
     unit_type = db.Column(db.String(20))
     qty_entered = db.Column(db.Float, default=0.0)
     subtotal = db.Column(db.Float, default=0.0)
+    unit_cost_per_kg = db.Column(db.Float, nullable=False, default=0.0)
 
 class PaymentSplit(db.Model):
     __tablename__ = 'payment_splits'
@@ -257,6 +258,15 @@ class SalesRefund(db.Model):
     reason = db.Column(db.String(200), nullable=False)
     created_by = db.Column(db.String(50), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class SalesRefundLine(db.Model):
+    __tablename__ = 'sales_refund_lines'
+    id = db.Column(db.Integer, primary_key=True)
+    refund_id = db.Column(db.Integer, db.ForeignKey('sales_refunds.id'), nullable=False)
+    order_line_id = db.Column(db.Integer, db.ForeignKey('order_lines.id'), nullable=False)
+    ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
+    quantity_kg = db.Column(db.Float, nullable=False)
+    unit_cost_per_kg = db.Column(db.Float, nullable=False, default=0.0)
 
 class LedgerEntry(db.Model):
     __tablename__ = 'ledger_entries'
@@ -391,12 +401,8 @@ class User(db.Model):
     locked_until = db.Column(db.DateTime)
 
     def set_password(self, pw):
-        if self.role in ('sales', 'warehouse'):
-            weak = {'123456', '654321', '000000', '111111', '121212', '123123'}
-            if not pw.isdigit() or not 6 <= len(pw) <= 8 or pw in weak or len(set(pw)) <= 1:
-                raise ValueError('Cashier and warehouse PINs must be a non-obvious 6–8 digit number.')
-        elif len(pw) < 10:
-            raise ValueError('Admin and accountant passwords must be at least 10 characters.')
+        if not pw.isdigit() or len(pw) != 4:
+            raise ValueError('User PINs must be exactly four numeric digits.')
         self.password_hash = generate_password_hash(pw)
 
     def check_password(self, pw):

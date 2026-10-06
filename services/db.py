@@ -16,6 +16,7 @@ def _migrate_location_schema():
     additions = {
         'stock_movements': {'location_id': 'INTEGER', 'reason': 'VARCHAR(200)', 'created_at': 'DATETIME'},
         'order_headers': {'location_id': 'INTEGER', 'till_session_id': 'INTEGER'},
+        'order_lines': {'unit_cost_per_kg': 'FLOAT NOT NULL DEFAULT 0'},
         'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT', 'open_key': 'VARCHAR(120)'},
         'app_users': {'location_id': 'INTEGER'},
         'idempotency_keys': {'request_hash': 'VARCHAR(64)', 'created_by': 'VARCHAR(50)', 'location_id': 'INTEGER'},

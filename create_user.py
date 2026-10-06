@@ -19,15 +19,8 @@ with app.app_context():
     except ValueError:
         location = None
     assert role in ROLES and (role in ('admin', 'accountant') or location), 'choose a valid role and exact outlet ID'
-    PIN_ROLES = ('sales', 'warehouse')
-    WEAK = {'123456', '654321', '000000', '111111', '121212', '123123'}
-
-    pw = getpass.getpass('PIN (digits) or password: ')
-    if role in PIN_ROLES:
-        assert pw.isdigit() and 6 <= len(pw) <= 8, 'PIN must be 6-8 digits'
-        assert pw not in WEAK and len(set(pw)) > 1, 'PIN too easy to guess'
-    else:
-        assert len(pw) >= 10, 'admin/accountant need 10+ characters'
+    pw = getpass.getpass('Four-digit PIN: ')
+    assert pw.isdigit() and len(pw) == 4, 'PIN must be exactly 4 digits'
     if User.query.filter_by(username=name).first():
         raise SystemExit('username already exists')
     u = User(username=name, full_name=full, role=role,

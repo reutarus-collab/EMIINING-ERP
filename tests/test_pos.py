@@ -196,24 +196,33 @@ class POSCheckoutTests(unittest.TestCase):
 
     def test_owner_cash_withdrawal_is_separate_and_reduces_open_till(self):
         client = self.make_admin_client()
+        owner_till = TillSession(location_id=self.branch.id, cashier_name='owner', opening_cash=900,
+                                 expected_cash=900, status='OPEN', open_key=f'{self.branch.id}:owner')
+        db.session.add(owner_till)
+        db.session.commit()
         response = client.post('/api/reports/owner-withdrawals', json={
             'amount': 100, 'payment_method': 'CASH', 'location_id': self.branch.id,
             'reason': 'Owner personal cash use',
         })
         self.assertEqual(response.status_code, 201, response.json)
         self.assertEqual(OwnerWithdrawal.query.count(), 1)
-        self.assertEqual(TillSession.query.filter_by(id=self.till.id).one().expected_cash, 4900)
+        self.assertEqual(TillSession.query.filter_by(id=self.till.id).one().expected_cash, 5000)
+        self.assertEqual(TillSession.query.filter_by(id=owner_till.id).one().expected_cash, 800)
 
     def test_equipment_purchase_is_recorded_as_asset_and_not_expense(self):
         client = self.make_admin_client()
-        response = client.post('/api/reports/equipment-purchases', json={
+        rejected = client.post('/api/reports/equipment-purchases', json={
             'amount': 25000, 'payment_method': 'ON_ACCOUNT', 'description': 'Feed mixer motor',
+        })
+        self.assertEqual(rejected.status_code, 400)
+        response = client.post('/api/reports/equipment-purchases', json={
+            'amount': 25000, 'payment_method': 'BANK', 'description': 'Feed mixer motor',
         })
         self.assertEqual(response.status_code, 201, response.json)
         asset = GeneralLedgerEntry.query.filter_by(transaction_ref=response.json['reference'], account_code='1500').one()
-        payable = GeneralLedgerEntry.query.filter_by(transaction_ref=response.json['reference'], account_code='2000').one()
         self.assertEqual(asset.debit, 25000)
-        self.assertEqual(payable.credit, 25000)
+        bank = GeneralLedgerEntry.query.filter_by(transaction_ref=response.json['reference'], account_code='1020').one()
+        self.assertEqual(bank.credit, 25000)
         self.assertEqual(GeneralLedgerEntry.query.filter_by(transaction_ref=response.json['reference'], account_code='5000').count(), 0)
 
     def test_leak_report_returns_ranked_current_and_previous_period_rows(self):

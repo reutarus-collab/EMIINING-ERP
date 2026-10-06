@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 import hashlib
 import json
 from services.db import db
-from services.models import FeedIngredient, Customer, CustomerPayment, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, IdempotencyKey
+from services.models import FeedIngredient, Customer, CustomerPayment, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, SalesRefundLine, IdempotencyKey
 from services.pos_service import process_full_pos_checkout
 from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
 from routes.auth import roles_required
@@ -310,6 +310,35 @@ def refund_sale(order_id):
             raise ValueError('Refund amount must be above zero.')
         if len(reason) < 4 or len(reason) > 200 or any(ch in reason for ch in '<>'):
             raise ValueError('Enter a refund reason (4–200 characters).')
+        returned_items = data.get('returned_items') or []
+        if not isinstance(returned_items, list):
+            raise ValueError('Returned stock must be a list of sale lines and quantities.')
+        order_lines = {line.id: line for line in OrderLine.query.filter_by(order_id=order.id).all()}
+        return_rows = []
+        seen_line_ids = set()
+        for returned in returned_items:
+            if not isinstance(returned, dict):
+                raise ValueError('Each returned-stock entry must include a sale line and quantity.')
+            line_id = int(returned.get('order_line_id'))
+            quantity = float(returned.get('quantity_kg'))
+            line = order_lines.get(line_id)
+            if not line or line_id in seen_line_ids or not math.isfinite(quantity) or quantity <= 0:
+                raise ValueError('Choose a valid sale line and positive returned quantity.')
+            seen_line_ids.add(line_id)
+            unit_type = str(line.unit_type or 'KG').upper()
+            bag_size = float(unit_type.split('KG BAG')[0]) if 'KG BAG' in unit_type else 1.0
+            sold_kg = (line.qty_entered or 0.0) * bag_size
+            previous_kg = db.session.query(db.func.sum(SalesRefundLine.quantity_kg)).join(
+                SalesRefund, SalesRefund.id == SalesRefundLine.refund_id).filter(
+                    SalesRefund.order_id == order.id, SalesRefundLine.order_line_id == line_id).scalar() or 0.0
+            if quantity > sold_kg - previous_kg + 0.000001:
+                raise ValueError('Returned quantity exceeds the unreturned quantity sold for that line.')
+            ingredient = db.session.get(FeedIngredient, line.ingredient_id)
+            if not ingredient:
+                raise ValueError('A returned item no longer exists in inventory.')
+            balance = location_stock(location.id, ingredient.id, lock=True)
+            return_rows.append((line, ingredient, quantity,
+                                line.unit_cost_per_kg or balance.unit_cost_per_kg or 0.0))
         original = PaymentSplit.query.filter_by(order_id=order.id, payment_method=method).all()
         original_amount = sum(p.amount or 0.0 for p in original)
         if method == 'CASH':
@@ -331,16 +360,30 @@ def refund_sale(order_id):
                              till_session_id=till.id if till else None, amount=amount,
                              payment_method=method, reason=reason, created_by=g.user.username)
         db.session.add(refund)
+        db.session.flush()
         if till:
             till.expected_cash = round((till.expected_cash or 0.0) - amount, 2)
         from services.ledger_service import post_gl_entry
         payment_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
         posted = post_gl_entry(ref, '4100', amount, 0.0, 'SALES_REFUND', order.id)
         posted = post_gl_entry(ref, payment_account, 0.0, amount, 'SALES_REFUND', order.id) and posted
+        return_value = 0.0
+        for line, ingredient, quantity, unit_cost in return_rows:
+            receive_stock(location.id, ingredient, quantity, unit_cost, 'SALES_RETURN', ref,
+                          f'Returned from sale {order.sale_id or order.id}')
+            db.session.add(SalesRefundLine(refund_id=refund.id, order_line_id=line.id,
+                                           ingredient_id=ingredient.id, quantity_kg=quantity,
+                                           unit_cost_per_kg=unit_cost))
+            return_value += quantity * unit_cost
+        if return_value > 0:
+            posted = post_gl_entry(ref, '1200', return_value, 0.0, 'SALES_RETURN', order.id) and posted
+            posted = post_gl_entry(ref, '5000', 0.0, return_value, 'SALES_RETURN', order.id) and posted
         if not posted:
             raise RuntimeError('Could not post the refund to the ledger.')
         db.session.commit()
-        return jsonify(status='success', reference=ref), 201
+        return jsonify(status='success', reference=ref,
+                       restocked_kg=round(sum(row[2] for row in return_rows), 3),
+                       restocked_cost=round(return_value, 2)), 201
     except Exception as exc:
         db.session.rollback()
         return jsonify(status='error', message=str(exc)), 400
@@ -617,6 +660,13 @@ def get_sales_history():
                          'created_by': r.created_by,
                          'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else ''}
                         for r in refunds],
-            'items': [{'name': (getattr(db.session.get(FeedIngredient, l.ingredient_id), 'name', None) or '(deleted item)'), 'qty_entered': l.qty_entered, 'unit': l.unit_type, 'subtotal': l.subtotal} for l in lines]
+            'items': [{'order_line_id': l.id, 'ingredient_id': l.ingredient_id,
+                       'name': (getattr(db.session.get(FeedIngredient, l.ingredient_id), 'name', None) or '(deleted item)'),
+                       'qty_entered': l.qty_entered, 'unit': l.unit_type,
+                       'quantity_kg': (l.qty_entered or 0.0) * (float(str(l.unit_type).upper().split('KG BAG')[0]) if l.unit_type and 'KG BAG' in str(l.unit_type).upper() else 1.0),
+                       'returned_kg': round(db.session.query(db.func.sum(SalesRefundLine.quantity_kg)).join(
+                           SalesRefund, SalesRefund.id == SalesRefundLine.refund_id).filter(
+                               SalesRefund.order_id == o.id, SalesRefundLine.order_line_id == l.id).scalar() or 0.0, 3),
+                       'subtotal': l.subtotal} for l in lines]
         })
     return jsonify(out)

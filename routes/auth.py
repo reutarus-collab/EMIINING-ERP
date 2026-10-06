@@ -31,7 +31,7 @@ LOGIN_HTML = """<!doctype html>
 <form method="post">
 <input name="username" placeholder="Username" autocomplete="username" required
  style="width:100%;padding:10px;margin:6px 0"><br>
-<input name="password" type="password" placeholder="Password or PIN"
+<input name="password" type="password" placeholder="4-digit PIN"
  autocomplete="current-password" required style="width:100%;padding:10px;margin:6px 0"><br>
 <button style="width:100%;padding:10px">Log in</button>
 </form>
@@ -77,8 +77,8 @@ def login():
             if u and u.locked_until and u.locked_until > now:
                 error = 'Account locked. Try again in 15 minutes.'
             elif u and u.active and u.check_password(pw):
-                if u.role in ('sales', 'warehouse') and (not pw.isdigit() or not 6 <= len(pw) <= 8 or len(set(pw)) < 3 or pw in {'123456', '1234567', '12345678', '000000', '111111', '654321'}):
-                    error = 'Your PIN must be reset to a stronger 6–8 digit PIN before you can sign in.'
+                if u.role in ('sales', 'warehouse') and not (pw.isdigit() and (len(pw) == 4 or 6 <= len(pw) <= 8)):
+                    error = 'Cashier and warehouse users sign in with a four-digit PIN. Ask an admin to reset yours.'
                 else:
                     u.failed_attempts = 0
                     u.locked_until = None
