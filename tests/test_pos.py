@@ -1,4 +1,5 @@
 import concurrent.futures
+from datetime import datetime, timedelta
 import os
 import tempfile
 import unittest
@@ -12,7 +13,8 @@ from app import create_app
 from services.db import db
 from services.models import (
     Customer, FeedIngredient, GeneralLedgerEntry, IdempotencyKey, ItemPrice,
-    Location, LocationStock, OrderHeader, TillSession, User,
+    CashWalkOpening, Location, LocationStock, OrderHeader, OwnerWithdrawal,
+    TillSession, User,
 )
 
 
@@ -154,6 +156,75 @@ class POSCheckoutTests(unittest.TestCase):
         row = next(item for item in response.json if item['id'] == self.item.id)
         self.assertEqual(row['location_id'], self.branch.id)
         self.assertEqual(row['stock_kg'], 100.0)
+
+    def make_admin_client(self):
+        admin = User(username='owner', role='admin', location='admin')
+        admin.set_password('long-test-password')
+        db.session.add(admin)
+        db.session.commit()
+        client = self.app.test_client()
+        with client.session_transaction() as sess:
+            sess['user_id'] = admin.id
+        return client
+
+    def test_weekly_cash_walk_calculates_profit_working_capital_and_withdrawals(self):
+        client = self.make_admin_client()
+        start = (datetime.utcnow() + timedelta(hours=3)).date()
+        payload = {'as_of_date': start.isoformat(), 'cash': 10000, 'inventory': 5000,
+                   'debtors': 2000, 'creditors': 1000, 'equipment': 0}
+        saved = client.post('/api/reports/opening-balances', json=payload)
+        self.assertEqual(saved.status_code, 200, saved.json)
+        rows = [
+            ('1000', 1000, 0, 'POS'), ('1300', 200, 0, 'POS'), ('4000', 0, 1200, 'POS'),
+            ('1200', 500, 0, 'PURCHASE'), ('2000', 0, 500, 'PURCHASE'),
+            ('5000', 600, 0, 'POS'), ('1200', 0, 600, 'POS'),
+            ('3000', 100, 0, 'OWNER_WITHDRAWAL'), ('1000', 0, 100, 'OWNER_WITHDRAWAL'),
+        ]
+        for code, debit, credit, source in rows:
+            db.session.add(GeneralLedgerEntry(transaction_ref='CASH-WALK-TEST', account_code=code,
+                                               debit=debit, credit=credit, source_type=source))
+        db.session.commit()
+        report = client.get(f'/api/reports/cash-walk?start={start.isoformat()}&end={start.isoformat()}')
+        self.assertEqual(report.status_code, 200, report.json)
+        self.assertEqual(report.json['lines']['profit'], 600)
+        self.assertEqual(report.json['lines']['stock_increase'], -100)
+        self.assertEqual(report.json['lines']['debtors_increase'], 200)
+        self.assertEqual(report.json['lines']['creditors_increase'], 500)
+        self.assertEqual(report.json['calculated_closing_cash'], 10900)
+        self.assertEqual(report.json['ledger_closing_cash'], 10900)
+        self.assertEqual(report.json['reconciliation_difference'], 0)
+
+    def test_owner_cash_withdrawal_is_separate_and_reduces_open_till(self):
+        client = self.make_admin_client()
+        response = client.post('/api/reports/owner-withdrawals', json={
+            'amount': 100, 'payment_method': 'CASH', 'location_id': self.branch.id,
+            'reason': 'Owner personal cash use',
+        })
+        self.assertEqual(response.status_code, 201, response.json)
+        self.assertEqual(OwnerWithdrawal.query.count(), 1)
+        self.assertEqual(TillSession.query.filter_by(id=self.till.id).one().expected_cash, 4900)
+
+    def test_equipment_purchase_is_recorded_as_asset_and_not_expense(self):
+        client = self.make_admin_client()
+        response = client.post('/api/reports/equipment-purchases', json={
+            'amount': 25000, 'payment_method': 'ON_ACCOUNT', 'description': 'Feed mixer motor',
+        })
+        self.assertEqual(response.status_code, 201, response.json)
+        asset = GeneralLedgerEntry.query.filter_by(transaction_ref=response.json['reference'], account_code='1500').one()
+        payable = GeneralLedgerEntry.query.filter_by(transaction_ref=response.json['reference'], account_code='2000').one()
+        self.assertEqual(asset.debit, 25000)
+        self.assertEqual(payable.credit, 25000)
+        self.assertEqual(GeneralLedgerEntry.query.filter_by(transaction_ref=response.json['reference'], account_code='5000').count(), 0)
+
+    def test_leak_report_returns_ranked_current_and_previous_period_rows(self):
+        client = self.make_admin_client()
+        response = client.get('/api/reports/leaks')
+        self.assertEqual(response.status_code, 200, response.json)
+        labels = [row['label'] for row in response.json['leaks']]
+        self.assertIn('Transfer shortfall', labels)
+        self.assertIn('Cash leakage', labels)
+        self.assertTrue(all('previous_amount' in row and 'trend_delta' in row
+                            for row in response.json['leaks']))
 
 
 if __name__ == '__main__':

@@ -52,6 +52,56 @@
     <div id="rep-body">Loading...</div>
   </div>
 </div>
+<div id="money-tab" class="tab-content money-tab" data-roles="admin,accountant">
+  <div class="card">
+    <h3>Where did my money go?</h3>
+    <p>Weekly cash walk from the ledger. Enter the balances at the start of the first week; carry each closing balance forward for the next week. Suggested stock, debtor, creditor and equipment balances are estimates. Count cash and check supplier balances before saving.</p>
+    <div class="money-controls">
+      <label>Week from <input id="money-start" type="date"></label>
+      <label>through <input id="money-end" type="date"></label>
+      <button class="btn-sm btn-primary" onclick="loadMoneyReports()">Run reports</button>
+    </div>
+    <h4>Opening balances as of <span id="opening-date-label"></span></h4>
+    <div class="money-fields">
+      <label>Cash / bank <input id="opening-cash" type="number" min="0" step="0.01"></label>
+      <label>Stock <input id="opening-inventory" type="number" min="0" step="0.01"></label>
+      <label>Customer debt <input id="opening-debtors" type="number" min="0" step="0.01"></label>
+      <label>Supplier debt <input id="opening-creditors" type="number" min="0" step="0.01"></label>
+      <label>Equipment <input id="opening-equipment" type="number" min="0" step="0.01"></label>
+      <button class="btn-sm btn-primary" onclick="saveOpeningBalances()">Save opening balances</button>
+    </div>
+    <div id="cash-walk-message" role="status" style="margin-top:8px"></div>
+    <div id="cash-walk-body"></div>
+    <button id="roll-opening-btn" class="btn-sm btn-info" style="display:none" onclick="rollOpeningBalances()">Use closing balances as next week’s opening</button>
+  </div>
+  <div class="card">
+    <h3>Record owner withdrawal</h3>
+    <p>Record personal use separately from business expenses. Cash withdrawals reduce the selected outlet till; M-Pesa and bank withdrawals post directly.</p>
+    <div class="money-fields">
+      <input id="owner-withdrawal-amount" type="number" min="0.01" step="0.01" placeholder="Amount (KSh)">
+      <select id="owner-withdrawal-method"><option value="CASH">Cash from till</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option></select>
+      <input id="owner-withdrawal-reason" maxlength="200" placeholder="Reason / note">
+      <button class="btn-sm btn-warning" onclick="recordOwnerWithdrawal()">Record withdrawal</button>
+    </div>
+    <div id="owner-withdrawal-message" role="status"></div>
+  </div>
+  <div class="card">
+    <h3>Record equipment bought</h3>
+    <p>Equipment is recorded as an asset, not a business expense. Cash purchases reduce the selected open till; on-account purchases increase supplier debt.</p>
+    <div class="money-fields">
+      <input id="equipment-amount" type="number" min="0.01" step="0.01" placeholder="Amount (KSh)">
+      <select id="equipment-method"><option value="CASH">Cash from till</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="ON_ACCOUNT">On account</option></select>
+      <input id="equipment-description" maxlength="200" placeholder="Equipment / receipt details">
+      <button class="btn-sm btn-primary" onclick="recordEquipmentPurchase()">Record equipment</button>
+    </div>
+    <div id="equipment-message" role="status"></div>
+  </div>
+  <div class="card">
+    <h3>Muda leak report</h3>
+    <p>Ranked by estimated KSh impact, with the matching prior period. Metrics with no source data yet are marked as not tracked.</p>
+    <div id="leak-report-body">Run reports to load leak rankings.</div>
+  </div>
+</div>
 <div id="pricing-tab" class="tab-content">
   <div class="card">
     <h3>Retail Pricing (admin only)</h3>

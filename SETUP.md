@@ -45,3 +45,11 @@ python /path/to/project/scripts/backup_sqlite.py --database /path/to/project/emi
 - Customer cash repayments require an open till and update both till expected cash and the cash ledger. Non-cash repayments require an explicit payment method.
 - Refunds record the cash/ledger refund. Returned goods are not automatically restored to inventory; use the stock adjustment workflow after inspection.
 - Formulation and milling routes that are not implemented return an explicit unavailable response.
+
+## Weekly money and leak reports
+
+- Admin and accountant users can open **Money & leaks**. Set opening cash, inventory, customer debt, supplier debt, and equipment balances for the start date. For today's opening date, the form suggests ledger/stock/customer balances; physically count cash and confirm the other figures before saving.
+- The cash walk uses posted ledger activity for profit, stock, debtors, creditors, owner withdrawals, and equipment. The difference between calculated closing cash and ledger cash is shown for reconciliation. It is a management report; it does not create opening journal entries.
+- Use **Use closing balances as next week's opening** to carry the closing snapshot forward. Save a snapshot for each week before running later periods.
+- Leak rows are ranked by KSh value and show the previous period. Current stock/debtor/price exposure is a point-in-time measure, so it does not show a weekly trend until historical balance snapshots exist. Formulation over-processing, bag-weight giveaway, downtime, and debtor aging are marked untracked until those source records are added.
+- Purchase leakage compares received costs to the prior 90-day weighted average where history exists and includes rejected or short receipts. Price exposure estimates sales below current outlet cost; there is no target-margin setting yet.

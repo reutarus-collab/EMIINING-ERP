@@ -8,10 +8,10 @@ from sqlalchemy import func
 
 from routes.auth import roles_required
 from services.db import db
-from services.inventory import active_till, resolve_location
+from services.inventory import resolve_location
 from services.ledger_service import post_gl_entry
 from services.models import (
-    Account, CashWalkOpening, Customer, FeedIngredient, GeneralLedgerEntry,
+    Account, CashWalkOpening, Customer, EquipmentPurchase, FeedIngredient, GeneralLedgerEntry,
     GoodsReceiptLine, GoodsReceiptNote, InventoryTransfer, LocationStock,
     OperatingExpense, OrderHeader, OrderLine, OwnerWithdrawal, ProductionRun,
     PurchaseOrderHeader, PurchaseOrderLine, SalesRefund, StockMovement,
@@ -21,6 +21,15 @@ from services.models import (
 reports_bp = Blueprint('reports', __name__)
 CASH_CODES = ('1000', '1010', '1020', '1100')
 ASSET_CODES = {'inventory': '1200', 'debtors': '1300', 'equipment': '1500'}
+LOCAL_UTC_OFFSET = timedelta(hours=3)  # Africa/Nairobi reporting day
+
+
+def _today_local():
+    return (datetime.utcnow() + LOCAL_UTC_OFFSET).date()
+
+
+def _money_text(value):
+    return f"KSh {(value or 0.0):,.2f}"
 
 
 def _date_arg(name, default):
@@ -35,8 +44,8 @@ def _date_arg(name, default):
 
 def _period_entries(start, end):
     return GeneralLedgerEntry.query.filter(
-        GeneralLedgerEntry.created_at >= datetime.combine(start, time.min),
-        GeneralLedgerEntry.created_at < datetime.combine(end + timedelta(days=1), time.min),
+        GeneralLedgerEntry.created_at >= datetime.combine(start, time.min) - LOCAL_UTC_OFFSET,
+        GeneralLedgerEntry.created_at < datetime.combine(end + timedelta(days=1), time.min) - LOCAL_UTC_OFFSET,
     ).all()
 
 
@@ -52,7 +61,9 @@ def save_cash_walk_opening():
     try:
         as_of = date.fromisoformat(str(data.get('as_of_date') or ''))
         fields = ('cash', 'inventory', 'debtors', 'creditors', 'equipment')
-        amounts = {name: round(float(data.get(name, 0)), 2) for name in fields}
+        if any(data.get(name) in (None, '') for name in fields):
+            raise ValueError('Enter all five opening balances, including zero where applicable.')
+        amounts = {name: round(float(data.get(name)), 2) for name in fields}
         if any(not math.isfinite(value) or value < 0 for value in amounts.values()):
             raise ValueError('Opening balances must be valid non-negative amounts.')
         opening = CashWalkOpening.query.filter_by(as_of_date=as_of).first()
@@ -72,12 +83,35 @@ def save_cash_walk_opening():
 @roles_required('admin', 'accountant')
 def get_cash_walk_opening():
     try:
-        as_of = _date_arg('as_of_date', date.today())
+        as_of = _date_arg('as_of_date', _today_local())
     except ValueError as exc:
         return jsonify(status='error', message=str(exc)), 400
     row = CashWalkOpening.query.filter_by(as_of_date=as_of).first()
-    return jsonify(as_of_date=as_of.isoformat(), exists=bool(row),
-                   balances=_opening_payload(row) if row else None)
+    if row:
+        return jsonify(as_of_date=as_of.isoformat(), exists=True,
+                       balances=_opening_payload(row), needs_cash_count=False)
+    cash_rows = (db.session.query(GeneralLedgerEntry.account_code,
+                                  func.sum(GeneralLedgerEntry.debit - GeneralLedgerEntry.credit))
+                 .filter(GeneralLedgerEntry.account_code.in_(CASH_CODES))
+                 .group_by(GeneralLedgerEntry.account_code).all())
+    cash_suggestion = sum(value or 0.0 for _, value in cash_rows)
+    inventory_suggestion = sum((row.quantity_kg or 0.0) * (row.unit_cost_per_kg or 0.0)
+                               for row in LocationStock.query.all())
+    debtors_suggestion = sum(c.current_balance or 0.0 for c in Customer.query.all())
+    creditors_row = db.session.query(func.sum(GeneralLedgerEntry.credit - GeneralLedgerEntry.debit)).filter(
+        GeneralLedgerEntry.account_code == '2000').scalar()
+    equipment_row = db.session.query(func.sum(GeneralLedgerEntry.debit - GeneralLedgerEntry.credit)).filter(
+        GeneralLedgerEntry.account_code == ASSET_CODES['equipment']).scalar()
+    today = _today_local()
+    suggestions = None
+    if as_of == today:
+        suggestions = {'cash': round(cash_suggestion, 2),
+                       'inventory': round(inventory_suggestion, 2),
+                       'debtors': round(debtors_suggestion, 2),
+                       'creditors': round(creditors_row or 0.0, 2),
+                       'equipment': round(equipment_row or 0.0, 2)}
+    return jsonify(as_of_date=as_of.isoformat(), exists=False, needs_cash_count=True,
+                   balances=suggestions)
 
 
 @reports_bp.route('/api/reports/owner-withdrawals', methods=['POST'])
@@ -114,6 +148,7 @@ def record_owner_withdrawal():
                                      till_session_id=till.id if till else None,
                                      reason=reason, created_by=g.user.username)
         db.session.add(withdrawal)
+        db.session.flush()
         cash_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
         if not post_gl_entry(ref, '3000', amount, 0.0, 'OWNER_WITHDRAWAL', withdrawal.id):
             raise RuntimeError('Could not post owner withdrawal.')
@@ -126,10 +161,55 @@ def record_owner_withdrawal():
         return jsonify(status='error', message=str(exc)), 400
 
 
+@reports_bp.route('/api/reports/equipment-purchases', methods=['POST'])
+@roles_required('admin', 'accountant')
+def record_equipment_purchase():
+    data = request.get_json(silent=True) or {}
+    try:
+        amount = round(float(data.get('amount')), 2)
+        method = str(data.get('payment_method') or '').upper()
+        description = str(data.get('description') or '').strip()
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError('Equipment cost must be a positive amount.')
+        if method not in ('CASH', 'MPESA', 'BANK', 'ON_ACCOUNT'):
+            raise ValueError('Choose Cash, M-Pesa, Bank, or On account.')
+        if len(description) < 3 or len(description) > 200 or any(ch in description for ch in '<>'):
+            raise ValueError('Describe the equipment (3–200 characters).')
+        location = None
+        till = None
+        if method == 'CASH':
+            location = resolve_location(data.get('location_id'))
+            till = TillSession.query.filter_by(location_id=location.id, status='OPEN').order_by(TillSession.id.desc()).first()
+            if not till or amount > (till.expected_cash or 0.0) + 0.001:
+                raise ValueError('Cash equipment purchases need an open outlet till with enough expected cash.')
+            till.expected_cash = round((till.expected_cash or 0.0) - amount, 2)
+            db.session.add(TillCashMovement(reference='EQP-' + uuid.uuid4().hex[:10].upper(),
+                                             till_session_id=till.id, movement_type='PAID_OUT',
+                                             amount=amount, reason='Equipment purchase: ' + description[:170],
+                                             created_by=g.user.username))
+        ref = 'EQP-' + uuid.uuid4().hex[:10].upper()
+        purchase = EquipmentPurchase(reference=ref, amount=amount, payment_method=method,
+                                     location_id=location.id if location else None,
+                                     till_session_id=till.id if till else None,
+                                     description=description, created_by=g.user.username)
+        db.session.add(purchase)
+        db.session.flush()
+        credit_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020', 'ON_ACCOUNT': '2000'}[method]
+        if not post_gl_entry(ref, '1500', amount, 0.0, 'EQUIPMENT_PURCHASE', purchase.id):
+            raise RuntimeError('Could not post the equipment asset.')
+        if not post_gl_entry(ref, credit_account, 0.0, amount, 'EQUIPMENT_PURCHASE', purchase.id):
+            raise RuntimeError('Could not post the equipment payment.')
+        db.session.commit()
+        return jsonify(status='success', reference=ref), 201
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+
+
 @reports_bp.route('/api/reports/cash-walk')
 @roles_required('admin', 'accountant')
 def cash_walk():
-    today = date.today()
+    today = _today_local()
     try:
         end = _date_arg('end', today)
         start = _date_arg('start', end - timedelta(days=6))
@@ -191,9 +271,8 @@ def cash_walk():
 
 
 def _leak_metrics(start, end):
-    period_start = datetime.combine(start, time.min)
-    period_end = datetime.combine(end + timedelta(days=1), time.min)
-    prior_start = period_start - (period_end - period_start)
+    period_start = datetime.combine(start, time.min) - LOCAL_UTC_OFFSET
+    period_end = datetime.combine(end + timedelta(days=1), time.min) - LOCAL_UTC_OFFSET
     gl = GeneralLedgerEntry.query.filter(GeneralLedgerEntry.created_at >= period_start,
                                          GeneralLedgerEntry.created_at < period_end).all()
     loss_sources = {}
@@ -208,7 +287,7 @@ def _leak_metrics(start, end):
     for move in adjustments:
         item = db.session.get(FeedIngredient, move.ingredient_id)
         stock = LocationStock.query.filter_by(location_id=move.location_id, ingredient_id=move.ingredient_id).first()
-        if item and move and period_start <= (move.created_at or period_start) < period_end:
+        if item and move.created_at and period_start <= move.created_at < period_end:
             adjustment_loss += abs(move.qty_kg or 0.0) * ((stock.unit_cost_per_kg if stock else item.cost_per_kg) or 0.0)
     transfer_loss = loss_sources.get('TRANSFER_SHORTFALL', 0.0)
     tills = TillSession.query.filter(TillSession.closed_at >= period_start,
@@ -268,7 +347,9 @@ def _leak_metrics(start, end):
                          for name, row in sorted(discount_product.items(), key=lambda x: -x[1]['discount'])]
 
     since_30 = end - timedelta(days=29)
-    recent_movements = StockMovement.query.filter(StockMovement.created_at >= datetime.combine(since_30, time.min)).all()
+    recent_movements = StockMovement.query.filter(
+        StockMovement.created_at >= datetime.combine(since_30, time.min) - LOCAL_UTC_OFFSET,
+        StockMovement.created_at < datetime.combine(end + timedelta(days=1), time.min) - LOCAL_UTC_OFFSET).all()
     last_move = {}
     for movement in recent_movements:
         key = (movement.location_id, movement.ingredient_id)
@@ -286,13 +367,18 @@ def _leak_metrics(start, end):
     dead_rows.sort(key=lambda row: -row['value'])
 
     sold_30 = {}
-    since_dt = datetime.combine(since_30, time.min)
+    since_dt = datetime.combine(since_30, time.min) - LOCAL_UTC_OFFSET
     last_30_orders = OrderHeader.query.filter(OrderHeader.created_at >= since_dt,
                                                OrderHeader.status == 'COMPLETED').all()
     last_order_ids = [o.id for o in last_30_orders]
     if last_order_ids:
         for line in OrderLine.query.filter(OrderLine.order_id.in_(last_order_ids)).all():
-            sold_30[line.ingredient_id] = sold_30.get(line.ingredient_id, 0.0) + (line.qty_entered or 0.0)
+            unit_type = (line.unit_type or 'KG').upper()
+            try:
+                kilograms_per_unit = float(unit_type.split('KG')[0]) if 'KG BAG' in unit_type else 1.0
+            except ValueError:
+                kilograms_per_unit = 1.0
+            sold_30[line.ingredient_id] = sold_30.get(line.ingredient_id, 0.0) + (line.qty_entered or 0.0) * kilograms_per_unit
     finished_stock = []
     for stock in stock_rows:
         item = db.session.get(FeedIngredient, stock.ingredient_id)
@@ -328,9 +414,41 @@ def _leak_metrics(start, end):
     products.sort(key=lambda row: -row['below_cost_exposure'])
 
     rejected = 0.0
+    purchase_premium = 0.0
+    purchase_benchmarks = []
     if receipt_ids:
-        rejected = sum((line.qty_rejected or 0.0) * (line.unit_cost or 0.0)
-                       for line in GoodsReceiptLine.query.filter(GoodsReceiptLine.grn_id.in_(receipt_ids)).all())
+        current_lines = GoodsReceiptLine.query.filter(GoodsReceiptLine.grn_id.in_(receipt_ids)).all()
+        rejected = sum((line.qty_rejected or 0.0) * (line.unit_cost or 0.0) for line in current_lines)
+        current_receipt_dates = {r.id: r.received_date for r in receipts}
+        for line in current_lines:
+            received_at = current_receipt_dates.get(line.grn_id)
+            if not received_at or (line.qty_accepted or 0.0) <= 0:
+                continue
+            history = (db.session.query(func.sum(GoodsReceiptLine.unit_cost * GoodsReceiptLine.qty_accepted),
+                                        func.sum(GoodsReceiptLine.qty_accepted))
+                       .join(GoodsReceiptNote, GoodsReceiptNote.id == GoodsReceiptLine.grn_id)
+                       .filter(GoodsReceiptLine.ingredient_id == line.ingredient_id,
+                               GoodsReceiptNote.received_date >= received_at - timedelta(days=90),
+                               GoodsReceiptNote.received_date < received_at).first())
+            historical_qty = history[1] or 0.0
+            if historical_qty > 0:
+                average = history[0] / historical_qty
+                premium = max(0.0, (line.unit_cost or 0.0) - average) * (line.qty_accepted or 0.0)
+                purchase_premium += premium
+                item = db.session.get(FeedIngredient, line.ingredient_id)
+                purchase_benchmarks.append({'item': item.name if item else 'Unknown item',
+                                            'unit_cost': round(line.unit_cost or 0.0, 2),
+                                            '90d_average': round(average, 2),
+                                            'premium': round(premium, 2)})
+    purchase_shortfall = 0.0
+    received_pos = PurchaseOrderHeader.query.filter(
+        PurchaseOrderHeader.status == 'FULLY_RECEIVED',
+        PurchaseOrderHeader.order_date >= period_start,
+        PurchaseOrderHeader.order_date < period_end).all()
+    for po in received_pos:
+        for line in PurchaseOrderLine.query.filter_by(po_header_id=po.id).all():
+            missing_qty = max(0.0, (line.qty_ordered or 0.0) - (line.qty_received or 0.0) - (line.qty_rejected or 0.0))
+            purchase_shortfall += missing_qty * (line.unit_cost or 0.0)
     production_defects = prod_loss + adjustment_loss + rejected
     return {
         'defects': {'amount': round(production_defects, 2), 'production_loss': round(prod_loss, 2),
@@ -341,18 +459,20 @@ def _leak_metrics(start, end):
         'transport': {'amount': round(transport, 2), 'kg': round(transport_kg, 2),
                       'per_kg': round(transport / transport_kg, 4) if transport_kg else None},
         'waiting': {'amount': None, 'available': False, 'note': 'No downtime log yet.'},
-        'shrinkage': {'amount': round(adjustment_loss, 2), 'kg': round(sum(abs(m.qty_kg or 0) for m in adjustments if period_start <= (m.created_at or period_start) < period_end), 2)},
+        'shrinkage': {'amount': round(adjustment_loss, 2), 'kg': round(sum(abs(m.qty_kg or 0) for m in adjustments if m.created_at and period_start <= m.created_at < period_end), 2)},
         'transfer_shortfall': {'amount': round(shortfall_value, 2), 'kg': round(shortfall_kg, 2), 'sent_kg': round(sent_kg, 2)},
         'cash_leakage': {'amount': round(cash_abs, 2), 'net_variance': round(cash_net, 2),
                          'tills': [{'cashier': t.cashier_name, 'variance': round(t.cash_variance or 0.0, 2)} for t in tills]},
         'discounts': {'amount': round(total_discounts, 2), 'rate_pct': round(total_discounts / total_sales * 100, 2) if total_sales else 0,
                       'by_cashier': top_discounts, 'by_product': product_discounts},
-        'credit': {'amount': round(customer_debt, 2), 'period_change': round(ar_delta, 2), 'aging_available': False,
+        'credit': {'amount': round(customer_debt, 2), 'period_change': round(ar_delta, 2), 'trend_value': round(ar_delta, 2), 'aging_available': False,
                    'note': 'Customer due dates are not recorded yet.'},
         'price': {'amount': round(sum(row['below_cost_exposure'] for row in products), 2), 'products': products[:20],
                   'definition': 'Estimated 30-day sales exposure at current prices below current outlet cost.'},
-        'purchases': {'amount': round(rejected, 2), 'rejected_receipts': round(rejected, 2),
-                      'note': 'Purchase price benchmark history is not yet available.'},
+        'purchases': {'amount': round(rejected + purchase_premium + purchase_shortfall, 2),
+                      'rejected_receipts': round(rejected, 2), 'price_premium': round(purchase_premium, 2),
+                      'short_delivery_value': round(purchase_shortfall, 2), 'benchmarks': purchase_benchmarks[:20],
+                      'note': 'Price premium compares receipts with prior 90-day weighted average when available.'},
         'refunds': {'amount': round(refund_total, 2)},
     }
 
@@ -360,7 +480,7 @@ def _leak_metrics(start, end):
 @reports_bp.route('/api/reports/leaks')
 @roles_required('admin', 'accountant')
 def leak_report():
-    today = date.today()
+    today = _today_local()
     try:
         end = _date_arg('end', today)
         start = _date_arg('start', end - timedelta(days=6))
@@ -384,8 +504,36 @@ def leak_report():
         row = dict(current[key])
         before = previous[key].get('amount')
         amount = row.get('amount')
+        trend_current = row.get('trend_value', amount)
+        trend_previous = previous[key].get('trend_value', before)
+        point_in_time = key in ('overproduction', 'inventory', 'credit', 'price')
+        if key == 'defects':
+            row['note'] = (f"Production {_money_text(row.get('production_loss'))}; "
+                           f"stock adjustments {_money_text(row.get('stock_adjustments'))}; "
+                           f"rejected receipts {_money_text(row.get('rejected_receipts'))}.")
+        elif key == 'transport':
+            kg = row.get('kg') or 0.0
+            per_kg = row.get('per_kg')
+            row['note'] = f"{kg:,.1f} kg sourced or transferred; KSh/kg {per_kg:,.4f}." if per_kg is not None else 'No purchase or transfer kg recorded for this period.'
+        elif key == 'transfer_shortfall':
+            row['note'] = f"Short {row.get('kg', 0):,.2f} kg from {row.get('sent_kg', 0):,.2f} kg dispatched."
+        elif key == 'cash_leakage':
+            row['note'] = f"Net over/short: {_money_text(row.get('net_variance'))}."
+        elif key == 'credit':
+            row['note'] = f"Receivable change in period: {_money_text(row.get('period_change'))}. Due dates are not recorded yet."
+        elif key == 'shrinkage':
+            row['note'] = f"Negative adjustment quantity: {row.get('kg', 0):,.2f} kg."
+        elif key == 'purchases':
+            row['note'] = (f"Rejected {_money_text(row.get('rejected_receipts'))}; "
+                           f"90-day price premium {_money_text(row.get('price_premium'))}; "
+                           f"short deliveries {_money_text(row.get('short_delivery_value'))}.")
         row.update(key=key, label=labels[key], previous_amount=before,
-                   trend_delta=round(amount - before, 2) if amount is not None and before is not None else None)
+                   trend_delta=round(trend_current - trend_previous, 2)
+                   if not point_in_time and trend_current is not None and trend_previous is not None else None,
+                   trend_note='Current balance measure; historical balance snapshots are needed for a week-over-week trend.'
+                   if point_in_time else None)
+        if point_in_time:
+            row['previous_amount'] = None
         rows.append(row)
     rows.sort(key=lambda row: (row['amount'] is None, -(row['amount'] or 0.0)))
     return jsonify(start=start.isoformat(), end=end.isoformat(), leaks=rows)

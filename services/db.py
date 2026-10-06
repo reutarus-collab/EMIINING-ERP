@@ -14,7 +14,7 @@ def _migrate_location_schema():
     """Small additive migration for existing SQLite installs; safe to run at startup."""
     inspector = inspect(db.engine)
     additions = {
-        'stock_movements': {'location_id': 'INTEGER', 'reason': 'VARCHAR(200)'},
+        'stock_movements': {'location_id': 'INTEGER', 'reason': 'VARCHAR(200)', 'created_at': 'DATETIME'},
         'order_headers': {'location_id': 'INTEGER', 'till_session_id': 'INTEGER'},
         'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT', 'open_key': 'VARCHAR(120)'},
         'app_users': {'location_id': 'INTEGER'},
@@ -133,10 +133,20 @@ def _migrate_location_schema():
     if 'uq_till_open_key' not in index_names:
         with db.engine.begin() as conn:
             conn.execute(text('CREATE UNIQUE INDEX uq_till_open_key ON till_sessions (open_key)'))
-    for code, name, category in (('1010', 'M-Pesa Clearing', 'ASSET'),
+    for code, name, category in (('1000', 'Cash and Bank', 'ASSET'),
+                                 ('1010', 'M-Pesa Clearing', 'ASSET'),
                                  ('1020', 'Bank Account', 'ASSET'),
                                  ('1100', 'Cash in Safe / Float Clearing', 'ASSET'),
+                                 ('1200', 'Inventory Asset', 'ASSET'),
+                                 ('1300', 'Accounts Receivable', 'ASSET'),
+                                 ('1500', 'Equipment', 'ASSET'),
+                                 ('2000', 'Accounts Payable', 'LIABILITY'),
+                                 ('3000', "Owner's Equity / Drawings", 'EQUITY'),
+                                 ('4000', 'Sales Revenue', 'INCOME'),
                                  ('4100', 'Sales Returns and Refunds', 'CONTRA_INCOME'),
+                                 ('5000', 'Cost of Goods Sold (COGS)', 'EXPENSE'),
+                                 ('5100', 'Shrinkage & Variance Loss', 'EXPENSE'),
+                                 ('5400', 'Inventory Adjustment Gain', 'INCOME'),
                                  ('5200', 'Cash Over/Short', 'INCOME'),
                                  ('5300', 'Transport Expense', 'EXPENSE'),
                                  ('5310', 'Utilities Expense', 'EXPENSE'),

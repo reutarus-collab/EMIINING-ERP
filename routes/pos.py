@@ -358,8 +358,19 @@ def adjust_inventory():
             raise ValueError('Choose an item and enter a non-zero valid adjustment.')
         if len(reason) < 4 or len(reason) > 200:
             raise ValueError('Enter an adjustment reason (4–200 characters).')
-        change_stock(location.id, ingredient, delta, 'STOCK_ADJUSTMENT',
-                     'ADJ-' + uuid.uuid4().hex[:10].upper(), reason)
+        balance = location_stock(location.id, ingredient.id, lock=True)
+        adjustment_value = round(abs(delta) * (balance.unit_cost_per_kg or 0.0), 2)
+        ref = 'ADJ-' + uuid.uuid4().hex[:10].upper()
+        change_stock(location.id, ingredient, delta, 'STOCK_ADJUSTMENT', ref, reason)
+        from services.ledger_service import post_gl_entry
+        if delta < 0:
+            posted = post_gl_entry(ref, '5100', adjustment_value, 0.0, 'STOCK_ADJUSTMENT', ingredient.id)
+            posted = post_gl_entry(ref, '1200', 0.0, adjustment_value, 'STOCK_ADJUSTMENT', ingredient.id) and posted
+        else:
+            posted = post_gl_entry(ref, '1200', adjustment_value, 0.0, 'STOCK_ADJUSTMENT', ingredient.id)
+            posted = post_gl_entry(ref, '5400', 0.0, adjustment_value, 'STOCK_ADJUSTMENT', ingredient.id) and posted
+        if not posted:
+            raise RuntimeError('Could not post the stock adjustment to the ledger.')
         db.session.commit()
         return jsonify(status='success', quantity_kg=location_stock(location.id, ingredient.id).quantity_kg)
     except Exception as exc:

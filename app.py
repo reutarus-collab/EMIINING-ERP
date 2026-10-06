@@ -11,6 +11,7 @@ from routes.payables import payables_bp
 from routes.factory import factory_bp
 from routes.pos import pos_bp
 from routes.po import po_bp
+from routes.reports import reports_bp
 
 
 def create_app(config=None):
@@ -35,6 +36,7 @@ def create_app(config=None):
     app.register_blueprint(factory_bp)
     app.register_blueprint(pos_bp)
     app.register_blueprint(po_bp)
+    app.register_blueprint(reports_bp)
     init_auth(app)
 
     @app.route('/')

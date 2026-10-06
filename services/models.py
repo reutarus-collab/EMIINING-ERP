@@ -154,6 +154,7 @@ class StockMovement(db.Model):
     reference_id = db.Column(db.String(100))
     location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
     reason = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
 
 class InventoryTransfer(db.Model):
     __tablename__ = 'inventory_transfers'
@@ -206,6 +207,18 @@ class OwnerWithdrawal(db.Model):
     location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
     till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
     reason = db.Column(db.String(200), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class EquipmentPurchase(db.Model):
+    __tablename__ = 'equipment_purchases'
+    id = db.Column(db.Integer, primary_key=True)
+    reference = db.Column(db.String(50), unique=True, nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    payment_method = db.Column(db.String(20), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
+    description = db.Column(db.String(200), nullable=False)
     created_by = db.Column(db.String(50), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
