@@ -1,5 +1,5 @@
 """One-time setup for an EMPTY database: turn the placeholder outlet into the factory
-and add the retail branch. Edit the names below first if they are not right.
+and add the Kambi ya Moto and Mogotio branches. Edit the names below if needed.
 
 Run from the project folder:  python scripts/setup_outlets.py
 """
@@ -9,7 +9,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 FACTORY = {'name': 'Emining Main Factory', 'code': 'FAC-01', 'location_type': 'FACTORY'}
-BRANCH = {'name': 'Kambi ya Moto', 'code': 'KYM-01', 'location_type': 'BRANCH_STORE'}
+BRANCHES = (
+    {'name': 'Kambi ya Moto Branch', 'code': 'KYM-01', 'location_type': 'BRANCH_STORE'},
+    {'name': 'Mogotio Branch', 'code': 'MOG-01', 'location_type': 'BRANCH_STORE'},
+)
 
 from app import app                                   # noqa: E402
 from services.db import db                            # noqa: E402
@@ -24,7 +27,8 @@ with app.app_context():
     placeholder = outlets[0]
     for key, value in FACTORY.items():
         setattr(placeholder, key, value)
-    db.session.add(Location(**BRANCH))
+    for branch in BRANCHES:
+        db.session.add(Location(**branch))
     db.session.commit()
     for loc in Location.query.order_by(Location.id):
         print(f'{loc.id}: {loc.name} ({loc.code}, {loc.location_type})')
