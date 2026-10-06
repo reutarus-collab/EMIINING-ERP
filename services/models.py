@@ -289,12 +289,18 @@ class ProductionBatch(db.Model):
 class MillingRun(db.Model):
     __tablename__ = 'milling_runs'
     id = db.Column(db.Integer, primary_key=True)
-    run_no = db.Column(db.String(50))
-    input_ingredient_id = db.Column(db.Integer)
-    output_ingredient_id = db.Column(db.Integer)
-    input_qty_kg = db.Column(db.Float, default=0.0)
-    output_qty_kg = db.Column(db.Float, default=0.0)
-    variance_loss_kg = db.Column(db.Float, default=0.0)
+    run_no = db.Column(db.String(50), unique=True)
+    customer_name = db.Column(db.String(100), nullable=False, default='Walk-in customer')
+    customer_phone = db.Column(db.String(20))
+    grain_description = db.Column(db.String(100), nullable=False, default='Maize')
+    input_qty_kg = db.Column(db.Float, nullable=False, default=0.0)
+    output_qty_kg = db.Column(db.Float, nullable=False, default=0.0)
+    variance_loss_kg = db.Column(db.Float, nullable=False, default=0.0)
+    notes = db.Column(db.String(200))
+    service_sale_reference = db.Column(db.String(50))
+    created_by = db.Column(db.String(50))
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 class ProductionRun(db.Model):
     __tablename__ = 'production_runs'

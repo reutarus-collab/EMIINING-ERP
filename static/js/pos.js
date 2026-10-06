@@ -111,7 +111,7 @@ async function searchProducts() {
       ? `<button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button>`
       : `<button class="btn-sm" disabled>No price</button>`;
     div.innerHTML += `<div class="product-row">
-      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>Stock: ${i.available_stock_kg} kg | ${priceText}</small></div>
+      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>${i.is_service ? 'Charged per kg · customer grain is not company stock' : `Stock: ${Number(i.available_stock_kg || 0).toFixed(2)} kg`} | ${priceText}</small></div>
       ${btn}</div>`;
   });
 }

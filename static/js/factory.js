@@ -7,14 +7,24 @@ async function runFormulation() {
     try {
         const res = await fetch('/api/formulate', {
             method: 'POST',
+            credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 species: speciesSelect.value,
-                target_batch_kg: document.getElementById('batch-kg').value
+                target_batch_kg: document.getElementById('batch-kg').value,
+                target_cp_pct: document.getElementById('target-cp').value,
+                target_me_mcal: document.getElementById('target-me').value,
+                location_id: window.activeLocationId || ''
             })
         });
         const data = await res.json();
-        result.textContent = data.message || JSON.stringify(data, null, 2);
+        if (!res.ok || data.status !== 'optimal') throw new Error(data.message || 'Could not calculate this ration.');
+        result.innerHTML = `<b>${escHtml(data.species_stage)}</b> · ${Number(data.target_batch_kg).toFixed(2)} kg batch<br>
+          Target: ${Number(data.target_crude_protein_pct).toFixed(2)}% crude protein · ${Number(data.target_metabolizable_energy_mcal).toFixed(2)} Mcal/kg<br>
+          Estimated cost: KSh ${Number(data.total_batch_cost).toFixed(2)} (${Number(data.cost_per_kg).toFixed(2)} per kg)
+          <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Ingredient</th><th>%</th><th>Recipe kg</th><th>At outlet kg</th><th>Cost/kg</th><th>Line cost</th></tr></thead><tbody>
+          ${data.recipe.map(row => `<tr><td>${escHtml(row.ingredient_name)}</td><td>${Number(row.fraction).toFixed(2)}</td><td>${Number(row.kg_required).toFixed(2)}</td><td>${Number(row.available_kg).toFixed(2)}</td><td>${Number(row.cost_per_kg).toFixed(2)}</td><td>${Number(row.cost).toFixed(2)}</td></tr>`).join('')}
+          </tbody></table></div>`;
     } catch (err) {
         result.textContent = 'Could not calculate a formulation. Check the connection and try again.';
     }
@@ -24,24 +34,60 @@ async function loadFactoryDropdowns() {
     const res = await fetch('/api/inventory?location_id=' + encodeURIComponent(window.activeLocationId || ''), { credentials: 'same-origin' });
     if (!res.ok) return;
     factoryInventory = await res.json();
-    const millIn = document.getElementById('mill-input-select');
-    const millOut = document.getElementById('mill-output-select');
     const prodOut = document.getElementById('prod-output-select');
-    if (!millIn || !millOut || !prodOut) return;
-
-    millIn.innerHTML = '';
-    millOut.innerHTML = '';
+    if (!prodOut) return;
     prodOut.innerHTML = '';
     factoryInventory.forEach(item => {
         const category = item.category || '';
         const option = `<option value="${item.id}">${escHtml(item.name)} (${Number(item.stock_quantity_kg || 0).toFixed(2)} kg available)</option>`;
-        if (category.includes('Raw - Energy')) millIn.insertAdjacentHTML('beforeend', option);
-        if (category.includes('Raw') || category.includes('Finished')) millOut.insertAdjacentHTML('beforeend', option);
         if (category === 'Finished Feed') prodOut.insertAdjacentHTML('beforeend', option);
     });
     const firstRaw = factoryInventory.find(item => (item.category || '').includes('Raw'));
     if (firstRaw && !document.querySelector('#prod-inputs tr[data-input-row]')) addProductionInput(firstRaw.id);
     loadProductionRuns();
+    loadMillingRuns();
+}
+
+async function recordMillingRun() {
+    const message = document.getElementById('mill-message');
+    const payload = {
+        location_id: window.activeLocationId || '',
+        customer_name: document.getElementById('mill-customer-name').value,
+        customer_phone: document.getElementById('mill-customer-phone').value,
+        grain_description: document.getElementById('mill-grain-description').value,
+        input_qty_kg: document.getElementById('mill-input-qty').value,
+        output_qty_kg: document.getElementById('mill-output-qty').value,
+        service_sale_reference: document.getElementById('mill-sale-reference').value,
+        notes: document.getElementById('mill-notes').value
+    };
+    try {
+        const res = await fetch('/api/factory/milling-runs', {method:'POST', credentials:'same-origin',
+            headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+        const data = await res.json();
+        if (!res.ok || data.status !== 'success') throw new Error(data.message || 'Could not record milling job.');
+        message.style.color = 'green';
+        message.textContent = `Milling job ${data.run_no} recorded. Weight difference: ${Number(data.loss_kg).toFixed(2)} kg. Customer-owned grain was not added to company stock.`;
+        ['mill-customer-phone','mill-input-qty','mill-output-qty','mill-sale-reference','mill-notes'].forEach(id => document.getElementById(id).value = '');
+        await loadMillingRuns();
+    } catch (err) {
+        message.style.color = 'red';
+        message.textContent = err.message || 'Could not record milling job.';
+    }
+}
+
+async function loadMillingRuns() {
+    const body = document.getElementById('mill-history');
+    if (!body) return;
+    try {
+        const res = await fetch('/api/factory/milling-runs?location_id=' + encodeURIComponent(window.activeLocationId || ''), {credentials:'same-origin'});
+        const rows = await res.json();
+        if (!res.ok) throw new Error('Could not load customer milling history.');
+        body.innerHTML = rows.map(run => `<tr><td>${escHtml(run.run_no)}</td><td>${escHtml(run.customer_name)}<br>${escHtml(run.customer_phone)}</td>
+          <td>${escHtml(run.grain_description)}</td><td>${Number(run.input_qty_kg).toFixed(2)}</td><td>${Number(run.output_qty_kg).toFixed(2)}</td>
+          <td>${Number(run.loss_kg).toFixed(2)}</td><td>${escHtml(run.service_sale_reference)}</td><td>${escHtml(run.created_by)}</td><td>${escHtml(run.created_at)}</td></tr>`).join('') || '<tr><td colspan="9">No customer milling jobs recorded.</td></tr>';
+    } catch (_) {
+        body.innerHTML = '<tr><td colspan="9">Could not load customer milling history.</td></tr>';
+    }
 }
 
 function addProductionInput(selectedId = null) {

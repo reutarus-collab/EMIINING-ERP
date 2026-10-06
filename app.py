@@ -67,14 +67,6 @@ def create_app(config=None):
         db.session.commit()
         return jsonify(status='success', id=loc.id, name=loc.name, code=loc.code, type=loc.location_type)
 
-    @app.route('/api/formulate', methods=['POST'])
-    def run_formulation():
-        return jsonify(status='error', message='Ration formulation is not available in the ERP yet.'), 501
-
-    @app.route('/api/factory/mill', methods=['POST'])
-    def process_milling():
-        return jsonify(status='error', message='Milling is not available in the ERP yet. Nothing was recorded.'), 501
-
     return app
 
 

@@ -21,6 +21,14 @@ def _migrate_location_schema():
         'app_users': {'location_id': 'INTEGER'},
         'idempotency_keys': {'request_hash': 'VARCHAR(64)', 'created_by': 'VARCHAR(50)', 'location_id': 'INTEGER'},
         'production_runs': {'location_id': 'INTEGER'},
+        'milling_runs': {
+            'customer_name': "VARCHAR(100) NOT NULL DEFAULT 'Walk-in customer'",
+            'customer_phone': 'VARCHAR(20)',
+            'grain_description': "VARCHAR(100) NOT NULL DEFAULT 'Maize'",
+            'notes': 'VARCHAR(200)', 'service_sale_reference': 'VARCHAR(50)',
+            'created_by': 'VARCHAR(50)', 'location_id': 'INTEGER',
+            'created_at': 'DATETIME',
+        },
         'goods_receipt_lines': {'qty_rejected_po_uom': 'FLOAT'},
         'goods_receipt_notes': {'location_id': 'INTEGER'},
         'location_stocks': {'reserved_quantity_kg': 'FLOAT DEFAULT 0', 'unit_cost_per_kg': 'FLOAT NOT NULL DEFAULT 0'},
@@ -51,6 +59,16 @@ def _migrate_location_schema():
         if 'inventory_transfers' in inspector.get_table_names():
             conn.execute(text("UPDATE inventory_transfers SET received_quantity_kg = quantity_kg WHERE status = 'RECEIVED' AND received_quantity_kg = 0"))
     from services.models import FeedIngredient, Location, LocationStock, PurchaseOrderHeader, Account, StockMovement, GoodsReceiptNote, User
+    # Customer-owned grain is processed as a service and never added to business stock.
+    # Admins can set the local per-kg rate under Retail Pricing before the first sale.
+    if not FeedIngredient.query.filter_by(name='Customer Maize Milling (per kg)').first():
+        db.session.add(FeedIngredient(
+            name='Customer Maize Milling (per kg)', category='Milling Service',
+            purchase_uom='KG', stock_uom='KG', conversion_type='FIXED',
+            conversion_factor=1.0, cost_per_kg=0.0, stock_quantity_kg=0.0,
+            retail_price_per_kg=0.0,
+        ))
+        db.session.commit()
     if Location.query.count() == 0:
         legacy = Location(name='Legacy Main Store', code='LEGACY-01', location_type='STORE')
         db.session.add(legacy)
@@ -62,6 +80,8 @@ def _migrate_location_schema():
                           or Location.query.order_by(Location.id).first())
     if migration_location:
         for item in FeedIngredient.query.all():
+            if item.category == 'Milling Service':
+                continue
             row = LocationStock.query.filter_by(location_id=migration_location.id, ingredient_id=item.id).first()
             if not row:
                 db.session.add(LocationStock(location_id=migration_location.id,

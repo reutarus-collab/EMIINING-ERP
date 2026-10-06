@@ -3,11 +3,17 @@
     <h3>🏭 Factory Milling & Batch Manufacturing</h3>
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
       <div style="background:#f8f9fa; padding:15px; border-radius:6px;">
-        <h4>1. Grain Milling Operation</h4>
-        <div class="form-group"><label>Input Raw Grain:</label><select id="mill-input-select"></select></div>
-        <div class="form-group"><label>Input Weight (KG):</label><input type="number" id="mill-input-qty" placeholder="1000" /></div>
-        <div class="form-group"><label>Output Milled Product:</label><select id="mill-output-select"></select></div>
-        <button class="btn-primary" onclick="alert('Milling module active.')">Process Milling Run</button>
+        <h4>1. Customer Maize Milling</h4>
+        <p>Record customer-owned grain received and milled weight returned. This job does not add customer grain to company stock. Bill the service in POS using <b>Customer Maize Milling (per kg)</b>.</p>
+        <div class="form-group"><label>Customer name:</label><input id="mill-customer-name" maxlength="100" placeholder="Customer name" /></div>
+        <div class="form-group"><label>Phone (optional):</label><input id="mill-customer-phone" maxlength="20" inputmode="tel" /></div>
+        <div class="form-group"><label>Grain:</label><input id="mill-grain-description" maxlength="100" value="Maize" /></div>
+        <div class="form-group"><label>Weight received (kg):</label><input type="number" id="mill-input-qty" min="0.01" step="0.01" inputmode="decimal" placeholder="e.g. 90" /></div>
+        <div class="form-group"><label>Milled weight returned (kg):</label><input type="number" id="mill-output-qty" min="0" step="0.01" inputmode="decimal" placeholder="e.g. 86" /></div>
+        <div class="form-group"><label>POS service sale reference (optional):</label><input id="mill-sale-reference" maxlength="50" placeholder="Receipt or sale reference" /></div>
+        <div class="form-group"><label>Notes (optional):</label><input id="mill-notes" maxlength="200" placeholder="Customer collection / milling notes" /></div>
+        <button type="button" class="btn-primary" onclick="recordMillingRun()">Record milling job</button>
+        <div id="mill-message" role="status" style="margin-top:10px"></div>
       </div>
       <div style="background:#f8f9fa; padding:15px; border-radius:6px;">
         <h4>2. Finished Feed Batch Production</h4>
@@ -27,8 +33,16 @@
         <div id="prod-message" role="status" style="margin-top:10px"></div>
       </div>
     </div>
-  </div>
-  <div class="card">
+</div>
+<div class="card">
+  <h4>Recent customer milling jobs</h4>
+  <button type="button" class="btn-sm btn-info" onclick="loadMillingRuns()">Refresh</button>
+  <div style="overflow-x:auto"><table class="data-table">
+    <thead><tr><th>Job</th><th>Customer</th><th>Grain</th><th>Received kg</th><th>Returned kg</th><th>Difference kg</th><th>POS sale</th><th>Recorded by</th><th>When</th></tr></thead>
+    <tbody id="mill-history"><tr><td colspan="9">Loading…</td></tr></tbody>
+  </table></div>
+</div>
+<div class="card">
     <h4>Recent production batches and losses</h4>
     <button type="button" class="btn-sm btn-info" onclick="loadProductionRuns()">Refresh</button>
     <table class="data-table">

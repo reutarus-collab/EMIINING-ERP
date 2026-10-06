@@ -1,6 +1,7 @@
 <div id="matrix-tab" class="tab-content">
   <div class="card">
-    <h3>Least-Cost Feed Formulation Engine (WinFeed Logic)</h3>
+    <h3>Ration Formulator</h3>
+    <p>Calculates a least-cost recipe using raw-ingredient cost at your assigned outlet. Confirm the ration with a qualified nutritionist before production.</p>
     <div class="form-group">
       <label>Target Livestock Stage:</label>
       <select id="species-select">
@@ -13,7 +14,16 @@
       <label>Batch Size (KG):</label>
       <input type="number" id="batch-kg" value="1000" />
     </div>
+    <div class="form-group">
+      <label>Minimum crude protein (%):</label>
+      <input type="number" id="target-cp" min="0.01" max="100" step="0.01" value="16" />
+    </div>
+    <div class="form-group">
+      <label>Minimum metabolizable energy (Mcal/kg):</label>
+      <input type="number" id="target-me" min="0.01" step="0.01" value="2.5" />
+    </div>
+    <p>This calculator enforces crude protein and energy minimums using ingredient data entered in Stock Setup. It does not check amino acids, minerals, medicine, or safe inclusion limits.</p>
     <button class="btn-primary" onclick="runFormulation()" style="padding: 10px;">Calculate Optimal Batch Recipe</button>
-    <pre id="formulation-result" style="background:#f8f9fa; padding:10px; margin-top:10px; border-radius:4px;"></pre>
+    <div id="formulation-result" role="status" aria-live="polite" style="background:#f8f9fa; padding:10px; margin-top:10px; border-radius:4px;">Choose a stage and batch size, then calculate.</div>
   </div>
 </div>

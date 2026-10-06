@@ -2,7 +2,7 @@ import getpass
 from app import app
 from services.models import db, User, Location
 
-ROLES = ('admin', 'accountant', 'sales', 'warehouse')
+ROLES = ('admin', 'accountant', 'sales', 'warehouse', 'factory')
 with app.app_context():
     db.create_all()
     name = input('Username: ').strip().lower()

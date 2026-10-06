@@ -1,75 +1,103 @@
+import math
+
 import numpy as np
 from scipy.optimize import linprog
-from services.models import FeedIngredient, AnimalRequirement
 
-def solve_feed_formulation(species_stage, target_batch_kg=1000.0, ingredient_ids=None):
+from services.models import AnimalRequirement, FeedIngredient, LocationStock
+
+
+def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
+                           ingredient_ids=None, location_id=None,
+                           target_cp_pct=None, target_me_mcal=None):
+    """Find a lowest-cost raw-ingredient mix using the selected outlet's costs."""
+    try:
+        target_batch_kg = float(target_batch_kg)
+    except (TypeError, ValueError):
+        return {"status": "error", "message": "Batch size must be a number above zero."}
+    if not math.isfinite(target_batch_kg) or target_batch_kg <= 0:
+        return {"status": "error", "message": "Batch size must be a number above zero."}
+
     req = AnimalRequirement.query.filter_by(species_stage=species_stage).first()
-    if not req:
-        # Fallback default constraints if species not found in database
-        min_cp, min_me, min_lys, min_ca, min_p = 16.0, 2.5, 0.8, 0.9, 0.45
-    else:
-        min_cp, min_me, min_lys, min_ca, min_p = req.min_cp, req.min_me, req.min_lysine, req.min_calcium, req.min_phosphorus
+    min_cp = float(target_cp_pct if target_cp_pct is not None else (req.min_cp if req else 16.0) or 16.0)
+    min_me = float(target_me_mcal if target_me_mcal is not None else (req.min_me if req else 2.5) or 2.5)
+    if not math.isfinite(min_cp) or not 0 < min_cp <= 100:
+        return {"status": "error", "message": "Crude protein target must be above 0 and at most 100%."}
+    if not math.isfinite(min_me) or min_me <= 0:
+        return {"status": "error", "message": "Metabolizable energy target must be above 0 Mcal/kg."}
 
+    query = FeedIngredient.query.filter(FeedIngredient.category.ilike('Raw%'))
     if ingredient_ids:
-        ingredients = FeedIngredient.query.filter(FeedIngredient.id.in_(ingredient_ids)).all()
-    else:
-        ingredients = FeedIngredient.query.all()
-
+        query = query.filter(FeedIngredient.id.in_(ingredient_ids))
+    ingredients = query.order_by(FeedIngredient.name).all()
     if not ingredients:
-        return {"status": "error", "message": "No raw feed ingredients available in inventory database."}
+        return {"status": "error", "message": "No raw ingredients match this formulation."}
 
-    num_ingredients = len(ingredients)
+    stocks = {}
+    if location_id is not None:
+        stocks = {row.ingredient_id: row for row in LocationStock.query.filter(
+            LocationStock.location_id == location_id,
+            LocationStock.ingredient_id.in_([i.id for i in ingredients]),
+        ).all()}
 
-    # Objective Function: Cost per kg of each ingredient
-    c = [ing.cost_per_kg for ing in ingredients]
+    usable_ingredients, costs, cp, me = [], [], [], []
+    for ingredient in ingredients:
+        stock = stocks.get(ingredient.id)
+        outlet_cost = stock.unit_cost_per_kg if stock else None
+        cost = float(outlet_cost if outlet_cost and outlet_cost > 0 else ingredient.cost_per_kg or 0.0)
+        protein = float(ingredient.crude_protein_pct or 0.0)
+        energy = float(ingredient.metabolizable_energy_mcal or 0.0)
+        if not all(math.isfinite(v) and v >= 0 for v in (cost, protein, energy)):
+            return {"status": "error", "message": f"Invalid cost or nutrient data for {ingredient.name}."}
+        if cost <= 0:
+            continue
+        usable_ingredients.append(ingredient)
+        costs.append(cost)
+        cp.append(protein)
+        me.append(energy)
 
-    # Inequality constraints A_ub * x <= b_ub (convert >= to <= by multiplying by -1)
-    A_ub = [
-        [-ing.crude_protein_pct for ing in ingredients],
-        [-ing.metabolizable_energy_mcal for ing in ingredients],
-        [-ing.lysine_pct for ing in ingredients],
-        [-ing.calcium_pct for ing in ingredients],
-        [-ing.phosphorus_pct for ing in ingredients]
-    ]
-    b_ub = [-min_cp, -min_me, -min_lys, -min_ca, -min_p]
+    ingredients = usable_ingredients
+    if not ingredients:
+        return {"status": "error", "message": "Set a positive unit cost for at least one raw ingredient at this outlet before formulating."}
 
-    # Equality constraints A_eq * x = b_eq (Sum of fractions must equal 1.0)
-    A_eq = [[1.0] * num_ingredients]
-    b_eq = [1.0]
+    # Ingredient composition values are stored as percentages, while energy is Mcal/kg.
+    result = linprog(
+        c=np.asarray(costs, dtype=float),
+        A_ub=-np.asarray([cp, me], dtype=float),
+        b_ub=-np.asarray([min_cp, min_me], dtype=float),
+        A_eq=np.ones((1, len(ingredients)), dtype=float),
+        b_eq=np.array([1.0]),
+        bounds=[(0, 1.0)] * len(ingredients),
+        method='highs',
+    )
+    if not result.success:
+        return {"status": "infeasible", "message": "The selected ingredients cannot meet the protein and energy targets. Check ingredient nutrient values or choose more ingredients."}
 
-    # Bounds for each ingredient fraction [0, 1]
-    bounds = [(0, 1.0) for _ in range(num_ingredients)]
+    recipe, total_cost = [], 0.0
+    for index, ingredient in enumerate(ingredients):
+        fraction = float(result.x[index])
+        if fraction <= 0.00001:
+            continue
+        kg = fraction * target_batch_kg
+        line_cost = kg * costs[index]
+        stock = stocks.get(ingredient.id)
+        recipe.append({
+            "ingredient_id": ingredient.id,
+            "ingredient_name": ingredient.name,
+            "fraction": round(fraction * 100, 2),
+            "kg_required": round(kg, 2),
+            "available_kg": round(float(stock.quantity_kg or 0.0), 2) if stock else 0.0,
+            "cost_per_kg": round(costs[index], 2),
+            "cost": round(line_cost, 2),
+        })
+        total_cost += line_cost
 
-    res = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds, method='highs')
-
-    if res.success:
-        proportions = res.x
-        recipe = []
-        total_cost = 0.0
-
-        for idx, ing in enumerate(ingredients):
-            kg_required = proportions[idx] * target_batch_kg
-            cost = kg_required * ing.cost_per_kg
-            total_cost += cost
-            if kg_required > 0.001:
-                recipe.append({
-                    "ingredient_id": ing.id,
-                    "ingredient_name": ing.name,
-                    "fraction": float(proportions[idx]),
-                    "kg_required": round(float(kg_required), 2),
-                    "cost": round(float(cost), 2)
-                })
-
-        return {
-            "status": "optimal",
-            "species_stage": species_stage,
-            "target_batch_kg": target_batch_kg,
-            "cost_per_kg": round(float(res.fun), 3),
-            "total_batch_cost": round(float(total_cost), 2),
-            "recipe": recipe
-        }
-    else:
-        return {
-            "status": "infeasible",
-            "message": "Infeasible formulation matrix. Adjust ingredient selection or requirement bounds."
-        }
+    return {
+        "status": "optimal",
+        "species_stage": species_stage,
+        "target_batch_kg": target_batch_kg,
+        "target_crude_protein_pct": min_cp,
+        "target_metabolizable_energy_mcal": min_me,
+        "cost_per_kg": round(float(result.fun), 3),
+        "total_batch_cost": round(float(total_cost), 2),
+        "recipe": recipe,
+    }

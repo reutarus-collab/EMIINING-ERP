@@ -59,22 +59,31 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
         ingredient = FeedIngredient.query.get(ing_id)
         if not ingredient:
             raise Exception(f"Ingredient ID {ing_id} not found.")
-        stock_row = location_stock(location_id, ingredient.id, lock=True)
-        available = (stock_row.quantity_kg or 0.0) - (stock_row.reserved_quantity_kg or 0.0)
-        if available < total_kg_for_item:
-            raise Exception(f"Insufficient stock at this outlet for {ingredient.name}. Available: {available}kg")
+        is_service = ingredient.category == 'Milling Service'
+        if is_service:
+            if abs(bag_size_kg - 1.0) > 0.0005:
+                raise Exception('Milling services must be sold by the kilogram.')
+            stock_row = None
+        else:
+            stock_row = location_stock(location_id, ingredient.id, lock=True)
+            available = (stock_row.quantity_kg or 0.0) - (stock_row.reserved_quantity_kg or 0.0)
+            if available < total_kg_for_item:
+                raise Exception(f"Insufficient stock at this outlet for {ingredient.name}. Available: {available}kg")
         unit_price = _unit_price(ingredient, bag_size_kg)
         subtotal = qty * unit_price
-        unit_type = 'KG' if abs(bag_size_kg - 1.0) < 0.0005 else ('%g' % bag_size_kg) + 'KG BAG'
-        change_stock(location_id, ingredient, -total_kg_for_item, 'POS_SALE')
+        unit_type = ('KG SERVICE' if is_service else
+                     ('KG' if abs(bag_size_kg - 1.0) < 0.0005 else ('%g' % bag_size_kg) + 'KG BAG'))
+        if not is_service:
+            change_stock(location_id, ingredient, -total_kg_for_item, 'POS_SALE')
         total_bill += subtotal
-        total_cost += total_kg_for_item * (stock_row.unit_cost_per_kg or 0.0)
+        unit_cost = (stock_row.unit_cost_per_kg or 0.0) if stock_row else 0.0
+        total_cost += total_kg_for_item * unit_cost
         order_lines.append(OrderLine(
             ingredient_id=ingredient.id,
             unit_type=unit_type,
             qty_entered=qty,
             subtotal=subtotal,
-            unit_cost_per_kg=stock_row.unit_cost_per_kg or 0.0
+            unit_cost_per_kg=unit_cost
         ))
     role = getattr(getattr(g, 'user', None), 'role', None)
     max_pct = DISCOUNT_CAP_PCT.get(role, 0.0)

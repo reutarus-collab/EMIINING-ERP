@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (typeof loadCustomers === 'function') loadCustomers();
     if (typeof searchProducts === 'function') searchProducts();
 
-    if (['admin', 'accountant', 'warehouse'].includes(role)) {
+    if (['admin', 'accountant', 'warehouse', 'factory'].includes(role)) {
         if (typeof loadPODropdown === 'function') loadPODropdown();
         if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
     }

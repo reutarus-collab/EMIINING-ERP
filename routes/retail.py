@@ -12,7 +12,7 @@ def stock():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return jsonify(status='error', message=str(exc)), 400
-    rows = FeedIngredient.query.order_by(FeedIngredient.name).all()
+    rows = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).order_by(FeedIngredient.name).all()
     show_cost = g.user.role in ('admin', 'accountant', 'warehouse')
     result = []
     for i in rows:

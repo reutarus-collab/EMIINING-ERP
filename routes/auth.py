@@ -20,6 +20,10 @@ ROLE_ALLOW = {
               '/api/stock', '/api/reports', '/api/till', '/api/expenses'),
     'warehouse': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
                   '/api/po', '/api/suppliers', '/api/factory', '/api/stock', '/api/expenses'),
+    'factory': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
+                '/api/factory', '/api/formulate', '/api/stock', '/api/customers',
+                '/api/pos/checkout', '/api/till/current', '/api/till/open',
+                '/api/till/close', '/api/till/cash-movements', '/api/reports/daily'),
 }
 
 LOGIN_HTML = """<!doctype html>

@@ -8,6 +8,7 @@ from routes.auth import roles_required
 from services.db import db
 from services.models import (
     FeedIngredient,
+    MillingRun,
     ProductionRun,
     ProductionRunLine,
     StockMovement,
@@ -15,6 +16,94 @@ from services.models import (
 from services.inventory import resolve_location, location_stock, change_stock, receive_stock
 
 factory_bp = Blueprint('factory', __name__)
+
+
+@factory_bp.route('/api/formulate', methods=['POST'])
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
+def run_formulation():
+    from services.formulator_service import solve_feed_formulation
+    data = request.get_json(silent=True) or {}
+    species = str(data.get('species') or '').strip()
+    if not species or len(species) > 100:
+        return jsonify(status='error', message='Choose a livestock stage.'), 400
+    try:
+        location = resolve_location(data.get('location_id'))
+        batch = _positive_number(data.get('target_batch_kg'), 'Batch size')
+        raw_ids = data.get('ingredient_ids')
+        if raw_ids is not None:
+            if not isinstance(raw_ids, list) or not raw_ids:
+                raise ValueError('Choose at least one raw ingredient.')
+            raw_ids = sorted({int(value) for value in raw_ids})
+    except (TypeError, ValueError) as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    try:
+        target_cp = float(data.get('target_cp_pct')) if data.get('target_cp_pct') not in (None, '') else None
+        target_me = float(data.get('target_me_mcal')) if data.get('target_me_mcal') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify(status='error', message='Enter valid protein and energy targets.'), 400
+    result = solve_feed_formulation(species, batch, raw_ids, location.id, target_cp, target_me)
+    return jsonify(result), 200 if result.get('status') == 'optimal' else 422
+
+
+@factory_bp.route('/api/factory/milling-runs', methods=['GET', 'POST'])
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
+def milling_runs():
+    try:
+        location = resolve_location((request.get_json(silent=True) or {}).get('location_id')
+                                    if request.method == 'POST' else request.args.get('location_id'))
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+
+    if request.method == 'GET':
+        runs = (MillingRun.query.filter_by(location_id=location.id)
+                .order_by(MillingRun.created_at.desc()).limit(100).all())
+        return jsonify([{
+            'run_no': run.run_no,
+            'customer_name': run.customer_name,
+            'customer_phone': run.customer_phone or '',
+            'grain_description': run.grain_description,
+            'input_qty_kg': round(run.input_qty_kg, 2),
+            'output_qty_kg': round(run.output_qty_kg, 2),
+            'loss_kg': round(run.variance_loss_kg, 2),
+            'notes': run.notes or '',
+            'service_sale_reference': run.service_sale_reference or '',
+            'created_by': run.created_by or '',
+            'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
+        } for run in runs])
+
+    data = request.get_json(silent=True) or {}
+    customer = str(data.get('customer_name') or 'Walk-in customer').strip()
+    grain = str(data.get('grain_description') or 'Maize').strip()
+    phone = str(data.get('customer_phone') or '').strip()
+    notes = str(data.get('notes') or '').strip()
+    sale_ref = str(data.get('service_sale_reference') or '').strip()
+    if not customer or len(customer) > 100 or not grain or len(grain) > 100:
+        return jsonify(status='error', message='Enter valid customer and grain details.'), 400
+    if any(len(value) > limit for value, limit in ((phone, 20), (notes, 200), (sale_ref, 50))):
+        return jsonify(status='error', message='Phone, notes, or sale reference is too long.'), 400
+    try:
+        input_kg = _positive_number(data.get('input_qty_kg'), 'Grain weight received')
+        output_kg = _positive_number(data.get('output_qty_kg'), 'Milled weight returned', allow_zero=True)
+        if output_kg > input_kg + 0.001:
+            raise ValueError('Returned weight cannot exceed the grain received.')
+        run = MillingRun(
+            run_no=f'MILL-{uuid.uuid4().hex[:10].upper()}',
+            customer_name=customer, customer_phone=phone or None,
+            grain_description=grain, input_qty_kg=input_kg,
+            output_qty_kg=output_kg, variance_loss_kg=round(input_kg - output_kg, 3),
+            notes=notes or None, service_sale_reference=sale_ref or None,
+            created_by=g.user.username, location_id=location.id,
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(run)
+        db.session.commit()
+    except (TypeError, ValueError) as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+    except Exception:
+        db.session.rollback()
+        return jsonify(status='error', message='Could not record the customer milling job.'), 500
+    return jsonify(status='success', run_no=run.run_no, loss_kg=run.variance_loss_kg), 201
 
 
 def _positive_number(value, label, allow_zero=False):
@@ -29,7 +118,7 @@ def _positive_number(value, label, allow_zero=False):
 
 
 @factory_bp.route('/api/factory/produce', methods=['POST'])
-@roles_required('admin', 'accountant', 'warehouse')
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
 def record_production_run():
     data = request.get_json(silent=True) or {}
     formula_name = str(data.get('formula_name') or '').strip()
@@ -162,7 +251,7 @@ def record_production_run():
 
 
 @factory_bp.route('/api/factory/production-runs', methods=['GET'])
-@roles_required('admin', 'accountant', 'warehouse')
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
 def production_run_history():
     try:
         location = resolve_location(request.args.get('location_id'))
@@ -189,7 +278,7 @@ def production_run_history():
 
 
 @factory_bp.route('/api/factory/production-runs/<batch_no>/lines', methods=['GET'])
-@roles_required('admin', 'accountant', 'warehouse')
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
 def production_run_lines(batch_no):
     try:
         location = resolve_location(request.args.get('location_id'))

@@ -34,6 +34,7 @@ def search_products():
             packs_by_item.setdefault(pr.ingredient_id, []).append({'pack_kg': pr.pack_kg, 'price': round(pr.price, 2)})
     return jsonify([{
         'id': i.id, 'name': i.name, 'category': i.category,
+        'is_service': i.category == 'Milling Service',
         'available_stock_kg': max(0.0, stock_quantity(location.id, i.id) - reserved_quantity(location.id, i.id)),
         'bag_size_kg': i.bag_size_kg,
         'retail_price_kg': round(i.retail_price_per_kg or 0, 2),
@@ -48,7 +49,7 @@ def get_inventory():
     except ValueError as exc:
         return jsonify(status='error', message=str(exc)), 400
     out = []
-    for i in FeedIngredient.query.all():
+    for i in FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).all():
         row = {'id': i.id, 'name': i.name, 'category': i.category,
                'stock_quantity_kg': stock_quantity(location.id, i.id),
                'location_id': location.id, 'location_name': location.name}
