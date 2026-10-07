@@ -299,3 +299,313 @@ def production_run_lines(batch_no):
         'cost_per_kg': round(line.cost_per_kg, 2),
         'line_cost': round(line.line_cost, 2),
     } for line, name in rows])
+
+
+def _current_costs(ids=None):
+    """Cost per kg at the user's outlet (falls back to the item cost), like the Ration Formulator."""
+    from services.models import LocationStock
+    q = FeedIngredient.query
+    if ids is not None:
+        q = q.filter(FeedIngredient.id.in_(list(ids)))
+    items = q.all()
+    stocks = {}
+    try:
+        loc = resolve_location(request.args.get('location_id'))
+        stocks = {r.ingredient_id: r for r in LocationStock.query.filter_by(location_id=loc.id).all()}
+    except ValueError:
+        pass
+    out = {}
+    for i in items:
+        st = stocks.get(i.id)
+        cost = st.unit_cost_per_kg if st and (st.unit_cost_per_kg or 0) > 0 else (i.cost_per_kg or 0.0)
+        out[i.id] = float(cost or 0.0)
+    return out
+
+
+def _formula_json(fm, costs):
+    lines, unpriced, weighted = [], [], 0.0
+    for ln in fm.lines:
+        ing = db.session.get(FeedIngredient, ln.ingredient_id)
+        c = costs.get(ln.ingredient_id, 0.0)
+        if c <= 0:
+            unpriced.append(ing.name if ing else '?')
+        weighted += ln.pct * c
+        lines.append({'ingredient_id': ln.ingredient_id,
+                      'ingredient_name': ing.name if ing else '?',
+                      'pct': ln.pct, 'cost_per_kg': round(c, 2)})
+    total = sum(l['pct'] for l in lines)
+    return {'id': fm.id, 'name': fm.name, 'notes': fm.notes or '',
+            'total_pct': round(total, 4), 'lines': lines,
+            'cost_per_kg': round(weighted / total, 2) if total else 0.0,
+            'unpriced': unpriced}
+
+
+@factory_bp.route('/api/factory/formulas', methods=['GET'])
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
+def list_saved_formulas():
+    from services.models import SavedFormula
+    fms = SavedFormula.query.order_by(SavedFormula.name).all()
+    ids = {ln.ingredient_id for fm in fms for ln in fm.lines}
+    costs = _current_costs(ids)
+    return jsonify([_formula_json(fm, costs) for fm in fms])
+
+
+@factory_bp.route('/api/factory/ingredient-costs', methods=['GET'])
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
+def formula_ingredient_costs():
+    raw = FeedIngredient.query.filter(FeedIngredient.category.ilike('%raw%')).all()
+    costs = _current_costs({i.id for i in raw})
+    return jsonify({str(k): round(v, 2) for k, v in costs.items()})
+
+
+def _clean_formula(data):
+    name = str(data.get('name') or '').strip()
+    if not name or len(name) > 100:
+        raise ValueError('Give the formula a name (up to 100 characters).')
+    notes = str(data.get('notes') or '').strip()[:300]
+    raw_lines = data.get('lines')
+    if not isinstance(raw_lines, list) or not raw_lines or len(raw_lines) > 60:
+        raise ValueError('Add at least one ingredient.')
+    seen, lines = set(), []
+    for ln in raw_lines:
+        try:
+            iid = int(ln.get('ingredient_id'))
+            pct = float(ln.get('pct'))
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError('Every line needs an ingredient and a percentage.')
+        if not math.isfinite(pct) or pct <= 0 or pct > 100:
+            raise ValueError('Percentages must be above 0 and at most 100.')
+        if iid in seen:
+            raise ValueError('An ingredient appears twice. Combine it into one line.')
+        ing = db.session.get(FeedIngredient, iid)
+        if not ing or 'raw' not in (ing.category or '').lower():
+            raise ValueError('Every ingredient must be a Raw item.')
+        seen.add(iid)
+        lines.append((iid, round(pct, 4)))
+    total = sum(p for _, p in lines)
+    if abs(total - 100.0) > 0.1:
+        raise ValueError('Percentages add up to %.3f%%. They must total 100%% (within 0.1).' % total)
+    return name, notes, lines
+
+
+@factory_bp.route('/api/factory/formulas', methods=['POST'])
+@roles_required('admin', 'factory')
+def save_formula():
+    from sqlalchemy.exc import IntegrityError
+    from services.models import SavedFormula, SavedFormulaLine
+    data = request.get_json(silent=True) or {}
+    try:
+        name, notes, lines = _clean_formula(data)
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    same_name = SavedFormula.query.filter(db.func.lower(SavedFormula.name) == name.lower()).first()
+    fm = None
+    if data.get('id') not in (None, ''):
+        fm = db.session.get(SavedFormula, int(data['id']))
+        if not fm:
+            return jsonify(status='error', message='That formula no longer exists.'), 404
+        if same_name and same_name.id != fm.id:
+            return jsonify(status='error', message='Another formula already uses that name.'), 409
+    elif same_name:
+        existing = {l.ingredient_id: round(l.pct, 4) for l in same_name.lines}
+        if existing == dict(lines) and (same_name.notes or '') == notes:
+            return jsonify(status='success', id=same_name.id, duplicate=True)  # safe retry
+        return jsonify(status='error', message='A formula with this name already exists. Open it from the list to edit.'), 409
+    try:
+        if fm is None:
+            fm = SavedFormula(name=name, notes=notes)
+            db.session.add(fm)
+        else:
+            fm.name, fm.notes = name, notes
+            fm.lines = []
+            db.session.flush()
+        for iid, pct in lines:
+            fm.lines.append(SavedFormulaLine(ingredient_id=iid, pct=pct))
+        db.session.commit()
+        return jsonify(status='success', id=fm.id)
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(status='error', message='A formula with this name already exists.'), 409
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+
+
+@factory_bp.route('/api/factory/formulas/<int:formula_id>', methods=['DELETE'])
+@roles_required('admin')
+def delete_formula(formula_id):
+    from services.models import SavedFormula
+    fm = SavedFormula.query.get_or_404(formula_id)
+    db.session.delete(fm)
+    db.session.commit()
+    return jsonify(status='success')
+
+
+_ING_HEADERS = {'ingredient', 'ingredients', 'item', 'items', 'raw material', 'raw materials', 'name', 'feedstuff'}
+_PCT_HEADERS = {'%', 'percent', 'percentage', 'pct', 'inclusion', 'inclusion %', 'inclusion%', '% inclusion', 'amount', 'amount %', 'amount%'}
+_SKIP_HEADERS = {'cost', 'price', 'min', 'min.', 'max', 'max.', 'notes', 'note', 'unit', 'units', '$/cwt', 'kes', 'ksh'}
+_XL_ERRORS = {'#VALUE!', '#REF!', '#N/A', '#NAME?', '#DIV/0!', '#NULL!', '#NUM!'}
+_GENERIC_SHEETS = {'sheet', 'sheet1', 'sheet2', 'formulate', 'formula', 'formulas', 'data'}
+
+
+def _xl_num(v):
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if math.isfinite(v) else None
+    s = str(v).strip().replace(',', '')
+    if s.endswith('%'):
+        s = s[:-1]
+    try:
+        f = float(s)
+        return f if math.isfinite(f) else None
+    except ValueError:
+        return None
+
+
+def _parse_sheet(ws, default_name):
+    rows = list(ws.iter_rows(min_row=1, max_row=400, max_col=40, values_only=True))
+    hdr_i = ing_c = None
+    for i, row in enumerate(rows[:20]):
+        for c, v in enumerate(row):
+            if isinstance(v, str) and v.strip().lower() in _ING_HEADERS:
+                hdr_i, ing_c = i, c
+                break
+        if hdr_i is not None:
+            break
+    if hdr_i is None:
+        return []
+    header = rows[hdr_i]
+    pct_cols = [c for c, v in enumerate(header)
+                if c > ing_c and isinstance(v, str) and v.strip().lower() in _PCT_HEADERS]
+    if pct_cols:
+        cols = [(pct_cols[0], default_name)]
+    else:
+        cols = [(c, str(v).strip()) for c, v in enumerate(header)
+                if c > ing_c and isinstance(v, str) and v.strip() and v.strip().lower() not in _SKIP_HEADERS]
+    out = []
+    for col, name in cols:
+        merged = {}
+        damaged = False
+        for row in rows[hdr_i + 1:]:
+            if ing_c >= len(row):
+                continue
+            n = row[ing_c]
+            cell = row[col] if col < len(row) else None
+            if (isinstance(n, str) and n.strip().upper() in _XL_ERRORS) or (isinstance(cell, str) and cell.strip().upper() in _XL_ERRORS):
+                damaged = True
+                continue
+            if not isinstance(n, str) or not n.strip():
+                continue
+            if n.strip().lower() in ('total', 'totals', 'sum'):
+                break
+            pct = _xl_num(row[col]) if col < len(row) else None
+            if pct is None or pct <= 0:
+                continue
+            key = n.strip()
+            merged[key] = merged.get(key, 0.0) + pct
+        if not merged:
+            continue
+        total = sum(merged.values())
+        if 0.99 <= total <= 1.01:  # file stores fractions (0.5 = 50%)
+            merged = {k: round(v * 100, 4) for k, v in merged.items()}
+        out.append({'name': name, 'damaged': damaged,
+                    'lines': [{'source_name': k, 'pct': round(v, 4)} for k, v in merged.items()]})
+    return out
+
+
+def _norm_name(s):
+    import re
+    return re.sub(r'[^a-z0-9]', '', str(s).lower())
+
+
+@factory_bp.route('/api/factory/formulas/import-preview', methods=['POST'])
+@roles_required('admin', 'factory')
+def import_formulas_preview():
+    import io, difflib, os
+    from services.models import SavedFormula, FormulaAlias
+    f = request.files.get('file')
+    if not f or not (f.filename or '').lower().endswith('.xlsx'):
+        return jsonify(status='error', message='Upload an Excel .xlsx file (File > Save As > Excel Workbook).'), 400
+    blob = f.read(2 * 1024 * 1024 + 1)
+    if len(blob) > 2 * 1024 * 1024:
+        return jsonify(status='error', message='That file is larger than 2 MB.'), 400
+    try:
+        import openpyxl
+    except ImportError:
+        return jsonify(status='error', message='The server is missing openpyxl. In a PythonAnywhere console run: pip install openpyxl  then press Reload.'), 500
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(blob), read_only=True, data_only=True)
+    except Exception:
+        return jsonify(status='error', message='Could not read this file. Save it again as .xlsx and retry.'), 400
+
+    stem = os.path.splitext(os.path.basename(f.filename))[0].replace('_', ' ').replace('-', ' ').strip().title() or 'Imported formula'
+    formulas = []
+    for ws in wb.worksheets[:10]:
+        title = (ws.title or '').strip()
+        default = stem if title.lower() in _GENERIC_SHEETS else title
+        formulas.extend(_parse_sheet(ws, default))
+    skipped, seen_sigs, kept = [], set(), []
+    for fm in formulas:
+        sig = tuple(sorted((_norm_name(l['source_name']), round(l['pct'], 3)) for l in fm['lines']))
+        if fm.get('damaged'):
+            skipped.append('"%s" skipped: it contains Excel errors (like #VALUE!), so some ingredients are missing.' % fm['name'])
+        elif sig in seen_sigs:
+            skipped.append('"%s" skipped: identical to another formula in the file.' % fm['name'])
+        else:
+            seen_sigs.add(sig)
+            kept.append(fm)
+    formulas = kept
+    if not formulas:
+        return jsonify(status='error', message='No usable formula found. The sheet needs an "Ingredient" column and a "%" (or "Amount") column, or one column per formula.'), 400
+
+    raw = [i for i in FeedIngredient.query.all() if 'raw' in (i.category or '').lower()]
+    by_norm = {_norm_name(i.name): i for i in raw}
+    aliases = {a.alias: a.ingredient_id for a in FormulaAlias.query.all()}
+    raw_ids = {i.id: i for i in raw}
+    existing = {fm.name.lower() for fm in SavedFormula.query.all()}
+    used_names = set()
+    for fm in formulas[:30]:
+        base, n = fm['name'], 2
+        while fm['name'].lower() in used_names:
+            fm['name'] = '%s %d' % (base, n)
+            n += 1
+        used_names.add(fm['name'].lower())
+        fm['exists'] = fm['name'].lower() in existing
+        for ln in fm['lines']:
+            key = _norm_name(ln['source_name'])
+            ln['match_id'], ln['suggested'] = None, False
+            if aliases.get(key) in raw_ids:
+                ln['match_id'] = aliases[key]
+            elif key in by_norm:
+                ln['match_id'] = by_norm[key].id
+            else:
+                close = difflib.get_close_matches(key, list(by_norm.keys()), n=1, cutoff=0.8)
+                if close:
+                    ln['match_id'], ln['suggested'] = by_norm[close[0]].id, True
+        fm['total_pct'] = round(sum(l['pct'] for l in fm['lines']), 4)
+    return jsonify(status='success', formulas=formulas[:30], skipped=skipped)
+
+
+@factory_bp.route('/api/factory/formula-aliases', methods=['POST'])
+@roles_required('admin', 'factory')
+def save_formula_aliases():
+    from services.models import FormulaAlias
+    pairs = (request.get_json(silent=True) or {}).get('aliases') or []
+    saved = 0
+    for p in pairs[:200]:
+        try:
+            ing = db.session.get(FeedIngredient, int(p.get('ingredient_id')))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        key = _norm_name(p.get('alias') or '')
+        if not key or len(key) > 150 or not ing or 'raw' not in (ing.category or '').lower():
+            continue
+        row = FormulaAlias.query.filter_by(alias=key).first()
+        if row:
+            row.ingredient_id = ing.id
+        else:
+            db.session.add(FormulaAlias(alias=key, ingredient_id=ing.id))
+        saved += 1
+    db.session.commit()
+    return jsonify(status='success', saved=saved)

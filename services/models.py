@@ -30,6 +30,7 @@ class Customer(db.Model):
     customer_type = db.Column(db.String(20), default='RETAIL')
     current_balance = db.Column(db.Float, default=0.0)
     credit_limit = db.Column(db.Float, default=0.0)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
 
 class CustomerPayment(db.Model):
     __tablename__ = 'customer_payments'
@@ -435,3 +436,27 @@ class ItemPrice(db.Model):
     ingredient_id = db.Column(db.Integer, nullable=False)
     pack_kg = db.Column(db.Float, nullable=False)   # 50, 70 ... (1 kg uses retail_price_per_kg)
     price = db.Column(db.Float, nullable=False)     # price of ONE pack
+
+
+class SavedFormula(db.Model):
+    __tablename__ = 'saved_formulas'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    notes = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    lines = db.relationship('SavedFormulaLine', backref='formula', cascade='all, delete-orphan')
+
+
+class SavedFormulaLine(db.Model):
+    __tablename__ = 'saved_formula_lines'
+    id = db.Column(db.Integer, primary_key=True)
+    formula_id = db.Column(db.Integer, db.ForeignKey('saved_formulas.id'), nullable=False)
+    ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
+    pct = db.Column(db.Float, nullable=False)
+
+
+class FormulaAlias(db.Model):
+    __tablename__ = 'formula_aliases'
+    id = db.Column(db.Integer, primary_key=True)
+    alias = db.Column(db.String(150), nullable=False, unique=True)
+    ingredient_id = db.Column(db.Integer, nullable=False)

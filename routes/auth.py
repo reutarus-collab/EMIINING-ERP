@@ -19,11 +19,15 @@ ROLE_ALLOW = {
               '/api/locations', '/api/products', '/api/pos', '/api/sales-history',
               '/api/stock', '/api/reports', '/api/till', '/api/expenses'),
     'warehouse': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
-                  '/api/po', '/api/suppliers', '/api/factory', '/api/stock', '/api/expenses'),
+                  '/api/po', '/api/suppliers', '/api/factory', '/api/stock', '/api/expenses',
+                  '/api/till/current', '/api/till/open', '/api/till/close',
+                  '/api/till/cash-movements'),
     'factory': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
+                '/api/po', '/api/suppliers',
                 '/api/factory', '/api/formulate', '/api/stock', '/api/customers',
                 '/api/pos/checkout', '/api/till/current', '/api/till/open',
-                '/api/till/close', '/api/till/cash-movements', '/api/reports/daily'),
+                '/api/till/close', '/api/till/cash-movements', '/api/reports/daily',
+                '/api/sales-history'),
 }
 
 LOGIN_HTML = """<!doctype html>

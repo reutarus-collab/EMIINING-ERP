@@ -24,6 +24,7 @@ async function initOutletTill() {
     activeLocationId = select.value;
     window.activeLocationId = activeLocationId;
     await refreshTill();
+    if (typeof loadCustomers === 'function') loadCustomers();
     if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
     if (typeof loadProductionRuns === 'function') loadProductionRuns();
     if (typeof loadStock === 'function') loadStock();
@@ -38,6 +39,7 @@ async function changePosLocation() {
   window.activeLocationId = activeLocationId;
   await refreshTill();
   searchProducts();
+  if (typeof loadCustomers === 'function') loadCustomers();
   if (typeof loadStock === 'function') loadStock();
   if (typeof loadDailyReport === 'function') loadDailyReport();
   if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
@@ -404,8 +406,10 @@ function printReceiptOnly() {
 }
 
 async function loadCustomers() {
-  const res = await fetch('/api/customers');
+  const q = window.activeLocationId ? '?location_id=' + encodeURIComponent(window.activeLocationId) : '';
+  const res = await fetch('/api/customers' + q);
   customersCache = await res.json();
+  if (!Array.isArray(customersCache)) customersCache = [];
   const sel = document.getElementById('customer-select'); const currentSelVal = sel.value;
   sel.innerHTML = '<option value="">CASH CUSTOMER (Walk-In)</option>';
   customersCache.forEach(c => { 
@@ -436,7 +440,7 @@ async function saveNewCustomer() {
     if(!name) return alert("Name is required");
     const res = await fetch('/api/customers', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: name, phone: phone, location: location, credit_limit: limit})
+        body: JSON.stringify({name: name, phone: phone, location: location, credit_limit: limit, location_id: window.activeLocationId})
     });
     const data = await res.json();
     if(data.status === 'success') {

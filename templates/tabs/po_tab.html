@@ -1,3 +1,20 @@
+<style id="po-mobile-css">
+@media (max-width: 820px) {
+  #create-po-modal, #create-item-modal, #receive-grn-modal, #view-po-modal, #create-supplier-modal {
+    position: fixed !important; top: 6px !important; left: 6px !important; right: 6px !important;
+    width: auto !important; max-width: none !important; transform: none !important;
+    max-height: calc(100vh - 12px); overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 12px !important; box-sizing: border-box;
+  }
+  #po-tab table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #po-tab input, #po-tab select, #po-tab textarea { max-width: 100%; box-sizing: border-box; }
+  #po-tab input.grn-stock-kg { width: 100px !important; }
+  #po-tab button { min-height: 44px; }
+  #po-tab div[style*="display:flex"], #po-tab div[style*="display: flex"] { flex-wrap: wrap; gap: 8px; }
+  #po-tab [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+  #po-tab .form-group input, #po-tab .form-group select { width: 100%; }
+}
+</style>
 <div id="po-tab" class="tab-content">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
         <h3>Purchase Orders & Goods Receiving</h3>
@@ -36,6 +53,7 @@
                     <th>Bag Size</th>
                     <th>Current Stock</th>
                     <th>Avg Cost (KSh)</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody id="item-master-body"></tbody>
@@ -272,6 +290,7 @@
                             <td>${i.bag_size_kg || '-'} kg</td>
                             <td style="font-weight:bold; color:${stockColor};">${i.stock_quantity_kg.toFixed(1)} kg</td>
                             <td>KSh ${i.cost_per_kg.toFixed(2)}</td>
+                            <td><button class="btn btn-secondary" style="color:#b00;" onclick="po_deleteItem(${i.id})">Delete</button></td>
                         </tr>
                     `;
                 }
@@ -590,7 +609,32 @@ async function submitGRN() {
             
         } catch(err) { alert("Backend Error (GRN Post): " + err.message); }
     }
+async function po_deleteItem(id) {
+    const item = po_inventoryList.find(x => x.id === id);
+    const name = item ? item.name : ('#' + id);
+    if (!confirm('Delete "' + name + '" from the Item Master?\n\nThis only works for items with no stock or purchase history.')) return;
+    try {
+        const res = await fetch('/api/po/inventory/' + id, {method: 'DELETE', credentials: 'same-origin'});
+        let data = {};
+        try { data = await res.json(); } catch (e) {}
+        if (res.ok && data.status === 'success') {
+            await po_loadInventory();
+        } else if (res.status === 403) {
+            alert('Only an admin can delete items.');
+        } else {
+            alert(data.message || 'Could not delete this item.');
+        }
+    } catch (err) {
+        alert('Network problem. Nothing was deleted - check the list and try again.');
+    }
+}
+let po_savingItem = false;
 async function submitNewItem() {
+    if (po_savingItem) return;
+    po_savingItem = true;
+    try { await po_submitNewItemInner(); } finally { po_savingItem = false; }
+}
+async function po_submitNewItemInner() {
     const name = document.getElementById('new-item-name').value;
     
     // Safety check to prevent blank items

@@ -4,7 +4,8 @@ from flask import Blueprint, request, jsonify
 import uuid
 from services.db import db
 from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, FeedIngredient, StockMovement, GoodsReceiptNote, GoodsReceiptLine
-from services.po_service import create_purchase_order
+from services.po_service import create_purchase_order, item_usage, purge_empty_stock_rows
+from routes.auth import roles_required
 from services.inventory import resolve_location, location_stock, stock_quantity, change_stock, receive_stock
 
 po_bp = Blueprint('po_bp', __name__)
@@ -119,6 +120,11 @@ def add_new_item():
         text_fields = clean_name + clean_cat + str(data.get('purchase_uom') or '') + str(data.get('stock_uom') or '') + str(data.get('conversion_type') or '')
         if not clean_name or len(clean_name) > 100 or any(ch in text_fields for ch in '<>'):
             raise ValueError('Invalid item name or category.')
+        existing = FeedIngredient.query.filter(
+            db.func.lower(FeedIngredient.name) == clean_name.lower()).first()
+        if existing:
+            # safe retry: repeated save returns the same item, no duplicate
+            return jsonify({'status': 'success', 'item_id': existing.id, 'duplicate': True})
         new_item = FeedIngredient(
             name=clean_name,
             category=clean_cat,
@@ -139,6 +145,24 @@ def add_new_item():
         db.session.rollback()
         print("❌ DB Save Error:", str(e))
         return jsonify({'status': 'error', 'message': str(e)}), 400
+
+@po_bp.route('/api/po/inventory/<int:item_id>', methods=['DELETE'])
+@roles_required('admin')
+def delete_item(item_id):
+    item = FeedIngredient.query.get_or_404(item_id)
+    usage = item_usage(item.id)
+    if usage:
+        detail = ', '.join(f'{t}: {n}' for t, n in usage.items())
+        return jsonify(status='error',
+                       message=f'Cannot delete: item has history ({detail}).'), 409
+    try:
+        purge_empty_stock_rows(item.id)
+        db.session.delete(item)
+        db.session.commit()
+        return jsonify(status='success')
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(status='error', message=str(e)), 400
 
 @po_bp.route('/api/suppliers/add', methods=['POST'])
 def add_supplier():

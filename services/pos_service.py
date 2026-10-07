@@ -111,6 +111,13 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
     if change_due > cash_tendered + 0.01:
         raise Exception('Change can only be issued from the cash tender. Reduce non-cash overpayment or enter exact payment amounts.')
 
+    if customer_id:
+        sale_customer = Customer.query.get(customer_id)
+        if not sale_customer:
+            raise Exception('Customer not found.')
+        if sale_customer.location_id is not None and sale_customer.location_id != location_id:
+            raise Exception('This customer belongs to another outlet. Register them at this outlet first.')
+
     if credit_amount > 0:
         if not customer_id:
             raise Exception("Cannot sell on credit to a Walk-In customer. Please select a registered customer.")

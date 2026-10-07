@@ -76,11 +76,26 @@ def manage_customers():
                 limit = -1.0
             if not math.isfinite(limit) or limit < 0:
                 return jsonify({'status': 'error', 'message': 'Invalid credit limit.'}), 400
-        cust = Customer(name=name, phone=phone, location=loc, customer_type=ctype, credit_limit=limit)
+        try:
+            outlet = resolve_location(data.get('location_id'))
+        except ValueError as exc:
+            return jsonify({'status': 'error', 'message': str(exc)}), 400
+        cust = Customer(name=name, phone=phone, location=loc, customer_type=ctype,
+                        credit_limit=limit, location_id=outlet.id)
         db.session.add(cust)
         db.session.commit()
         return jsonify({'status': 'success', 'customer_id': cust.id})
-    return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone, 'location': c.location or 'Unknown', 'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit} for c in Customer.query.all()])
+    try:
+        outlet = resolve_location(request.args.get('location_id'))
+    except ValueError:
+        return jsonify([])
+    q = Customer.query.filter(Customer.location_id == outlet.id)
+    if g.user.role in ('admin', 'accountant'):
+        # owners also see customers not yet assigned to an outlet, so none get lost
+        q = Customer.query.filter(db.or_(Customer.location_id == outlet.id, Customer.location_id.is_(None)))
+    return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone, 'location': c.location or 'Unknown',
+                     'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit,
+                     'outlet_id': c.location_id} for c in q.order_by(Customer.name).all()])
 
 @pos_bp.route('/api/customers/<int:customer_id>/repay', methods=['POST'])
 @roles_required('admin', 'accountant', 'sales')
@@ -97,6 +112,8 @@ def repay_customer_debt(customer_id):
         cust = db.session.get(Customer, customer_id)
         if not cust:
             return jsonify({'status': 'error', 'message': 'Customer not found.'}), 404
+        if cust.location_id is not None and cust.location_id != location.id:
+            return jsonify({'status': 'error', 'message': 'This customer belongs to another outlet.'}), 400
         owed = round(cust.current_balance or 0.0, 2)
         if owed <= 0:
             return jsonify({'status': 'error', 'message': 'This customer owes nothing.'}), 400
@@ -238,7 +255,7 @@ def till_close():
         return jsonify(status='error', message=str(exc)), 400
 
 @pos_bp.route('/api/till/cash-movements', methods=['GET', 'POST'])
-@roles_required('admin', 'accountant', 'sales')
+@roles_required('admin', 'accountant', 'sales', 'warehouse', 'factory')
 def till_cash_movements():
     if request.method == 'GET':
         try:

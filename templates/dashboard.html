@@ -89,17 +89,15 @@ input, select, textarea {
   <button class="tab-btn" data-roles="admin" onclick="showTab('bags-tab'); loadBagPrices();">Bag Prices</button>
   <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('payables-tab'); loadPayables();">Supplier Payables</button>
   <button class="tab-btn" data-roles="admin" onclick="showTab('customers-tab'); loadCustAdmin();">👥 Customers</button>
-  <button class="tab-btn" data-roles="admin,accountant,warehouse" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">📥 Purchase Orders</button>
-  <button class="tab-btn" data-roles="admin,accountant,sales" onclick="showTab('sales-tab')">📄 Sales Ledger</button>
-  <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('matrix-tab')">🧮 Ration Formulator</button>
-  <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('factory-tab')">🏭 Factory & Milling</button>
+  <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">📥 Purchase Orders</button>
+  <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('sales-tab')">📄 Sales Ledger</button>
+  <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('factory-tab')">🏭 Factory</button>
 </div>
 
 <!-- INCLUDED TAB COMPONENTS (ONLY CALLED ONCE) -->
 {% include "tabs/pos_tab.html" %}
 {% include "tabs/po_tab.html" %}
 {% include "tabs/sales_tab.html" %}
-{% include "tabs/formulator_tab.html" %}
 {% include "tabs/factory_tab.html" %}
 {% include "tabs/retail_tab.html" %}
 {% include "tabs/bagprices_tab.html" %}
