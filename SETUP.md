@@ -54,3 +54,11 @@ python /path/to/project/scripts/backup_sqlite.py --database /path/to/project/emi
 - The leak report separates **Money lost** from **Cash tied up** so the value of unsold/slow stock and customer debt is not presented as realized loss. Rows are ranked by estimated KSh value and show the prior period.
 - Purchase leakage compares received costs to the prior 90-day weighted average where history exists and includes rejected or short receipts. Price leakage estimates the 30-day sales gap against a 15% target gross margin by default; set `PRICE_TARGET_MARGIN_PCT` to change the target.
 - During a refund, confirm each physically returned item and enter the quantity in kilograms. The ERP adds inspected saleable goods back to outlet stock and reverses estimated COGS at the outlet's current weighted-average cost. Damaged goods should not be marked as returned to stock; record them through stock adjustment instead.
+
+## Retry safety for cash and stock changes
+
+Every POST that moves cash or stock (expenses, supplier payments, repayments, refunds, stock adjustments, transfers, production, owner withdrawals, till cash, new customers/suppliers, purchase orders) carries an `Idempotency-Key`. The browser adds it automatically (`static/js/idem.js`); the server stores the key in the same database transaction as the change (`services/idempotency.py`), so a retried request returns the original result instead of recording twice. Goods receipts and checkout use the same table with their own keys.
+
+When adding a new money- or stock-moving POST route: put `@idempotent('some-scope')` under its `@roles_required`, and add its path to `PROTECTED` in `static/js/idem.js`. `tests/test_idempotency.py` fails if the two lists drift apart.
+
+Run the tests with `SECRET_KEY=test python -m unittest discover -s tests`. A request that fails validation does not use up its key, so the same screen can be corrected and resubmitted.

@@ -1,4 +1,5 @@
 """Owner-facing cash walk and operational loss reports."""
+from services.idempotency import idempotent
 import math
 import os
 import uuid
@@ -163,6 +164,7 @@ def get_cash_walk_opening():
 
 @reports_bp.route('/api/reports/owner-withdrawals', methods=['POST'])
 @roles_required('admin')
+@idempotent('owner-withdrawal')
 def record_owner_withdrawal():
     data = request.get_json(silent=True) or {}
     try:
@@ -210,6 +212,7 @@ def record_owner_withdrawal():
 
 @reports_bp.route('/api/reports/equipment-purchases', methods=['POST'])
 @roles_required('admin', 'accountant')
+@idempotent('equipment-buy')
 def record_equipment_purchase():
     data = request.get_json(silent=True) or {}
     try:

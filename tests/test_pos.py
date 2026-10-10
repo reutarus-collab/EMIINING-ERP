@@ -10,12 +10,26 @@ import uuid
 os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
 os.environ.setdefault('SECRET_KEY', 'test-only-secret-key-not-for-deployment')
 from app import create_app
+from flask.testing import FlaskClient
+from werkzeug.datastructures import Headers
 from services.db import db
 from services.models import (
     Customer, FeedIngredient, GeneralLedgerEntry, IdempotencyKey, ItemPrice,
     CashWalkOpening, Location, LocationStock, OrderHeader, OwnerWithdrawal,
     TillSession, User,
 )
+
+
+class KeyedClient(FlaskClient):
+    """Adds a fresh Idempotency-Key to POSTs that do not set one, like the browser wrapper does."""
+    def open(self, *args, **kwargs):
+        path = str(args[0]) if args else ''
+        if str(kwargs.get('method', 'GET')).upper() == 'POST' and not path.startswith('/api/pos/checkout'):
+            headers = Headers(kwargs.get('headers') or {})
+            if 'Idempotency-Key' not in headers:
+                headers.add('Idempotency-Key', str(uuid.uuid4()))
+            kwargs['headers'] = headers
+        return super().open(*args, **kwargs)
 
 
 class POSCheckoutTests(unittest.TestCase):
@@ -28,12 +42,13 @@ class POSCheckoutTests(unittest.TestCase):
             'SQLALCHEMY_DATABASE_URI': 'sqlite:///' + db_path,
             'SQLALCHEMY_ENGINE_OPTIONS': {'connect_args': {'timeout': 15}},
         })
+        self.app.test_client_class = KeyedClient
         self.context = self.app.app_context()
         self.context.push()
         self.factory = Location(name='Factory', code='FAC-01', location_type='FACTORY')
         self.branch = Location(name='Retail Outlet', code='RET-01', location_type='BRANCH_STORE')
         self.cashier = User(username='cashier', role='sales', location='RET-01')
-        self.cashier.set_password('735192')
+        self.cashier.set_password('7351')
         db.session.add_all([self.factory, self.branch, self.cashier])
         db.session.flush()
         self.cashier.location_id = self.branch.id
@@ -159,7 +174,7 @@ class POSCheckoutTests(unittest.TestCase):
 
     def make_admin_client(self):
         admin = User(username='owner', role='admin', location='admin')
-        admin.set_password('long-test-password')
+        admin.set_password('2468')
         db.session.add(admin)
         db.session.commit()
         client = self.app.test_client()

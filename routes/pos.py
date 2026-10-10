@@ -1,3 +1,4 @@
+from services.idempotency import idempotent
 from services.models import ItemPrice
 import math
 from flask import g
@@ -59,6 +60,7 @@ def get_inventory():
     return jsonify(out)
 
 @pos_bp.route('/api/customers', methods=['GET', 'POST'])
+@idempotent('customer-add')
 def manage_customers():
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
@@ -85,20 +87,28 @@ def manage_customers():
         db.session.add(cust)
         db.session.commit()
         return jsonify({'status': 'success', 'customer_id': cust.id})
-    try:
-        outlet = resolve_location(request.args.get('location_id'))
-    except ValueError:
-        return jsonify([])
-    q = Customer.query.filter(Customer.location_id == outlet.id)
-    if g.user.role in ('admin', 'accountant'):
-        # owners also see customers not yet assigned to an outlet, so none get lost
-        q = Customer.query.filter(db.or_(Customer.location_id == outlet.id, Customer.location_id.is_(None)))
+    is_owner = g.user.role in ('admin', 'accountant')
+    if is_owner and request.args.get('all') == '1':
+        # admin credit-limit screen: every customer across every outlet
+        q = Customer.query
+    else:
+        try:
+            outlet = resolve_location(request.args.get('location_id'))
+        except ValueError:
+            return jsonify([])
+        q = Customer.query.filter(Customer.location_id == outlet.id)
+        if is_owner:
+            # owners also see customers not yet assigned to an outlet, so none get lost
+            q = Customer.query.filter(db.or_(Customer.location_id == outlet.id, Customer.location_id.is_(None)))
+    outlet_names = {l.id: l.name for l in Location.query.all()}
     return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone, 'location': c.location or 'Unknown',
                      'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit,
-                     'outlet_id': c.location_id} for c in q.order_by(Customer.name).all()])
+                     'outlet_id': c.location_id, 'outlet_name': outlet_names.get(c.location_id, 'Unassigned')}
+                    for c in q.order_by(Customer.name).all()])
 
 @pos_bp.route('/api/customers/<int:customer_id>/repay', methods=['POST'])
 @roles_required('admin', 'accountant', 'sales')
+@idempotent('customer-repay')
 def repay_customer_debt(customer_id):
     try:
         data = request.get_json(silent=True) or {}
@@ -256,6 +266,7 @@ def till_close():
 
 @pos_bp.route('/api/till/cash-movements', methods=['GET', 'POST'])
 @roles_required('admin', 'accountant', 'sales', 'warehouse', 'factory')
+@idempotent('till-cash')
 def till_cash_movements():
     if request.method == 'GET':
         try:
@@ -310,6 +321,7 @@ def till_cash_movements():
 
 @pos_bp.route('/api/pos/orders/<int:order_id>/refund', methods=['POST'])
 @roles_required('admin', 'accountant', 'sales')
+@idempotent('sale-refund')
 def refund_sale(order_id):
     data = request.get_json(silent=True) or {}
     try:
@@ -408,6 +420,7 @@ def refund_sale(order_id):
 
 @pos_bp.route('/api/inventory/adjust', methods=['POST'])
 @roles_required('admin', 'warehouse')
+@idempotent('stock-adjust')
 def adjust_inventory():
     data = request.get_json(silent=True) or {}
     try:
@@ -440,6 +453,7 @@ def adjust_inventory():
 
 @pos_bp.route('/api/inventory/transfers', methods=['POST'])
 @roles_required('admin', 'warehouse')
+@idempotent('transfer-send')
 def transfer_inventory():
     data = request.get_json(silent=True) or {}
     try:
@@ -498,6 +512,7 @@ def incoming_inventory_transfers():
 
 @pos_bp.route('/api/inventory/transfers/<int:transfer_id>/receive', methods=['POST'])
 @roles_required('admin', 'sales', 'warehouse')
+@idempotent('transfer-recv')
 def receive_inventory_transfer(transfer_id):
     data = request.get_json(silent=True) or {}
     try:
@@ -545,6 +560,7 @@ def receive_inventory_transfer(transfer_id):
 
 @pos_bp.route('/api/inventory/transfers/<int:transfer_id>/close-short', methods=['POST'])
 @roles_required('admin', 'sales', 'warehouse')
+@idempotent('transfer-short')
 def close_transfer_shortfall(transfer_id):
     data = request.get_json(silent=True) or {}
     try:
@@ -593,6 +609,7 @@ EXPENSE_CATEGORIES = {
 
 @pos_bp.route('/api/expenses', methods=['GET', 'POST'])
 @roles_required('admin', 'accountant', 'sales', 'warehouse')
+@idempotent('expense')
 def operating_expenses():
     if request.method == 'GET':
         try:

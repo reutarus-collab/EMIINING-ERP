@@ -288,8 +288,8 @@ async function savePrice(id) {
     <h3>Customers and Credit Limits (admin only)</h3>
     <p style="font-size:.9rem;color:#666">Customers created at the till start at a limit of 0. Set a limit here to allow credit sales.</p>
     <table class="data-table">
-      <thead><tr><th>Customer</th><th>Phone</th><th>Debt</th><th>Credit limit</th><th></th></tr></thead>
-      <tbody id="cust-body"><tr><td colspan="5">Loading...</td></tr></tbody>
+      <thead><tr><th>Customer</th><th>Outlet</th><th>Phone</th><th>Debt</th><th>Credit limit</th><th></th></tr></thead>
+      <tbody id="cust-body"><tr><td colspan="6">Loading...</td></tr></tbody>
     </table>
     <div id="cust-msg" style="margin-top:10px"></div>
   </div>
@@ -297,14 +297,14 @@ async function savePrice(id) {
 <script>
 async function loadCustAdmin() {
   const body = document.getElementById('cust-body');
-  const r = await fetch('/api/customers', {credentials: 'same-origin'});
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="5">Cannot load customers.</td></tr>'; return; }
+  const r = await fetch('/api/customers?all=1', {credentials: 'same-origin'});
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="6">Cannot load customers.</td></tr>'; return; }
   const rows = await r.json();
   body.innerHTML = rows.map(c =>
-    `<tr><td>${retailEsc(c.name)}</td><td>${retailEsc(c.phone)}</td><td>${Number(c.balance || 0).toFixed(2)}</td>
+    `<tr><td>${retailEsc(c.name)}</td><td>${retailEsc(c.outlet_name)}</td><td>${retailEsc(c.phone)}</td><td>${Number(c.balance || 0).toFixed(2)}</td>
      <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
      <td><button class="btn-sm btn-primary" onclick="saveCreditLimit(${c.id})">Save</button></td></tr>`
-  ).join('') || '<tr><td colspan="5">No customers.</td></tr>';
+  ).join('') || '<tr><td colspan="6">No customers.</td></tr>';
 }
 async function saveCreditLimit(id) {
   const limit = parseFloat(document.getElementById('cl-' + id).value);

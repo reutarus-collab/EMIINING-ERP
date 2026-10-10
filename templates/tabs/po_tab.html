@@ -225,6 +225,15 @@
     let po_currentCart = [];
     let po_orderHistory = [];
     let po_activeReceiving = null;
+    let po_grnKey = null;      // one key per receipt form; reused on retry so the server can de-duplicate
+    let po_grnPosting = false; // blocks double-taps while a post is in flight
+    function po_newKey() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+    }
 	let poCart = [];
 
     document.addEventListener('DOMContentLoaded', async () => {
@@ -409,6 +418,7 @@ async function viewPO(poId) {
             const poData = await res.json();
             
             po_activeReceiving = poData;
+            po_grnKey = po_newKey();
             document.getElementById('grn-po-number').innerText = po.po_number;
             
             const tbody = document.getElementById('grn-lines-body');
@@ -587,11 +597,14 @@ async function submitGRN() {
         }
         
         if(receiptLines.length === 0) return alert("Please enter a receive quantity.");
+        if (po_grnPosting) return;
+        po_grnPosting = true;
+        if (!po_grnKey) po_grnKey = po_newKey();
         
         try {
             const res = await fetch(`/api/po/${po_activeReceiving.id}/grpo`, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'Idempotency-Key': po_grnKey},
                 body: JSON.stringify({ received_items: receiptLines, payment_method: document.getElementById('grn-payment-method').value,
                     delivery_note: document.getElementById('grn-delivery-note').value,
                     vehicle_reg: document.getElementById('grn-vehicle-reg').value })
@@ -602,12 +615,15 @@ async function submitGRN() {
                 throw new Error(data.message || `HTTP ${res.status}`);
             }
             
-            alert(`GRN posted successfully!`);
+            alert(data.already_processed ? `GRN was already posted - nothing was added twice.` : `GRN posted successfully!`);
+            po_grnKey = null;
             document.getElementById('receive-grn-modal').style.display = 'none';
             await po_loadHistory();
             if (typeof po_loadInventory === 'function') await po_loadInventory(); 
             
-        } catch(err) { alert("Backend Error (GRN Post): " + err.message); }
+        } catch(err) {
+            alert("GRN Post problem: " + err.message + "\n\nIf it was a network drop, check the PO history first. Tapping Post again is safe - it cannot be recorded twice.");
+        } finally { po_grnPosting = false; }
     }
 async function po_deleteItem(id) {
     const item = po_inventoryList.find(x => x.id === id);

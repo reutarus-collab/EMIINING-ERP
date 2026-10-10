@@ -1,3 +1,4 @@
+from services.idempotency import idempotent
 import math
 import uuid
 from flask import Blueprint, jsonify, request, g
@@ -55,6 +56,7 @@ def payables_history(supplier_id):
                     for t in txns])
 @payables_bp.route('/api/admin/payables/<int:supplier_id>/pay', methods=['POST'])
 @roles_required('admin', 'accountant')
+@idempotent('supplier-pay')
 def pay_supplier(supplier_id):
     data = request.get_json(silent=True) or {}
     try:

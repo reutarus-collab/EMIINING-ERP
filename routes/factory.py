@@ -1,3 +1,4 @@
+from services.idempotency import idempotent
 import math
 import uuid
 from datetime import datetime
@@ -47,6 +48,7 @@ def run_formulation():
 
 @factory_bp.route('/api/factory/milling-runs', methods=['GET', 'POST'])
 @roles_required('admin', 'accountant', 'warehouse', 'factory')
+@idempotent('milling-run')
 def milling_runs():
     try:
         location = resolve_location((request.get_json(silent=True) or {}).get('location_id')
@@ -119,6 +121,7 @@ def _positive_number(value, label, allow_zero=False):
 
 @factory_bp.route('/api/factory/produce', methods=['POST'])
 @roles_required('admin', 'accountant', 'warehouse', 'factory')
+@idempotent('production-run')
 def record_production_run():
     data = request.get_json(silent=True) or {}
     formula_name = str(data.get('formula_name') or '').strip()

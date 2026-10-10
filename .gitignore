@@ -7,3 +7,11 @@ __pycache__/
 *.bak
 check*.txt
 check_gl.py
+*.db
+*.bak*
+*.rej
+*.patch
+*.db
+*.bak*
+*.rej
+*.patch

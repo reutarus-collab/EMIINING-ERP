@@ -1,9 +1,13 @@
+from services.idempotency import idempotent
 from flask import g
 import math
 from flask import Blueprint, request, jsonify
 import uuid
+import hashlib
+import json
+from sqlalchemy.exc import IntegrityError
 from services.db import db
-from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, FeedIngredient, StockMovement, GoodsReceiptNote, GoodsReceiptLine
+from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, FeedIngredient, StockMovement, GoodsReceiptNote, GoodsReceiptLine, IdempotencyKey
 from services.po_service import create_purchase_order, item_usage, purge_empty_stock_rows
 from routes.auth import roles_required
 from services.inventory import resolve_location, location_stock, stock_quantity, change_stock, receive_stock
@@ -11,6 +15,7 @@ from services.inventory import resolve_location, location_stock, stock_quantity,
 po_bp = Blueprint('po_bp', __name__)
 
 @po_bp.route('/api/suppliers', methods=['GET', 'POST'])
+@idempotent('supplier-add')
 def manage_suppliers():
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
@@ -27,6 +32,7 @@ def manage_suppliers():
     return jsonify([{'id': s.id, 'name': s.name, 'contact_info': s.contact_info} for s in suppliers])
 
 @po_bp.route('/api/po', methods=['POST'])
+@idempotent('po-create')
 def create_po():
     try:
         data = request.get_json()
@@ -165,6 +171,7 @@ def delete_item(item_id):
         return jsonify(status='error', message=str(e)), 400
 
 @po_bp.route('/api/suppliers/add', methods=['POST'])
+@idempotent('supplier-add-2')
 def add_supplier():
     try:
         data = request.get_json()
@@ -188,13 +195,36 @@ def add_supplier():
         db.session.rollback()
         return jsonify({'status': 'error', 'message': str(e)}), 400 
 
+def _grpo_replay(key, request_hash):
+    """Return the original response if this receipt key was already posted."""
+    existing = IdempotencyKey.query.filter_by(key=key).first()
+    if not existing:
+        return None
+    if existing.created_by != g.user.username or existing.request_hash != request_hash:
+        return jsonify(status='error', message='This receipt was already posted with different details. Check the PO history before posting again.'), 409
+    return jsonify(dict(existing.response_json or {'status': 'success'}, already_processed=True))
+
 @po_bp.route('/api/po/<int:po_id>/grpo', methods=['POST'])
 def receive_grpo_partial(po_id):
+    key = None
+    request_hash = None
     try:
-        data = request.get_json() or {}
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            raise ValueError('Invalid receipt request.')
+        try:
+            key = 'grpo:' + str(uuid.UUID((request.headers.get('Idempotency-Key') or '').strip()))
+        except (ValueError, TypeError, AttributeError):
+            return jsonify(status='error', message='Reload the app and try again (receipt key missing).'), 400
+        request_hash = hashlib.sha256(json.dumps({'po_id': po_id, 'body': data}, sort_keys=True,
+                                                 separators=(',', ':')).encode('utf-8')).hexdigest()
         po = db.session.get(PurchaseOrderHeader, po_id)
         if not po:
             raise ValueError("Purchase Order not found.")
+        # A retry of an already-posted receipt returns the original result, even if the PO is now closed.
+        replay = _grpo_replay(key, request_hash)
+        if replay is not None:
+            return replay
         if po.status in ('FULLY_RECEIVED', 'CLOSED', 'CANCELLED'):
             raise ValueError("This purchase order is already closed.")
         location = resolve_location(po.location_id)
@@ -286,8 +316,18 @@ def receive_grpo_partial(po_id):
             from routes.payables import record_purchase
             record_purchase(po.supplier_id, po.id, grpo_ref, grpo_total_value, payment_method, g.user.username)
 
+        result = {'status': 'success', 'grpo_no': grpo_ref, 'po_status': po.status}
+        # Same transaction as the receipt, stock and GL rows: all commit together or none do.
+        db.session.add(IdempotencyKey(key=key, request_hash=request_hash, response_json=result,
+                                      created_by=g.user.username, location_id=location.id))
         db.session.commit()
-        return jsonify({'status': 'success', 'grpo_no': grpo_ref, 'po_status': po.status})
+        return jsonify(result)
+    except IntegrityError:
+        db.session.rollback()
+        replay = _grpo_replay(key, request_hash) if key else None
+        if replay is not None:
+            return replay
+        return jsonify(status='error', message='Receipt conflicted with another request. Check the PO history before posting again.'), 409
     except Exception as e:
         db.session.rollback()
         return jsonify({'status': 'error', 'message': str(e)}), 400
