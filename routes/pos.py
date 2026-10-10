@@ -1,5 +1,6 @@
 from services.idempotency import idempotent
 from services.models import ItemPrice
+from datetime import datetime, timedelta, time, date
 import math
 from flask import g
 import uuid
@@ -8,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 import hashlib
 import json
 from services.db import db
-from services.models import FeedIngredient, Customer, CustomerPayment, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, SalesRefundLine, IdempotencyKey
+from services.models import LocationStock, FeedIngredient, Customer, CustomerPayment, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, SalesRefundLine, IdempotencyKey
 from services.pos_service import process_full_pos_checkout
 from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
 from routes.auth import roles_required
@@ -28,7 +29,20 @@ def search_products():
         items_query = items_query.filter(FeedIngredient.name.ilike(f"%{query}%"))
     if category:
         items_query = items_query.filter_by(category=category)
-    items = items_query.all()
+    # POS shows sellable products carried by THIS outlet. Raw materials stay hidden
+    # unless the cashier explicitly picks a "Raw - ..." category. Milling services
+    # have no stock rows, so they always show.
+    stocked_ids = {r.ingredient_id for r in LocationStock.query.filter_by(location_id=location.id).all()}
+    show_raw = request.args.get('include_raw') == '1' or category.lower().startswith('raw')
+
+    def _sellable(i):
+        cat = (i.category or '').strip().lower()
+        if cat == 'milling service':
+            return True
+        if i.id not in stocked_ids:
+            return False
+        return show_raw or not cat.startswith('raw')
+    items = [i for i in items_query.all() if _sellable(i)]
     packs_by_item = {}
     for pr in ItemPrice.query.order_by(ItemPrice.pack_kg).all():
         if (pr.price or 0) > 0:
@@ -705,3 +719,68 @@ def get_sales_history():
                        'subtotal': l.subtotal} for l in lines]
         })
     return jsonify(out)
+
+
+@pos_bp.route('/api/customers/<int:customer_id>', methods=['PUT', 'PATCH'])
+def edit_customer(customer_id):
+    cust = db.session.get(Customer, customer_id)
+    if not cust:
+        return jsonify(status='error', message='Customer not found.'), 404
+    is_owner = g.user.role in ('admin', 'accountant')
+    if not is_owner and cust.location_id != getattr(g.user, 'location_id', None):
+        return jsonify(status='error', message='This customer belongs to another outlet.'), 403
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name', cust.name) or '').strip()
+    phone = str(data.get('phone', cust.phone) or '').strip()[:20]
+    loc = str(data.get('location', cust.location) or '').strip()[:100]
+    ctype = str(data.get('customer_type', cust.customer_type) or 'RETAIL').strip()[:20]
+    if not name or len(name) > 100 or any(ch in (name + phone + loc + ctype) for ch in '<>'):
+        return jsonify(status='error', message='Invalid customer details.'), 400
+    cust.name, cust.phone, cust.location, cust.customer_type = name, phone, loc, ctype
+    if is_owner and data.get('outlet_id') not in (None, ''):
+        outlet = db.session.get(Location, int(data['outlet_id']))
+        if not outlet:
+            return jsonify(status='error', message='Unknown outlet.'), 400
+        cust.location_id = outlet.id
+    db.session.commit()
+    return jsonify(status='success', customer_id=cust.id)
+
+
+LOCAL_OFFSET = timedelta(hours=3)  # Africa/Nairobi; same as reports.LOCAL_UTC_OFFSET
+
+
+def _utc_window(first_day, last_day):
+    start = datetime.combine(first_day, time.min) - LOCAL_OFFSET
+    end = datetime.combine(last_day + timedelta(days=1), time.min) - LOCAL_OFFSET
+    return start, end
+
+
+@pos_bp.route('/api/sales-history/summary', methods=['GET'])
+def sales_summary():
+    try:
+        location = resolve_location(request.args.get('location_id'))
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    today = (datetime.utcnow() + LOCAL_OFFSET).date()
+    windows = {
+        'today': (today, today),
+        'yesterday': (today - timedelta(days=1), today - timedelta(days=1)),
+        'this_week': (today - timedelta(days=today.weekday()), today),   # Monday to today
+        'this_month': (today.replace(day=1), today),
+        'this_year': (today.replace(month=1, day=1), today),
+    }
+    out = {}
+    for label, (first, last) in windows.items():
+        start, end = _utc_window(first, last)
+        count, gross, credit = db.session.query(
+            db.func.count(OrderHeader.id), db.func.coalesce(db.func.sum(OrderHeader.total_amount), 0.0),
+            db.func.coalesce(db.func.sum(OrderHeader.credit_amount), 0.0)).filter(
+            OrderHeader.location_id == location.id, OrderHeader.created_at >= start,
+            OrderHeader.created_at < end, OrderHeader.status == 'COMPLETED').one()
+        refunds = db.session.query(db.func.coalesce(db.func.sum(SalesRefund.amount), 0.0)).filter(
+            SalesRefund.location_id == location.id, SalesRefund.created_at >= start,
+            SalesRefund.created_at < end).scalar() or 0.0
+        out[label] = {'from': first.isoformat(), 'to': last.isoformat(), 'orders': count,
+                      'gross_sales': round(gross, 2), 'refunds': round(refunds, 2),
+                      'net_sales': round(gross - refunds, 2), 'credit_given': round(credit, 2)}
+    return jsonify(location=location.name, periods=out)

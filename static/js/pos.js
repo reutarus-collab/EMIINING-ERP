@@ -484,7 +484,23 @@ async function processDebtRepayment() {
 }
 
 let salesHistoryByOrder = {};
+async function loadSalesSummary() {
+  const box = document.getElementById('sales-summary');
+  if (!box) return;
+  const res = await fetch('/api/sales-history/summary?location_id=' + encodeURIComponent(activeLocationId));
+  if (!res.ok) { box.innerHTML = ''; return; }
+  const d = (await res.json()).periods;
+  const labels = {today:'Today', yesterday:'Yesterday', this_week:'This week', this_month:'This month', this_year:'This year'};
+  box.innerHTML = Object.keys(labels).map(k => {
+    const p = d[k];
+    return `<div style="border:1px solid #dee2e6;border-radius:8px;padding:10px">
+      <div style="font-size:.8rem;color:#6c757d">${labels[k]}</div>
+      <div style="font-size:1.25rem;font-weight:700">KSh ${Number(p.net_sales).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+      <small>${p.orders} sales${p.refunds ? ' · refunds ' + Number(p.refunds).toFixed(0) : ''}${p.credit_given ? ' · credit ' + Number(p.credit_given).toFixed(0) : ''}</small></div>`;
+  }).join('');
+}
 async function loadSalesHistory() {
+  loadSalesSummary();
   const res = await fetch('/api/sales-history?location_id=' + encodeURIComponent(activeLocationId));
   const history = await res.json();
   const tbody = document.getElementById('sales-table-body'); 
