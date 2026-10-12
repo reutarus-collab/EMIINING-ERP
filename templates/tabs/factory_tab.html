@@ -39,6 +39,20 @@
     <thead><tr><th>Formula</th><th>Items</th><th>Total %</th><th>Cost / kg (KSh)</th><th></th></tr></thead>
     <tbody id="formula-list"><tr><td colspan="5">No saved formulas yet.</td></tr></tbody>
   </table></div>
+  <div id="formula-viewer" style="display:none; background:#f8f9fa; padding:15px; border-radius:6px; margin-top:10px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+      <h5 id="formula-viewer-title" style="margin:0">Formula</h5>
+      <button type="button" class="btn-sm btn-info" onclick="closeFormulaViewer()">Close</button>
+    </div>
+    <p id="formula-viewer-notes" style="margin:8px 0; white-space:pre-wrap"></p>
+    <div class="form-group"><label>Batch size (kg):</label>
+      <input type="number" id="formula-viewer-batch" value="1000" min="0.01" step="0.01" style="max-width:120px" oninput="renderFormulaViewer()" /></div>
+    <div style="overflow-x:auto"><table class="data-table">
+      <thead><tr><th>Ingredient</th><th>%</th><th>kg for batch</th><th>Cost / kg</th><th>Cost in 1 kg of feed</th></tr></thead>
+      <tbody id="formula-viewer-rows"></tbody>
+    </table></div>
+    <div id="formula-viewer-total" role="status" style="margin-top:10px"></div>
+  </div>
   <div id="formula-editor" style="display:none; background:#f8f9fa; padding:15px; border-radius:6px; margin-top:10px;">
     <h5 id="formula-editor-title">Formula</h5>
     <div class="form-group"><label>Formula name:</label><input type="text" id="formula-name" maxlength="100" /></div>

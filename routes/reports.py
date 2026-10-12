@@ -299,8 +299,11 @@ def cash_walk():
     equipment_bought = max(0.0, by_code.get(ASSET_CODES['equipment'], [0.0, 0.0])[0] - by_code.get(ASSET_CODES['equipment'], [0.0, 0.0])[1])
     owner_withdrawals = sum(max(0.0, (entry.debit or 0.0) - (entry.credit or 0.0))
                             for entry in entries if entry.source_type == 'OWNER_WITHDRAWAL' and entry.account_code == '3000')
+    old_debts_recorded = sum((entry.credit or 0.0) - (entry.debit or 0.0)
+                             for entry in entries if entry.source_type == 'OPENING_DEBT' and entry.account_code == '3000')
+    # Old customer debts raise debtors without any cash or profit, so they must not count against cash.
     formula_close = (opening.cash + profit - delta_inventory - delta_debtors + delta_creditors
-                     - owner_withdrawals - equipment_bought)
+                     - owner_withdrawals - equipment_bought + old_debts_recorded)
     cash_delta = sum(by_code.get(code, [0.0, 0.0])[0] - by_code.get(code, [0.0, 0.0])[1] for code in CASH_CODES)
     ledger_open = sum(_ledger_balance_at(code, start) for code in CASH_CODES)
     ledger_close = ledger_open + cash_delta
@@ -321,7 +324,8 @@ def cash_walk():
                           'debtors_increase': round(delta_debtors, 2),
                           'creditors_increase': round(delta_creditors, 2),
                           'owner_withdrawals': round(owner_withdrawals, 2),
-                          'equipment_bought': round(equipment_bought, 2)},
+                          'equipment_bought': round(equipment_bought, 2),
+                          'old_debts_recorded': round(old_debts_recorded, 2)},
                    calculated_closing_cash=round(formula_close, 2),
                    ledger_closing_cash=round(ledger_close, 2),
                    reconciliation_difference=round(ledger_close - formula_close, 2),
@@ -604,3 +608,148 @@ def leak_report():
                      key=lambda r: -(r.get('amount') or 0.0))
     return jsonify(start=start.isoformat(), end=end.isoformat(), leaks=losses,
                    money_lost=losses, cash_tied_up=tied_up)
+
+
+# ---------------------------------------------------------------------------
+# General ledger financial statements: Trial Balance, Profit & Loss, Cash Flow
+# ---------------------------------------------------------------------------
+def _statement_period():
+    end = _date_arg('end', _today_local())
+    start = _date_arg('start', end.replace(day=1))
+    if end < start or (end - start).days > 366:
+        raise ValueError('Choose a period of 1 to 367 days.')
+    return start, end
+
+
+def _sum_by_account(entries):
+    totals = {}
+    for e in entries:
+        pair = totals.setdefault(str(e.account_code), [0.0, 0.0])
+        pair[0] += e.debit or 0.0
+        pair[1] += e.credit or 0.0
+    return totals
+
+
+def _chart():
+    return {str(a.account_code): (a.name, str(a.category or '').upper())
+            for a in Account.query.all()}
+
+
+@reports_bp.route('/api/reports/trial-balance')
+@roles_required('admin', 'accountant')
+def trial_balance():
+    """Every account's closing balance from the start of the ledger through the end date."""
+    try:
+        end = _date_arg('end', _today_local())
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    cutoff = datetime.combine(end + timedelta(days=1), time.min) - LOCAL_UTC_OFFSET
+    totals = _sum_by_account(GeneralLedgerEntry.query.filter(GeneralLedgerEntry.created_at < cutoff).all())
+    chart = _chart()
+    rows, total_dr, total_cr = [], 0.0, 0.0
+    for code in sorted(totals):
+        debit, credit = totals[code]
+        net = round(debit - credit, 2)
+        name, category = chart.get(code, ('(account not in chart)', 'UNKNOWN'))
+        dr, cr = (net, 0.0) if net >= 0 else (0.0, -net)
+        total_dr += dr
+        total_cr += cr
+        rows.append({'code': code, 'name': name, 'category': category,
+                     'debit': round(dr, 2), 'credit': round(cr, 2)})
+    diff = round(total_dr - total_cr, 2)
+    return jsonify(as_of=end.isoformat(), rows=rows, total_debit=round(total_dr, 2),
+                   total_credit=round(total_cr, 2), difference=diff, balanced=abs(diff) < 0.01,
+                   note='Ledger activity only. Opening balances saved under Money & leaks are not ledger entries, so they are not included here.')
+
+
+@reports_bp.route('/api/reports/profit-loss')
+@roles_required('admin', 'accountant')
+def profit_loss():
+    try:
+        start, end = _statement_period()
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    totals = _sum_by_account(_period_entries(start, end))
+    chart = _chart()
+
+    def line(code, sign):
+        debit, credit = totals[code]
+        name = chart.get(code, ('(account not in chart)',))[0]
+        return {'code': code, 'name': name, 'amount': round(sign * (credit - debit), 2)}
+
+    revenue, contra, other_income, expenses = [], [], [], []
+    cogs = 0.0
+    for code in sorted(totals):
+        category = chart.get(code, ('', 'UNKNOWN'))[1]
+        if category in ('INCOME', 'REVENUE'):
+            (revenue if code == '4000' else other_income).append(line(code, 1))
+        elif category == 'CONTRA_INCOME':
+            contra.append(line(code, -1))
+        elif category == 'EXPENSE':
+            row = line(code, -1)
+            if code == '5000':
+                cogs = row['amount']
+            else:
+                expenses.append(row)
+    gross_sales = sum(r['amount'] for r in revenue)
+    returns = sum(r['amount'] for r in contra)
+    net_sales = round(gross_sales - returns, 2)
+    gross_profit = round(net_sales - cogs, 2)
+    other_total = round(sum(r['amount'] for r in other_income), 2)
+    expense_total = round(sum(r['amount'] for r in expenses), 2)
+    net_profit = round(gross_profit + other_total - expense_total, 2)
+    return jsonify(start=start.isoformat(), end=end.isoformat(),
+                   revenue=revenue, returns=contra, gross_sales=round(gross_sales, 2),
+                   returns_total=round(returns, 2), net_sales=net_sales,
+                   cogs=round(cogs, 2), gross_profit=gross_profit,
+                   gross_margin_pct=round(gross_profit / net_sales * 100, 1) if net_sales else None,
+                   other_income=other_income, other_income_total=other_total,
+                   expenses=expenses, expenses_total=expense_total, net_profit=net_profit)
+
+
+CASH_FLOW_GROUPS = (
+    ('operating', 'Operating activities', (
+        ('POS', 'Sales receipts (net of M-Pesa/bank deductions)'),
+        ('DEBT_REPAYMENT', 'Customer debt repayments'),
+        ('SALES_REFUND', 'Customer refunds paid'),
+        ('PURCHASE', 'Stock purchases paid at receipt'),
+        ('SUPPLIER_PAYMENT', 'Supplier payments'),
+        ('OPERATING_EXPENSE', 'Operating expenses paid'),
+        ('TILL_OVER_SHORT', 'Till over/short'),
+        ('TILL_CASH_MOVEMENT', 'Till cash to/from safe (should net to zero)'),
+    )),
+    ('investing', 'Investing activities', (('EQUIPMENT_PURCHASE', 'Equipment bought'),)),
+    ('financing', 'Financing activities', (('OWNER_WITHDRAWAL', 'Owner withdrawals'),)),
+)
+
+
+@reports_bp.route('/api/reports/cash-flow')
+@roles_required('admin', 'accountant')
+def cash_flow():
+    """Direct-method cash flow: every movement on the cash, M-Pesa, bank and safe accounts."""
+    try:
+        start, end = _statement_period()
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    by_source = {}
+    for e in _period_entries(start, end):
+        if str(e.account_code) in CASH_CODES:
+            key = e.source_type or 'OTHER'
+            by_source[key] = by_source.get(key, 0.0) + (e.debit or 0.0) - (e.credit or 0.0)
+    known = {code for _, _, items in CASH_FLOW_GROUPS for code, _ in items}
+    groups, net_total = [], 0.0
+    for key, title, items in CASH_FLOW_GROUPS:
+        lines = [{'label': label, 'amount': round(by_source.get(code, 0.0), 2)} for code, label in items
+                 if abs(by_source.get(code, 0.0)) > 0.004]
+        if key == 'operating':
+            other = round(sum(v for k, v in by_source.items() if k not in known), 2)
+            if abs(other) > 0.004:
+                lines.append({'label': 'Other cash movements', 'amount': other})
+        subtotal = round(sum(l['amount'] for l in lines), 2)
+        net_total += subtotal
+        groups.append({'key': key, 'title': title, 'lines': lines, 'net': subtotal})
+    opening = round(sum(_ledger_balance_at(code, start) for code in CASH_CODES), 2)
+    net_total = round(net_total, 2)
+    return jsonify(start=start.isoformat(), end=end.isoformat(), groups=groups,
+                   net_change=net_total, opening_cash=opening, closing_cash=round(opening + net_total, 2))
+

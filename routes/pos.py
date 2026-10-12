@@ -1,3 +1,4 @@
+import os
 from services.idempotency import idempotent
 from services.models import ItemPrice
 from datetime import datetime, timedelta, time, date
@@ -9,12 +10,21 @@ from sqlalchemy.exc import IntegrityError
 import hashlib
 import json
 from services.db import db
-from services.models import LocationStock, FeedIngredient, Customer, CustomerPayment, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, SalesRefundLine, IdempotencyKey
+from services.models import LocationStock, FeedIngredient, Customer, CustomerPayment, CustomerDebtEntry, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, SalesRefundLine, IdempotencyKey
 from services.pos_service import process_full_pos_checkout
 from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
 from routes.auth import roles_required
 
 pos_bp = Blueprint('pos_bp', __name__)
+
+# Most a non-admin can set as a customer's credit limit, or add as one old-debt entry.
+# Admin and accountant are not capped. Override with the STAFF_CREDIT_LIMIT_MAX environment variable.
+try:
+    STAFF_CREDIT_LIMIT_MAX = float(os.environ.get('STAFF_CREDIT_LIMIT_MAX', '10000'))
+except ValueError:
+    STAFF_CREDIT_LIMIT_MAX = 10000.0
+if not (STAFF_CREDIT_LIMIT_MAX >= 0 and math.isfinite(STAFF_CREDIT_LIMIT_MAX)):
+    STAFF_CREDIT_LIMIT_MAX = 10000.0
 
 @pos_bp.route('/api/products/search', methods=['GET'])
 def search_products():
@@ -24,7 +34,7 @@ def search_products():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return jsonify(status='error', message=str(exc)), 400
-    items_query = FeedIngredient.query
+    items_query = FeedIngredient.query.filter(FeedIngredient.is_active.isnot(False))
     if query:
         items_query = items_query.filter(FeedIngredient.name.ilike(f"%{query}%"))
     if category:
@@ -67,6 +77,7 @@ def get_inventory():
     for i in FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).all():
         row = {'id': i.id, 'name': i.name, 'category': i.category,
                'stock_quantity_kg': stock_quantity(location.id, i.id),
+               'is_active': i.is_active is not False,
                'location_id': location.id, 'location_name': location.name}
         if show_cost:
             row['cost_per_kg'] = i.cost_per_kg
@@ -84,14 +95,14 @@ def manage_customers():
         ctype = str(data.get('customer_type', 'RETAIL') or 'RETAIL').strip()[:20]
         if not name or len(name) > 100 or any(ch in (name + phone + loc + ctype) for ch in '<>'):
             return jsonify({'status': 'error', 'message': 'Invalid customer details.'}), 400
-        limit = 0.0
-        if g.user.role in ('admin', 'accountant'):
-            try:
-                limit = float(data.get('credit_limit', 0.0))
-            except (TypeError, ValueError):
-                limit = -1.0
-            if not math.isfinite(limit) or limit < 0:
-                return jsonify({'status': 'error', 'message': 'Invalid credit limit.'}), 400
+        try:
+            limit = float(data.get('credit_limit') or 0.0)
+        except (TypeError, ValueError):
+            limit = -1.0
+        if not math.isfinite(limit) or limit < 0:
+            return jsonify({'status': 'error', 'message': 'Invalid credit limit.'}), 400
+        if g.user.role not in ('admin', 'accountant') and limit > STAFF_CREDIT_LIMIT_MAX:
+            return jsonify({'status': 'error', 'message': 'Staff can set a credit limit of up to KSh %s. Ask an admin for more.' % format(STAFF_CREDIT_LIMIT_MAX, ',.0f')}), 400
         try:
             outlet = resolve_location(data.get('location_id'))
         except ValueError as exc:
@@ -119,6 +130,57 @@ def manage_customers():
                      'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit,
                      'outlet_id': c.location_id, 'outlet_name': outlet_names.get(c.location_id, 'Unassigned')}
                     for c in q.order_by(Customer.name).all()])
+
+@pos_bp.route('/api/customers/<int:customer_id>/add-debt', methods=['POST'])
+@idempotent('customer-add-debt')
+def add_customer_debt(customer_id):
+    """Record debt a customer already owed before the system (no sale, no stock, no cash).
+    Ledger: Dr Accounts Receivable, Cr Owner's Equity (opening balance)."""
+    try:
+        data = request.get_json(silent=True) or {}
+        amount = round(float(data.get('amount', 0.0)), 2)
+        if not math.isfinite(amount) or amount <= 0:
+            return jsonify({'status': 'error', 'message': 'Invalid amount.'}), 400
+        is_owner = g.user.role in ('admin', 'accountant')
+        if not is_owner and amount > STAFF_CREDIT_LIMIT_MAX:
+            return jsonify({'status': 'error', 'message': 'Staff can record up to KSh %s per entry. Ask an admin for larger balances.' % format(STAFF_CREDIT_LIMIT_MAX, ',.0f')}), 400
+        note = str(data.get('note') or '').strip()
+        if len(note) < 3 or len(note) > 200 or any(ch in note for ch in '<>'):
+            return jsonify({'status': 'error', 'message': 'Add a short note saying what this old debt is for (3-200 characters).'}), 400
+        location = resolve_location(data.get('location_id'))
+        cust = Customer.query.filter_by(id=customer_id).with_for_update().first()
+        if not cust:
+            return jsonify({'status': 'error', 'message': 'Customer not found.'}), 404
+        if cust.location_id is not None and cust.location_id != location.id:
+            return jsonify({'status': 'error', 'message': 'This customer belongs to another outlet.'}), 400
+        cust.current_balance = round((cust.current_balance or 0.0) + amount, 2)
+        ref = f"DEBT-{uuid.uuid4().hex[:6].upper()}"
+        entry = CustomerDebtEntry(reference=ref, customer_id=cust.id, location_id=location.id,
+                                  amount=amount, note=note, created_by=g.user.username)
+        db.session.add(entry)
+        db.session.flush()
+        from services.ledger_service import post_gl_entry
+        posted = post_gl_entry(ref, '1300', amount, 0.0, 'OPENING_DEBT', entry.id)
+        posted = post_gl_entry(ref, '3000', 0.0, amount, 'OPENING_DEBT', entry.id) and posted
+        if not posted:
+            raise RuntimeError('Could not post the debt to the ledger.')
+        db.session.commit()
+        return jsonify({'status': 'success', 'reference': ref, 'new_balance': cust.current_balance})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+
+
+@pos_bp.route('/api/customers/debt-entries', methods=['GET'])
+@roles_required('admin', 'accountant')
+def list_customer_debt_entries():
+    names = {c.id: c.name for c in Customer.query.all()}
+    outlets = {l.id: l.name for l in Location.query.all()}
+    rows = CustomerDebtEntry.query.order_by(CustomerDebtEntry.id.desc()).limit(200).all()
+    return jsonify([{'reference': r.reference, 'customer': names.get(r.customer_id, '?'),
+                     'outlet': outlets.get(r.location_id, '?'), 'amount': r.amount, 'note': r.note,
+                     'created_by': r.created_by, 'created_at': r.created_at.isoformat()} for r in rows])
+
 
 @pos_bp.route('/api/customers/<int:customer_id>/repay', methods=['POST'])
 @roles_required('admin', 'accountant', 'sales')

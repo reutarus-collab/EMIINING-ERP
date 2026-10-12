@@ -20,6 +20,11 @@ class FeedIngredient(db.Model):
     retail_price_per_kg = db.Column(db.Float, default=0.0)
     crude_protein_pct = db.Column(db.Float, default=0.0)
     metabolizable_energy_mcal = db.Column(db.Float, default=0.0)
+    crude_fiber_pct = db.Column(db.Float, nullable=False, default=0.0)
+    # Safe upper limit for this ingredient in a ration, as % of the mix (100 = no limit).
+    max_inclusion_pct = db.Column(db.Float, nullable=False, default=100.0)
+    # False = hidden from Stock and POS only. Formulation, purchasing and rations still use the item.
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
 
 class Customer(db.Model):
     __tablename__ = 'customers'
@@ -41,6 +46,18 @@ class CustomerPayment(db.Model):
     till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
     amount = db.Column(db.Float, nullable=False)
     payment_method = db.Column(db.String(20), nullable=False)
+    created_by = db.Column(db.String(50), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class CustomerDebtEntry(db.Model):
+    """Debt added to a customer without a sale (old balances from before the system)."""
+    __tablename__ = 'customer_debt_entries'
+    id = db.Column(db.Integer, primary_key=True)
+    reference = db.Column(db.String(50), unique=True, nullable=False)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.id'), nullable=False)
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    note = db.Column(db.String(200), nullable=False)
     created_by = db.Column(db.String(50), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -88,6 +105,7 @@ class AnimalRequirement(db.Model):
     species_stage = db.Column(db.String(100))
     min_cp = db.Column(db.Float, default=0.0)
     min_me = db.Column(db.Float, default=0.0)
+    max_fiber = db.Column(db.Float, nullable=False, default=0.0)  # max crude fibre %, 0 = not enforced
 
 class TillSession(db.Model):
     __tablename__ = 'till_sessions'
@@ -136,6 +154,8 @@ class PaymentSplit(db.Model):
     payment_method = db.Column(db.String(50))
     amount = db.Column(db.Float, default=0.0)
     reference = db.Column(db.String(100))
+    # M-Pesa / bank charge deducted from this payment before it reaches the account.
+    channel_fee = db.Column(db.Float, nullable=False, default=0.0)
 
 class IdempotencyKey(db.Model):
     __tablename__ = 'idempotency_keys'

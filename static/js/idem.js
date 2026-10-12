@@ -17,6 +17,7 @@
     /^\/api\/factory\/produce$/,
     /^\/api\/customers$/,
     /^\/api\/customers\/\d+\/repay$/,
+    /^\/api\/customers\/\d+\/add-debt$/,
     /^\/api\/till\/cash-movements$/,
     /^\/api\/pos\/orders\/\d+\/refund$/,
     /^\/api\/inventory\/adjust$/,

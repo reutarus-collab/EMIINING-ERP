@@ -40,10 +40,46 @@ def run_formulation():
     try:
         target_cp = float(data.get('target_cp_pct')) if data.get('target_cp_pct') not in (None, '') else None
         target_me = float(data.get('target_me_mcal')) if data.get('target_me_mcal') not in (None, '') else None
+        target_fiber = float(data.get('target_fiber_max_pct')) if data.get('target_fiber_max_pct') not in (None, '') else None
     except (TypeError, ValueError):
-        return jsonify(status='error', message='Enter valid protein and energy targets.'), 400
-    result = solve_feed_formulation(species, batch, raw_ids, location.id, target_cp, target_me)
+        return jsonify(status='error', message='Enter valid protein, energy and fibre targets.'), 400
+    result = solve_feed_formulation(species, batch, raw_ids, location.id, target_cp, target_me,
+                                    target_fiber, bool(data.get('limit_to_stock')))
     return jsonify(result), 200 if result.get('status') == 'optimal' else 422
+
+
+@factory_bp.route('/api/formulate/requirements', methods=['GET'])
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
+def get_stage_requirements():
+    from services.models import AnimalRequirement
+    species = str(request.args.get('species') or '').strip()
+    row = AnimalRequirement.query.filter_by(species_stage=species).first()
+    return jsonify(species=species, saved=bool(row),
+                   min_cp=(row.min_cp if row and row.min_cp else 16.0),
+                   min_me=(row.min_me if row and row.min_me else 2.5),
+                   max_fiber=(row.max_fiber if row and row.max_fiber else 0.0))
+
+
+@factory_bp.route('/api/formulate/requirements', methods=['POST'])
+@roles_required('admin', 'accountant')
+def save_stage_requirements():
+    """Save the targets as this stage's defaults so the calculator opens with them."""
+    from services.models import AnimalRequirement
+    data = request.get_json(silent=True) or {}
+    species = str(data.get('species') or '').strip()
+    if not species or len(species) > 100:
+        return jsonify(status='error', message='Choose a livestock stage.'), 400
+    try:
+        min_cp, min_me, max_fiber = (float(data.get(k) or 0) for k in ('min_cp', 'min_me', 'max_fiber'))
+    except (TypeError, ValueError):
+        return jsonify(status='error', message='Enter numbers for the targets.'), 400
+    if not (0 < min_cp <= 100 and min_me > 0 and 0 <= max_fiber <= 100):
+        return jsonify(status='error', message='Protein must be 0-100%, energy above 0, fibre 0-100% (0 = no limit).'), 400
+    row = AnimalRequirement.query.filter_by(species_stage=species).first() or AnimalRequirement(species_stage=species)
+    row.min_cp, row.min_me, row.max_fiber = min_cp, min_me, max_fiber
+    db.session.add(row)
+    db.session.commit()
+    return jsonify(status='success')
 
 
 @factory_bp.route('/api/factory/milling-runs', methods=['GET', 'POST'])

@@ -43,6 +43,13 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
             raise Exception('Invalid payment method.')
         if _num(p.get('amount', 0.0), 'payment amount') < 0:
             raise Exception('Payment amounts cannot be negative.')
+        fee = _num(p.get('fee', 0.0) or 0.0, 'M-Pesa/bank deduction')
+        if fee < 0:
+            raise Exception('M-Pesa/bank deduction cannot be negative.')
+        if fee > 0 and p.get('payment_method') not in ('MPESA', 'BANK'):
+            raise Exception('A deduction can only be entered on M-Pesa or Bank payments.')
+        if fee > _num(p.get('amount', 0.0), 'payment amount') + 0.001:
+            raise Exception('M-Pesa/bank deduction cannot be more than the amount paid.')
     if not cart:
         raise Exception("Cart is empty.")
     total_bill = 0.0
@@ -57,6 +64,8 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
             raise Exception("Quantity and bag size must be above zero.")
         total_kg_for_item = qty * bag_size_kg
         ingredient = FeedIngredient.query.get(ing_id)
+        if ingredient is not None and ingredient.is_active is False:
+            raise Exception(f'{ingredient.name} is disabled and cannot be sold.')
         if not ingredient:
             raise Exception(f"Ingredient ID {ing_id} not found.")
         is_service = ingredient.category == 'Milling Service'
@@ -147,7 +156,9 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
     for p in payments:
         amt = float(p.get('amount', 0.0))
         if amt > 0:
-            db.session.add(PaymentSplit(order_id=order.id, payment_method=p.get('payment_method'), amount=amt, reference=p.get('reference', '')))
+            fee = round(float(p.get('fee', 0.0) or 0.0), 2) if p.get('payment_method') in ('MPESA', 'BANK') else 0.0
+            db.session.add(PaymentSplit(order_id=order.id, payment_method=p.get('payment_method'), amount=amt,
+                                        reference=p.get('reference', ''), channel_fee=fee))
 
     till = TillSession.query.filter_by(id=till_session_id, location_id=location_id,
                                        cashier_name=getattr(g.user, 'username', ''),
@@ -170,8 +181,12 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
                 amount = _num(payment.get('amount', 0.0), 'payment amount')
                 returned = min(change_remaining, amount) if method == 'CASH' else 0.0
                 change_remaining -= returned
+                fee = round(float(payment.get('fee', 0.0) or 0.0), 2) if method in ('MPESA', 'BANK') else 0.0
                 if amount > returned:
-                    post_gl_entry(sale_id, account_by_method[method], amount - returned, 0.0, 'POS', order.id)
+                    # The account receives the amount net of the channel deduction; the deduction is an expense.
+                    post_gl_entry(sale_id, account_by_method[method], amount - returned - fee, 0.0, 'POS', order.id)
+                    if fee > 0:
+                        post_gl_entry(sale_id, '5360', fee, 0.0, 'POS', order.id)
         if credit_amount > 0:
             post_gl_entry(sale_id, '1300', credit_amount, 0.0, 'POS', order.id)
         if total_cost > 0:

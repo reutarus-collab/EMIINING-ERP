@@ -4,7 +4,7 @@
     <p>Calculates a least-cost recipe using raw-ingredient cost at your assigned outlet. Confirm the ration with a qualified nutritionist before production.</p>
     <div class="form-group">
       <label>Target Livestock Stage:</label>
-      <select id="species-select">
+      <select id="species-select" onchange="loadStageTargets()">
         <option value="Dairy Cattle (High Yield 15L+)">Dairy Cattle (High Yield 15L+)</option>
         <option value="Poultry Broiler Starter">Poultry Broiler Starter</option>
         <option value="Pig Grower Rations">Pig Grower Rations</option>
@@ -22,8 +22,16 @@
       <label>Minimum metabolizable energy (Mcal/kg):</label>
       <input type="number" id="target-me" min="0.01" step="0.01" value="2.5" />
     </div>
-    <p>This calculator enforces crude protein and energy minimums using ingredient data entered in Stock Setup. It does not check amino acids, minerals, medicine, or safe inclusion limits.</p>
+    <div class="form-group">
+      <label>Maximum crude fibre (%): <small>0 = no limit</small></label>
+      <input type="number" id="target-fiber" min="0" max="100" step="0.01" value="0" />
+    </div>
+    <div class="form-group">
+      <label><input type="checkbox" id="limit-stock" /> Only use what is in stock at this outlet</label>
+    </div>
+    <p>This calculator enforces minimum crude protein and energy, maximum fibre, and each ingredient's max inclusion limit, using the nutrient profiles saved in Purchasing &rarr; Item Master. It does not check amino acids, minerals or medicine, so confirm the result with a nutritionist.</p>
     <button class="btn-primary" onclick="runFormulation()" style="padding: 10px;">Calculate Optimal Batch Recipe</button>
+    <button class="btn-sm btn-info" data-roles="admin,accountant" onclick="saveStageTargets()" style="padding: 10px;">Save these targets as this stage's defaults</button>
     <div id="formulation-result" role="status" aria-live="polite" style="background:#f8f9fa; padding:10px; margin-top:10px; border-radius:4px;">Choose a stage and batch size, then calculate.</div>
   </div>
 </div>

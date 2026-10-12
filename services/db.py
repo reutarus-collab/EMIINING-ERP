@@ -17,6 +17,11 @@ def _migrate_location_schema():
         'stock_movements': {'location_id': 'INTEGER', 'reason': 'VARCHAR(200)', 'created_at': 'DATETIME'},
         'order_headers': {'location_id': 'INTEGER', 'till_session_id': 'INTEGER'},
         'order_lines': {'unit_cost_per_kg': 'FLOAT NOT NULL DEFAULT 0'},
+        'payment_splits': {'channel_fee': 'FLOAT NOT NULL DEFAULT 0'},
+        'feed_ingredients': {'is_active': 'BOOLEAN NOT NULL DEFAULT 1',
+                             'crude_fiber_pct': 'FLOAT NOT NULL DEFAULT 0',
+                             'max_inclusion_pct': 'FLOAT NOT NULL DEFAULT 100'},
+        'animal_requirements': {'max_fiber': 'FLOAT NOT NULL DEFAULT 0'},
         'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT', 'open_key': 'VARCHAR(120)'},
         'app_users': {'location_id': 'INTEGER'},
         'customers': {'location_id': 'INTEGER'},
@@ -49,6 +54,7 @@ def _migrate_location_schema():
     if db.engine.dialect.name != 'sqlite':
         additions['till_sessions']['opened_at'] = 'TIMESTAMP'
         additions['till_sessions']['closed_at'] = 'TIMESTAMP'
+        additions['feed_ingredients']['is_active'] = 'BOOLEAN NOT NULL DEFAULT TRUE'
     with db.engine.begin() as conn:
         for table, columns in additions.items():
             if table not in inspector.get_table_names():
@@ -176,6 +182,7 @@ def _migrate_location_schema():
                                  ('5330', 'Rent Expense', 'EXPENSE'),
                                  ('5340', 'Repairs and Maintenance Expense', 'EXPENSE'),
                                  ('5350', 'Operating Supplies Expense', 'EXPENSE'),
+                                 ('5360', 'Payment Channel Fees (M-Pesa/Bank)', 'EXPENSE'),
                                  ('5390', 'Other Operating Expense', 'EXPENSE')):
         if not Account.query.filter_by(account_code=code).first():
             db.session.add(Account(account_code=code, name=name, category=category))

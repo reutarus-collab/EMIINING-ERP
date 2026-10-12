@@ -12,7 +12,8 @@ def stock():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return jsonify(status='error', message=str(exc)), 400
-    rows = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).order_by(FeedIngredient.name).all()
+    rows = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service'),
+                                       FeedIngredient.is_active.isnot(False)).order_by(FeedIngredient.name).all()
     show_cost = g.user.role in ('admin', 'accountant', 'warehouse')
     result = []
     for i in rows:
@@ -211,3 +212,73 @@ def packs_save():
             db.session.add(ItemPrice(ingredient_id=item.id, pack_kg=float(size), price=price))
     db.session.commit()
     return jsonify(status='success')
+
+
+@retail_bp.route('/api/price-list.pdf')
+def price_list_pdf():
+    """Customer-facing retail price list. Prices only: no costs, margins or stock."""
+    import io
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from flask import Response
+
+    packs = {}
+    for r in ItemPrice.query.all():
+        if (r.price or 0) > 0:
+            packs.setdefault(r.ingredient_id, {})[int(round(r.pack_kg))] = r.price
+    sizes = sorted({size for p in packs.values() for size in p})
+
+    def group_rank(cat):
+        cat = (cat or '').strip().lower()
+        return 0 if cat == 'finished feed' else (2 if cat == 'milling service' else 1)
+
+    items = [i for i in FeedIngredient.query.filter(FeedIngredient.is_active.isnot(False)).all()
+             if (i.retail_price_per_kg or 0) > 0 or packs.get(i.id)]
+    items.sort(key=lambda i: (group_rank(i.category), (i.name or '').lower()))
+    if not items:
+        return jsonify(status='error', message='No priced items yet. Set prices under Retail Pricing first.'), 404
+
+    def money(v):
+        return '{:,.0f}'.format(v) if abs(v - round(v)) < 0.005 else '{:,.2f}'.format(v)
+
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle('t', parent=styles['Title'], fontSize=22, spaceAfter=2)
+    sub = ParagraphStyle('s', parent=styles['Normal'], alignment=1, textColor=colors.HexColor('#555555'))
+    cell = ParagraphStyle('c', parent=styles['Normal'], fontSize=10, leading=12)
+    now_eat = datetime.utcnow() + timedelta(hours=3)
+
+    header = ['Product', 'Per kg (KSh)'] + ['%d kg bag (KSh)' % z for z in sizes]
+    rows = [header]
+    for i in items:
+        rows.append([Paragraph((i.name or '').replace('&', '&amp;').replace('<', '&lt;'), cell),
+                     money(i.retail_price_per_kg) if (i.retail_price_per_kg or 0) > 0 else '-']
+                    + [money(packs[i.id][z]) if z in packs.get(i.id, {}) else '-' for z in sizes])
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm,
+                            topMargin=16 * mm, bottomMargin=16 * mm, title='Emining Feeds Price List')
+    usable = A4[0] - 36 * mm
+    first = usable * 0.4
+    other = (usable - first) / max(1, len(header) - 1)
+    table = Table(rows, colWidths=[first] + [other] * (len(header) - 1), repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f6f3f')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f2f6f3')]),
+        ('LINEBELOW', (0, 0), (-1, -1), 0.4, colors.HexColor('#d0d7d2')),
+        ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    doc.build([Paragraph('EMINING FEEDS', title),
+               Paragraph('Retail Price List &nbsp;|&nbsp; %s' % now_eat.strftime('%d %B %Y'), sub),
+               Spacer(1, 10 * mm), table, Spacer(1, 6 * mm),
+               Paragraph('Prices in Kenya Shillings. Bag prices are discounted against the per-kg price. '
+                         'Prices may change without notice.', sub)])
+    return Response(buf.getvalue(), mimetype='application/pdf', headers={
+        'Content-Disposition': 'attachment; filename=Emining_Feeds_Price_List_%s.pdf' % now_eat.strftime('%Y-%m-%d')})

@@ -17,17 +17,19 @@ WINDOW = 600  # seconds
 ROLE_ALLOW = {
     'sales': ('/', '/api/me', '/api/customers', '/api/inventory',
               '/api/locations', '/api/products', '/api/pos', '/api/sales-history',
-              '/api/stock', '/api/reports', '/api/till', '/api/expenses'),
+              '/api/stock', '/api/reports', '/api/till', '/api/expenses',
+              '/api/price-list.pdf'),
     'warehouse': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
                   '/api/po', '/api/suppliers', '/api/factory', '/api/stock', '/api/expenses',
                   '/api/till/current', '/api/till/open', '/api/till/close',
-                  '/api/till/cash-movements'),
+                  '/api/till/cash-movements', '/api/price-list.pdf',
+                  '/api/customers', '/api/pos/checkout'),
     'factory': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
                 '/api/po', '/api/suppliers',
                 '/api/factory', '/api/formulate', '/api/stock', '/api/customers',
                 '/api/pos/checkout', '/api/till/current', '/api/till/open',
                 '/api/till/close', '/api/till/cash-movements', '/api/reports/daily',
-                '/api/sales-history'),
+                '/api/sales-history', '/api/price-list.pdf'),
 }
 
 LOGIN_HTML = """<!doctype html>
@@ -118,8 +120,10 @@ def logout():
 
 @auth_bp.route('/api/me')
 def me():
+    from routes.pos import STAFF_CREDIT_LIMIT_MAX
     return jsonify(username=g.user.username, role=g.user.role,
-                   location=g.user.location, location_id=g.user.location_id)
+                   location=g.user.location, location_id=g.user.location_id,
+                   staff_credit_limit_max=STAFF_CREDIT_LIMIT_MAX)
 
 
 def roles_required(*roles):

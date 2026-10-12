@@ -16,9 +16,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     let role = 'sales';
     try {
         const r = await fetch('/api/me', { credentials: 'same-origin' });
-        if (r.ok) role = (await r.json()).role;
+        if (r.ok) {
+            const me = await r.json();
+            role = me.role;
+            window.staffCreditLimitMax = me.staff_credit_limit_max;
+        }
     } catch (e) {}
     window.currentRole = role;
+    const limitBox = document.getElementById('nc-limit');
+    if (limitBox && window.staffCreditLimitMax != null && !['admin', 'accountant'].includes(role)) {
+        limitBox.placeholder = 'Credit limit in KSh, up to ' + Number(window.staffCreditLimitMax).toLocaleString('en-KE') + ' (0 = cash-only)';
+        limitBox.max = window.staffCreditLimitMax;
+    }
 
     document.querySelectorAll('[data-roles]').forEach(el => {
         if (!el.dataset.roles.split(',').includes(role)) el.style.display = 'none';

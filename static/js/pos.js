@@ -216,8 +216,35 @@ function restoreCart() {
     document.getElementById('btn-restore').style.display = 'none';
 }
 
-function addPaymentLine() { 
-    document.getElementById('payment-lines').innerHTML += `<div class="split-row" style="margin-bottom: 10px;"><select class="p-method" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;" /></div>`; 
+function paymentRowHtml() {
+    return `<div class="split-row" style="margin-bottom: 10px; flex-wrap: wrap;"><select class="p-method" onchange="onPayMethodChange(this)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="number" min="0" step="0.01" class="p-fee" placeholder="Deduction (KSh)" title="M-Pesa / bank charge deducted from this payment" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;" /></div>`;
+}
+function onPayMethodChange(select) {
+    const fee = select.closest('.split-row').querySelector('.p-fee');
+    const show = select.value === 'MPESA' || select.value === 'BANK';
+    fee.style.display = show ? '' : 'none';
+    if (!show) fee.value = '';
+}
+function resetPaymentLines() {
+    document.getElementById('payment-lines').innerHTML = paymentRowHtml();
+    calculateChange();
+}
+function addPaymentLine() {
+    document.getElementById('payment-lines').insertAdjacentHTML('beforeend', paymentRowHtml());
+}
+// Clears everything that belongs to ONE sale: customer, discount, payment rows.
+function resetSaleForm() {
+    document.getElementById('customer-select').value = '';
+    updateCustomerDetails();
+    document.getElementById('repay-amount').value = '';
+    document.getElementById('discount-val').value = 0;
+    document.getElementById('discount-type').value = 'KSH';
+    resetPaymentLines();
+    renderCart();
+}
+function cancelSale() {
+    clearCart();
+    resetSaleForm();
 }
 let checkoutInFlight = false;
 function newCheckoutUuid() {
@@ -256,18 +283,24 @@ async function completeCheckout() {
       calculateChange();
     }
     const payments = [];
-    let isValid = true, totalEntered = 0;
+    let isValid = true, totalEntered = 0, negativeFee = false, feeTooBig = false;
     document.querySelectorAll('.split-row').forEach(row => {
       const amtStr = row.querySelector('.p-amount').value;
       if (amtStr && parseFloat(amtStr) > 0) {
         const amt = parseFloat(amtStr);
         if (amt < 0) isValid = false;
-        payments.push({payment_method:row.querySelector('.p-method').value, amount:amt,
+        const method = row.querySelector('.p-method').value;
+        const fee = (method === 'MPESA' || method === 'BANK') ? (parseFloat(row.querySelector('.p-fee').value) || 0) : 0;
+        if (fee < 0) { isValid = false; negativeFee = true; }
+        if (fee > amt) feeTooBig = true;
+        payments.push({payment_method:method, amount:amt, fee:fee,
           reference:row.querySelector('.p-ref').value});
         totalEntered += amt;
       }
     });
+    if (negativeFee) return alert('M-Pesa/bank deduction cannot be negative.');
     if (!isValid) return alert('Negative payments are strictly prohibited.');
+    if (feeTooBig) return alert('M-Pesa/bank deduction cannot be more than the amount paid on that line.');
     if (totalEntered < totalDue - 0.01) return alert(`Payment incomplete! You are short by KSh ${(totalDue - totalEntered).toFixed(2)}.`);
     const cartPayload = cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}));
     attempt = {key:newCheckoutUuid(), owner:window.currentUsername,
@@ -297,7 +330,7 @@ async function completeCheckout() {
           try { sessionStorage.removeItem('pendingCheckoutAttempt'); } catch (_) {}
           await loadCustomers();
           renderReceipt(data.data);
-          if (JSON.stringify(cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}))) === attempt.cartFingerprint) clearCart();
+          if (JSON.stringify(cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}))) === attempt.cartFingerprint) { clearCart(); resetSaleForm(); }
           else alert('The earlier checkout was confirmed. Your current cart was kept separate.');
           searchProducts();
       } else {
@@ -483,6 +516,33 @@ async function processDebtRepayment() {
     }
 }
 
+async function recordOldDebt() {
+    const custId = document.getElementById('customer-select').value;
+    const amt = parseFloat(document.getElementById('olddebt-amount').value);
+    const note = document.getElementById('olddebt-note').value.trim();
+    if (!custId) return alert('Select a customer first.');
+    if (!amt || amt <= 0) return alert('Enter the amount owed.');
+    if (note.length < 3) return alert('Say what this old debt is for.');
+    if (!confirm('Add KSh ' + amt.toFixed(2) + ' of debt to this customer?\n\nThis is recorded under your name and cannot be edited.')) return;
+    try {
+        const res = await fetch(`/api/customers/${custId}/add-debt`, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ amount: amt, note: note, location_id: activeLocationId })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+            alert(`Debt recorded. New balance: KSh ${data.new_balance.toFixed(2)}`);
+            document.getElementById('olddebt-amount').value = '';
+            document.getElementById('olddebt-note').value = '';
+            await loadCustomers();
+        } else {
+            alert('Could not record debt: ' + data.message);
+        }
+    } catch (e) {
+        alert('System error recording debt. Check the connection and try again.');
+    }
+}
+
 let salesHistoryByOrder = {};
 async function loadSalesSummary() {
   const box = document.getElementById('sales-summary');
@@ -538,4 +598,5 @@ async function refundSale(orderId, refundable) {
   alert(`Refund ${d.reference} recorded. ${Number(d.restocked_kg || 0).toFixed(2)} kg returned to outlet stock.`);
   await loadSalesHistory();
 }
+resetPaymentLines();
 window.addEventListener('load', initOutletTill);

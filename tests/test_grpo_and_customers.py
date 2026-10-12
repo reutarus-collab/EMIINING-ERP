@@ -162,9 +162,14 @@ class AdminCustomerListTests(Base):
         self.assertEqual({r['name'] for r in rows}, {'Kiprop Poultry', 'Unassigned Joe'})
 
     def test_non_admin_cannot_use_all_flag_to_see_other_outlets(self):
+        # Every role may list customers (to put a sale on credit), but only its own outlet's,
+        # and the all=1 flag must not widen that.
         rows = self.client.get('/api/customers?all=1')
-        # warehouse role is not allowed on /api/customers at all
-        self.assertIn(rows.status_code, (401, 403))
+        self.assertEqual(rows.status_code, 200)
+        keeper = db.session.get(User, self.keeper_id)
+        expected = {c.name for c in Customer.query.filter_by(location_id=keeper.location_id).all()}
+        self.assertEqual({r['name'] for r in rows.json}, expected)
+        self.assertNotIn('Unassigned Joe', {r['name'] for r in rows.json})
 
 
 if __name__ == '__main__':

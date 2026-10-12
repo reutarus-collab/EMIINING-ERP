@@ -156,3 +156,55 @@ async function recordEquipmentPurchase() {
     await loadMoneyReports();
   }
 }
+
+// ---- Financial statements (ledger) ----
+const stmtMoney = v => Number(v || 0).toLocaleString('en-KE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+const stmtRow = (label, amount, bold) => `<tr><${bold ? 'th' : 'td'}>${reportEsc(label)}</${bold ? 'th' : 'td'}><${bold ? 'th' : 'td'} style="text-align:right">${stmtMoney(amount)}</${bold ? 'th' : 'td'}></tr>`;
+const stmtTable = (head, rows) => `<table class="data-table"><thead><tr><th>${head}</th><th style="text-align:right">KSh</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+function renderProfitLoss(d) {
+  const list = items => items.map(r => stmtRow(`${r.code} ${r.name}`, r.amount)).join('');
+  return stmtTable('Profit & Loss ' + d.start + ' to ' + d.end,
+    list(d.revenue) + (d.returns_total ? list(d.returns).replace(/<td style="text-align:right">/g, '<td style="text-align:right">-') : '') +
+    stmtRow('Net sales', d.net_sales, true) + stmtRow('Cost of goods sold', -d.cogs) +
+    stmtRow('Gross profit' + (d.gross_margin_pct == null ? '' : ` (${d.gross_margin_pct}% margin)`), d.gross_profit, true) +
+    (d.other_income.length ? list(d.other_income) : '') + 
+    list(d.expenses.map(r => ({...r, amount: -r.amount}))) +
+    stmtRow('Net profit', d.net_profit, true));
+}
+
+function renderCashFlow(d) {
+  let rows = stmtRow('Opening cash (cash, M-Pesa, bank, safe)', d.opening_cash, true);
+  d.groups.forEach(g => {
+    rows += `<tr><td colspan="2"><b>${reportEsc(g.title)}</b></td></tr>`;
+    rows += g.lines.length ? g.lines.map(l => stmtRow(l.label, l.amount)).join('') : '<tr><td colspan="2" style="color:#888">No movements</td></tr>';
+    rows += stmtRow('Net ' + g.title.toLowerCase(), g.net, true);
+  });
+  rows += stmtRow('Net change in cash', d.net_change, true) + stmtRow('Closing cash', d.closing_cash, true);
+  return stmtTable('Cash Flow ' + d.start + ' to ' + d.end, rows);
+}
+
+function renderTrialBalance(d) {
+  const body = d.rows.map(r => `<tr><td>${reportEsc(r.code)} ${reportEsc(r.name)}</td><td style="text-align:right">${r.debit ? stmtMoney(r.debit) : ''}</td><td style="text-align:right">${r.credit ? stmtMoney(r.credit) : ''}</td></tr>`).join('');
+  const warn = d.balanced ? '' : `<p style="color:#b42318"><b>OUT OF BALANCE by KSh ${stmtMoney(Math.abs(d.difference))}.</b> Some ledger postings are one-sided; find them before trusting the profit figures.</p>`;
+  return warn + `<table class="data-table"><thead><tr><th>Account as of ${reportEsc(d.as_of)}</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th></tr></thead><tbody>${body}<tr><th>Total</th><th style="text-align:right">${stmtMoney(d.total_debit)}</th><th style="text-align:right">${stmtMoney(d.total_credit)}</th></tr></tbody></table><p style="color:#666">${reportEsc(d.note)}</p>`;
+}
+
+async function loadStatements() {
+  const startEl = document.getElementById('stmt-start'), endEl = document.getElementById('stmt-end');
+  const now = new Date();
+  if (!endEl.value) endEl.value = dateInputValue(now);
+  if (!startEl.value) startEl.value = dateInputValue(new Date(now.getFullYear(), now.getMonth(), 1));
+  const q = `start=${encodeURIComponent(startEl.value)}&end=${encodeURIComponent(endEl.value)}`;
+  const msg = document.getElementById('stmt-message');
+  msg.textContent = 'Loading...';
+  const targets = [['profit-loss', 'stmt-pl', renderProfitLoss], ['cash-flow', 'stmt-cf', renderCashFlow], ['trial-balance', 'stmt-tb', renderTrialBalance]];
+  try {
+    const results = await Promise.all(targets.map(t => fetch(`/api/reports/${t[0]}?${q}`, {credentials: 'same-origin'}).then(async r => ({ok: r.ok, data: await r.json().catch(() => ({}))}))));
+    msg.textContent = '';
+    results.forEach((res, i) => {
+      document.getElementById(targets[i][1]).innerHTML = res.ok ? targets[i][2](res.data) : reportEsc(res.data.message || 'Could not load.');
+    });
+  } catch (e) { msg.textContent = 'No connection. Try again.'; }
+}
+

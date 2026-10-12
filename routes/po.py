@@ -1,3 +1,4 @@
+from routes.auth import roles_required
 from services.idempotency import idempotent
 from flask import g
 import math
@@ -111,9 +112,55 @@ def get_po_inventory():
             'stock_quantity_kg': stock_quantity(location.id, i.id),
             'cost_per_kg': getattr(i, 'cost_per_kg', 0.0),
             'bag_size_kg': getattr(i, 'bag_size_kg', 50.0),
-            'purchase_uom': getattr(i, 'purchase_uom', 'KG') # NEW: Send UOM to frontend
+            'purchase_uom': getattr(i, 'purchase_uom', 'KG'), # NEW: Send UOM to frontend
+            'is_active': i.is_active is not False,
+            'crude_protein_pct': i.crude_protein_pct or 0.0,
+            'metabolizable_energy_mcal': i.metabolizable_energy_mcal or 0.0,
+            'crude_fiber_pct': i.crude_fiber_pct or 0.0,
+            'max_inclusion_pct': 100.0 if i.max_inclusion_pct is None else i.max_inclusion_pct
         })
     return jsonify(result)
+
+
+@po_bp.route('/api/po/inventory/<int:item_id>/nutrients', methods=['POST'])
+@roles_required('admin', 'accountant', 'factory')
+def set_item_nutrients(item_id):
+    """Nutrient profile the Ration Formulator uses: protein %, energy Mcal/kg, fibre %, max inclusion %."""
+    import math
+    data = request.get_json(silent=True) or {}
+    limits = (('crude_protein_pct', 0, 100), ('metabolizable_energy_mcal', 0, 10),
+              ('crude_fiber_pct', 0, 100), ('max_inclusion_pct', 0.01, 100))
+    values = {}
+    for key, low, high in limits:
+        try:
+            value = float(data.get(key))
+        except (TypeError, ValueError):
+            return jsonify(status='error', message='Enter a number for every nutrient field.'), 400
+        if not math.isfinite(value) or value < low or value > high:
+            return jsonify(status='error', message=f'{key.replace("_", " ")} must be between {low} and {high}.'), 400
+        values[key] = value
+    item = db.session.get(FeedIngredient, item_id)
+    if not item:
+        return jsonify(status='error', message='Item not found.'), 404
+    for key, value in values.items():
+        setattr(item, key, value)
+    db.session.commit()
+    return jsonify(status='success')
+
+
+@po_bp.route('/api/po/inventory/<int:item_id>/active', methods=['POST'])
+@roles_required('admin')
+def set_item_active(item_id):
+    """Disable = hidden from Stock and POS only. Formulation, purchasing and rations still use the item."""
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data.get('active'), bool):
+        return jsonify(status='error', message='Send active as true or false.'), 400
+    item = db.session.get(FeedIngredient, item_id)
+    if not item:
+        return jsonify(status='error', message='Item not found.'), 404
+    item.is_active = data['active']
+    db.session.commit()
+    return jsonify(status='success', id=item.id, is_active=item.is_active)
 
 @po_bp.route('/api/po/inventory/add', methods=['POST'])
 def add_new_item():

@@ -30,7 +30,10 @@ window.escHtml = window.escHtml || function (s) {
   <div class="pos-grid">
     <div>
       <div class="card">
-        <h4>🔍 Product & Service Catalog Search</h4>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <h4 style="margin:0;">🔍 Product & Service Catalog Search</h4>
+          <a class="btn-sm btn-info" href="/api/price-list.pdf" target="_blank" rel="noopener" style="text-decoration:none; padding:10px 14px;">📄 Price list (PDF)</a>
+        </div>
         <div style="display: flex; gap: 10px;">
           <!-- FORCED HEIGHT AND FONT SIZE ON SEARCH & CATEGORY -->
           <input type="text" id="search-input" placeholder="Search item..." onkeyup="searchProducts()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" />
@@ -78,6 +81,15 @@ window.escHtml = window.escHtml || function (s) {
              <select id="repay-method" style="flex:1"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option></select>
              <button class="btn-sm btn-success" style="flex:1; height: 45px; font-size: 16px;" onclick="processDebtRepayment()">Settle Debt</button>
           </div>
+          <details style="margin-top:12px">
+            <summary style="cursor:pointer; font-weight:600">Record old debt (no sale)</summary>
+            <p style="margin:8px 0">For balances this customer already owed before the system. It adds to their debt but moves no stock or cash, and is logged under your name.</p>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <input type="number" id="olddebt-amount" placeholder="Amount owed (KSh)" min="1" style="flex:1; min-width:140px; height: 45px; font-size: 16px; padding: 10px;" />
+              <input type="text" id="olddebt-note" maxlength="200" placeholder="What is it for? (e.g. feed taken in 2025)" style="flex:2; min-width:200px; height: 45px; font-size: 16px; padding: 10px;" />
+              <button class="btn-sm btn-info" style="flex:1; height: 45px; font-size: 16px;" onclick="recordOldDebt()">Add debt</button>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -91,7 +103,7 @@ window.escHtml = window.escHtml || function (s) {
         </div>
         <br/>
         <div style="display: flex; gap: 10px;">
-            <button class="btn-sm btn-danger" style="height: 40px; font-size: 16px;" onclick="clearCart()">Cancel Sale</button>
+            <button class="btn-sm btn-danger" style="height: 40px; font-size: 16px;" onclick="cancelSale()">Cancel Sale</button>
             <button id="btn-hold" class="btn-sm btn-warning" style="height: 40px; font-size: 16px;" onclick="holdCart()">Hold Sale</button>
             <button id="btn-restore" class="btn-sm btn-info" style="height: 40px; font-size: 16px; display: none;" onclick="restoreCart()">Restore Sale</button>
         </div>
@@ -118,13 +130,7 @@ window.escHtml = window.escHtml || function (s) {
         </div>
 
         <label style="font-size: 16px;"><strong>Cashier Manual Entry:</strong></label>
-        <div id="payment-lines">
-          <div class="split-row" style="margin-bottom: 10px;">
-            <select class="p-method" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select>
-            <input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" />
-            <input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;" />
-          </div>
-        </div>
+        <div id="payment-lines"></div>
         <button class="btn-sm" style="height: 40px; font-size: 16px; margin-top: 5px; margin-bottom: 20px;" onclick="addPaymentLine()">+ Add Split Payment</button>
         <button onclick="completeCheckout()" class="btn-primary" style="width: 100%; padding: 20px; font-size: 20px; border-radius: 8px;">Complete Sale</button>
       </div>

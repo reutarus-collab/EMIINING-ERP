@@ -53,6 +53,8 @@
                     <th>Bag Size</th>
                     <th>Current Stock</th>
                     <th>Avg Cost (KSh)</th>
+                    <th>Nutrients (CP% · ME · Fibre% · Max%)</th>
+                    <th>Status</th>
                     <th></th>
                 </tr>
             </thead>
@@ -92,6 +94,20 @@
 	
 
 <!-- CREATE NEW ITEM MODAL -->
+    <div id="nutrient-modal" style="display:none; position:fixed; top:100px; left:50%; transform:translateX(-50%); width:420px; max-width:94vw; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1100;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+            <h3 id="nutrient-title" style="margin:0">Nutrient profile</h3>
+            <button onclick="document.getElementById('nutrient-modal').style.display='none'" style="background:none; border:none; font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <p style="margin-top:0">Used by the Ration Formulator. Values are per kg of the ingredient as fed.</p>
+        <label>Crude protein (%) <input type="number" id="nut-cp" min="0" max="100" step="0.01" style="width:100%; margin-bottom:8px; padding:8px;"></label>
+        <label>Metabolizable energy (Mcal/kg) <input type="number" id="nut-me" min="0" max="10" step="0.01" style="width:100%; margin-bottom:8px; padding:8px;"></label>
+        <label>Crude fibre (%) <input type="number" id="nut-fiber" min="0" max="100" step="0.01" style="width:100%; margin-bottom:8px; padding:8px;"></label>
+        <label>Max inclusion in a ration (%) <input type="number" id="nut-max" min="0.01" max="100" step="0.01" style="width:100%; margin-bottom:12px; padding:8px;"></label>
+        <button class="btn btn-info" onclick="po_saveNutrients()">Save</button>
+        <span id="nutrient-msg" role="status" style="margin-left:10px"></span>
+    </div>
+
     <div id="create-item-modal" style="display:none; position:fixed; top:100px; left:50%; transform:translateX(-50%); width:500px; background:#fff; box-shadow:0 10px 30px rgba(0,0,0,0.2); padding:20px; border-radius:8px; z-index:1100;">
         <div style="display:flex; justify-content:space-between; margin-bottom:20px;">
             <h3>Add New Inventory Item</h3>
@@ -299,7 +315,9 @@
                             <td>${i.bag_size_kg || '-'} kg</td>
                             <td style="font-weight:bold; color:${stockColor};">${i.stock_quantity_kg.toFixed(1)} kg</td>
                             <td>KSh ${i.cost_per_kg.toFixed(2)}</td>
-                            <td><button class="btn btn-secondary" style="color:#b00;" onclick="po_deleteItem(${i.id})">Delete</button></td>
+                            <td>${(i.category || '').toLowerCase().includes('raw') ? `${Number(i.crude_protein_pct).toFixed(1)} · ${Number(i.metabolizable_energy_mcal).toFixed(2)} · ${Number(i.crude_fiber_pct).toFixed(1)} · ${Number(i.max_inclusion_pct).toFixed(0)} <button class="btn btn-secondary" onclick="po_openNutrients(${i.id})">Edit</button>` : '-'}</td>
+                            <td>${i.is_active ? 'Active' : '<b style="color:#b00">Hidden from Stock &amp; POS</b>'}</td>
+                            <td>${window.currentRole === 'admin' ? `<button class="btn btn-secondary" onclick="po_setItemActive(${i.id}, ${!i.is_active})">${i.is_active ? 'Disable' : 'Enable'}</button> ` : ''}<button class="btn btn-secondary" style="color:#b00;" onclick="po_deleteItem(${i.id})">Delete</button></td>
                         </tr>
                     `;
                 }
@@ -625,6 +643,46 @@ async function submitGRN() {
             alert("GRN Post problem: " + err.message + "\n\nIf it was a network drop, check the PO history first. Tapping Post again is safe - it cannot be recorded twice.");
         } finally { po_grnPosting = false; }
     }
+let po_nutrientItemId = null;
+function po_openNutrients(id) {
+    const i = po_inventoryList.find(x => x.id === id);
+    if (!i) return;
+    po_nutrientItemId = id;
+    document.getElementById('nutrient-title').textContent = 'Nutrient profile: ' + i.name;
+    document.getElementById('nut-cp').value = i.crude_protein_pct;
+    document.getElementById('nut-me').value = i.metabolizable_energy_mcal;
+    document.getElementById('nut-fiber').value = i.crude_fiber_pct;
+    document.getElementById('nut-max').value = i.max_inclusion_pct;
+    document.getElementById('nutrient-msg').textContent = '';
+    document.getElementById('nutrient-modal').style.display = 'block';
+}
+async function po_saveNutrients() {
+    const msg = document.getElementById('nutrient-msg');
+    try {
+        const res = await fetch('/api/po/inventory/' + po_nutrientItemId + '/nutrients', {
+            method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                crude_protein_pct: document.getElementById('nut-cp').value,
+                metabolizable_energy_mcal: document.getElementById('nut-me').value,
+                crude_fiber_pct: document.getElementById('nut-fiber').value,
+                max_inclusion_pct: document.getElementById('nut-max').value})
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) { msg.style.color = '#b00'; msg.textContent = data.message || 'Could not save.'; return; }
+        document.getElementById('nutrient-modal').style.display = 'none';
+        po_loadInventory();
+    } catch (e) { msg.style.color = '#b00'; msg.textContent = 'No connection. Try again.'; }
+}
+
+async function po_setItemActive(id, active) {
+    try {
+        const res = await fetch('/api/po/inventory/' + id + '/active', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({active})});
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return alert(data.message || 'Could not change this item.');
+        po_loadInventory();
+    } catch (e) { alert('No connection. Try again.'); }
+}
+
 async function po_deleteItem(id) {
     const item = po_inventoryList.find(x => x.id === id);
     const name = item ? item.name : ('#' + id);

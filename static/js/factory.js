@@ -14,22 +14,65 @@ async function runFormulation() {
                 target_batch_kg: document.getElementById('batch-kg').value,
                 target_cp_pct: document.getElementById('target-cp').value,
                 target_me_mcal: document.getElementById('target-me').value,
+                target_fiber_max_pct: document.getElementById('target-fiber').value,
+                limit_to_stock: document.getElementById('limit-stock').checked,
                 location_id: window.activeLocationId || ''
             })
         });
         const data = await res.json();
-        if (!res.ok || data.status !== 'optimal') throw new Error(data.message || 'Could not calculate this ration.');
+        if (!res.ok || data.status !== 'optimal') {
+            const warn = (data.warnings || []).map(w => `<br><small>${escHtml(w)}</small>`).join('');
+            result.innerHTML = `<b style="color:#b42318">No recipe.</b> ${escHtml(data.message || 'Could not calculate this ration.')}${warn}`;
+            return;
+        }
         window.lastFormulation = data;
-        result.innerHTML = `<b>${escHtml(data.species_stage)}</b> · ${Number(data.target_batch_kg).toFixed(2)} kg batch<br>
-          Target: ${Number(data.target_crude_protein_pct).toFixed(2)}% crude protein · ${Number(data.target_metabolizable_energy_mcal).toFixed(2)} Mcal/kg<br>
+        const a = data.achieved, fiberLimit = data.target_max_crude_fiber_pct;
+        const ok = (good) => good ? '' : ' style="color:#b42318"';
+        const warnHtml = (data.warnings || []).map(w => `<div style="color:#92400e; margin-top:6px">⚠ ${escHtml(w)}</div>`).join('');
+        result.innerHTML = `<b>${escHtml(data.species_stage)}</b> · ${Number(data.target_batch_kg).toFixed(2)} kg batch${data.limit_to_stock ? ' · limited to stock on hand' : ''}<br>
           Estimated cost: KSh ${Number(data.total_batch_cost).toFixed(2)} (${Number(data.cost_per_kg).toFixed(2)} per kg)
+          <div style="overflow-x:auto"><table class="data-table" style="margin-top:8px"><thead><tr><th>Nutrient</th><th>Required</th><th>This recipe</th></tr></thead><tbody>
+            <tr><td>Crude protein</td><td>at least ${Number(data.target_crude_protein_pct).toFixed(2)}%</td><td${ok(a.crude_protein_pct + 0.005 >= data.target_crude_protein_pct)}>${a.crude_protein_pct.toFixed(2)}%</td></tr>
+            <tr><td>Metabolizable energy</td><td>at least ${Number(data.target_metabolizable_energy_mcal).toFixed(2)} Mcal/kg</td><td${ok(a.metabolizable_energy_mcal + 0.0005 >= data.target_metabolizable_energy_mcal)}>${a.metabolizable_energy_mcal.toFixed(2)} Mcal/kg</td></tr>
+            <tr><td>Crude fibre</td><td>${fiberLimit ? 'at most ' + Number(fiberLimit).toFixed(2) + '%' : 'no limit'}</td><td${ok(!fiberLimit || a.crude_fiber_pct <= fiberLimit + 0.005)}>${a.crude_fiber_pct.toFixed(2)}%</td></tr>
+          </tbody></table></div>
           <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Ingredient</th><th>%</th><th>Recipe kg</th><th>At outlet kg</th><th>Cost/kg</th><th>Line cost</th></tr></thead><tbody>
           ${data.recipe.map(row => `<tr><td>${escHtml(row.ingredient_name)}</td><td>${Number(row.fraction).toFixed(2)}</td><td>${Number(row.kg_required).toFixed(2)}</td><td>${Number(row.available_kg).toFixed(2)}</td><td>${Number(row.cost_per_kg).toFixed(2)}</td><td>${Number(row.cost).toFixed(2)}</td></tr>`).join('')}
-          </tbody></table></div>
+          </tbody></table></div>${warnHtml}
           <button type="button" class="btn-success" style="margin-top:10px" onclick="useFormulaInProduction()">Use this formula in Production Batch</button>`;
     } catch (err) {
         result.textContent = 'Could not calculate a formulation. Check the connection and try again.';
     }
+}
+
+async function loadStageTargets() {
+    const sel = document.getElementById('species-select');
+    if (!sel) return;
+    try {
+        const res = await fetch('/api/formulate/requirements?species=' + encodeURIComponent(sel.value), { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const r = await res.json();
+        document.getElementById('target-cp').value = r.min_cp;
+        document.getElementById('target-me').value = r.min_me;
+        document.getElementById('target-fiber').value = r.max_fiber || 0;
+    } catch (e) { /* keep whatever is typed */ }
+}
+
+async function saveStageTargets() {
+    const result = document.getElementById('formulation-result');
+    try {
+        const res = await fetch('/api/formulate/requirements', {
+            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                species: document.getElementById('species-select').value,
+                min_cp: document.getElementById('target-cp').value,
+                min_me: document.getElementById('target-me').value,
+                max_fiber: document.getElementById('target-fiber').value || 0
+            })
+        });
+        const data = await res.json().catch(() => ({}));
+        result.textContent = res.ok ? 'Saved. This stage will open with these targets.' : (data.message || 'Could not save the targets.');
+    } catch (e) { result.textContent = 'No connection. Try again.'; }
 }
 
 async function loadFactoryDropdowns() {
@@ -344,12 +387,17 @@ function renderFormulaLibrary() {
         tr.innerHTML = '<td></td><td>' + fm.lines.length + '</td><td>' + Number(fm.total_pct).toFixed(3) +
             '</td><td>' + Number(fm.cost_per_kg).toFixed(2) + escHtml(warn) + '</td><td></td>';
         tr.children[0].textContent = fm.name;
+        const view = document.createElement('button');
+        view.type = 'button'; view.className = 'btn-sm btn-success'; view.textContent = 'View';
+        view.addEventListener('click', () => viewFormula(fm.id));
         const edit = document.createElement('button');
         edit.type = 'button'; edit.className = 'btn-sm btn-info'; edit.textContent = 'Edit';
         edit.addEventListener('click', () => editFormula(fm.id));
         const del = document.createElement('button');
         del.type = 'button'; del.className = 'btn-sm btn-danger'; del.textContent = 'Delete';
         del.addEventListener('click', () => deleteFormula(fm.id));
+        tr.children[4].appendChild(view);
+        tr.children[4].appendChild(document.createTextNode(' '));
         tr.children[4].appendChild(edit);
         tr.children[4].appendChild(document.createTextNode(' '));
         tr.children[4].appendChild(del);
@@ -698,3 +746,36 @@ async function commitFormulaImport() {
     result.innerHTML = '';
     messages.forEach(m => { const d = document.createElement('div'); d.textContent = m; result.appendChild(d); });
 }
+
+let viewingFormulaId = null;
+function viewFormula(id) {
+    const fm = savedFormulas.find(x => x.id === id);
+    if (!fm) return;
+    viewingFormulaId = id;
+    document.getElementById('formula-viewer-title').textContent = fm.name;
+    document.getElementById('formula-viewer-notes').textContent = fm.notes ? 'Notes: ' + fm.notes : 'No notes saved for this formula.';
+    document.getElementById('formula-viewer').style.display = 'block';
+    renderFormulaViewer();
+    document.getElementById('formula-viewer').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function closeFormulaViewer() {
+    viewingFormulaId = null;
+    document.getElementById('formula-viewer').style.display = 'none';
+}
+function renderFormulaViewer() {
+    const fm = savedFormulas.find(x => x.id === viewingFormulaId);
+    if (!fm) return;
+    const batch = Number(document.getElementById('formula-viewer-batch').value) || 0;
+    const total = fm.lines.reduce((s, l) => s + Number(l.pct), 0) || 1;
+    document.getElementById('formula-viewer-rows').innerHTML = fm.lines.map(l => {
+        const c = Number(l.cost_per_kg) || 0;
+        return '<tr><td>' + escHtml(l.ingredient_name) + '</td><td>' + Number(l.pct).toFixed(3) +
+            '</td><td>' + (batch * Number(l.pct) / total).toFixed(2) + '</td><td>' + (c > 0 ? c.toFixed(2) : 'no cost set') +
+            '</td><td>' + (c > 0 ? (c * Number(l.pct) / total).toFixed(2) : '-') + '</td></tr>';
+    }).join('');
+    const note = (fm.unpriced && fm.unpriced.length) ? ' (incomplete: no cost for ' + fm.unpriced.join(', ') + ')' : '';
+    document.getElementById('formula-viewer-total').textContent = 'Total ' + Number(fm.total_pct).toFixed(3) + '% - KSh ' +
+        Number(fm.cost_per_kg).toFixed(2) + ' per kg, about KSh ' + (Number(fm.cost_per_kg) * batch).toFixed(0) + ' for ' + batch.toFixed(2) + ' kg' + note;
+}
+
+if (document.getElementById('species-select')) loadStageTargets();

@@ -74,6 +74,19 @@
     <div id="cash-walk-body"></div>
     <button id="roll-opening-btn" class="btn-sm btn-info" style="display:none" onclick="rollOpeningBalances()">Use closing balances as next week’s opening</button>
   </div>
+  <div class="card">
+    <h3>Financial statements (from the ledger)</h3>
+    <p>Trial Balance, Profit &amp; Loss and Cash Flow built straight from the general ledger. Trial Balance runs from the first ledger entry up to the end date; the other two cover the period.</p>
+    <div class="money-controls">
+      <label>From <input id="stmt-start" type="date"></label>
+      <label>To <input id="stmt-end" type="date"></label>
+      <button class="btn-sm btn-primary" onclick="loadStatements()">Load statements</button>
+    </div>
+    <div id="stmt-message" role="status"></div>
+    <h4>Profit &amp; Loss</h4><div id="stmt-pl" class="money-table-wrap"></div>
+    <h4>Cash Flow</h4><div id="stmt-cf" class="money-table-wrap"></div>
+    <h4>Trial Balance</h4><div id="stmt-tb" class="money-table-wrap"></div>
+  </div>
   <div class="card" data-roles="admin">
     <h3>Record owner withdrawal</h3>
     <p>Record personal use separately from business expenses. Cash withdrawals reduce your own open till at the selected outlet; M-Pesa and bank withdrawals post directly.</p>
