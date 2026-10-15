@@ -311,27 +311,17 @@ async function savePrice(id) {
 async function loadCustAdmin() {
   const body = document.getElementById('cust-body');
   const r = await fetch('/api/customers?all=1', {credentials: 'same-origin'});
-<<<<<<< ours
   if (!r.ok) { body.innerHTML = '<tr><td colspan="6">Cannot load customers.</td></tr>'; return; }
-=======
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="5">Cannot load customers.</td></tr>'; return; }
->>>>>>> theirs
   const rows = await r.json();
   const inp = 'style="width:100%;padding:6px"';
   body.innerHTML = rows.map(c =>
-<<<<<<< ours
-    `<tr><td>${retailEsc(c.name)}</td><td>${retailEsc(c.outlet_name)}</td><td>${retailEsc(c.phone)}</td><td>${Number(c.balance || 0).toFixed(2)}</td>
-     <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
-     <td><button class="btn-sm btn-primary" onclick="saveCreditLimit(${c.id})">Save</button></td></tr>`
-  ).join('') || '<tr><td colspan="6">No customers.</td></tr>';
-=======
     `<tr><td><input id="cn-${c.id}" value="${retailEsc(c.name)}" ${inp}></td>
+     <td>${retailEsc(c.outlet_name)}</td>
      <td><input id="cp-${c.id}" value="${retailEsc(c.phone || '')}" ${inp}></td>
      <td>${Number(c.balance || 0).toFixed(2)}</td>
      <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
      <td><button class="btn-sm btn-primary" onclick="saveCustomer(${c.id})">Save</button></td></tr>`
-  ).join('') || '<tr><td colspan="5">No customers.</td></tr>';
->>>>>>> theirs
+  ).join('') || '<tr><td colspan="6">No customers.</td></tr>';
 }
 async function saveCustomer(id) {
   const msg = document.getElementById('cust-msg');
