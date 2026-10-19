@@ -23,7 +23,7 @@ def _best_possible(objective, bounds, count):
 def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
                            ingredient_ids=None, location_id=None,
                            target_cp_pct=None, target_me_mcal=None,
-                           target_fiber_max_pct=None, limit_to_stock=False):
+                           target_fiber_max_pct=None, limit_to_stock=False, extra=None):
     """Least-cost mix of raw ingredients that meets minimum protein and energy and
     maximum fibre, respects each ingredient's safe inclusion limit, and (optionally)
     only uses what is physically in stock at the outlet."""
@@ -46,6 +46,17 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
     if max_fiber < 0 or max_fiber > 100:
         return {"status": "error", "message": "Maximum fibre must be between 0 and 100%. Use 0 for no limit."}
 
+    # Optional nutrient limits (percent of the finished feed). 0 / missing = not enforced.
+    extra = dict(extra or {})
+    ex = {}
+    for key in ('min_lysine', 'min_methionine', 'min_calcium', 'max_calcium', 'min_phosphorus'):
+        raw = extra.get(key)
+        ex[key] = _finite(raw if raw not in (None, '') else (getattr(req, key, 0.0) if req else 0.0), -1.0)
+        if ex[key] < 0 or ex[key] > 100:
+            return {"status": "error", "message": "Lysine, methionine, calcium and phosphorus limits must be between 0 and 100% (0 = not enforced)."}
+    if ex['max_calcium'] > 0 and ex['min_calcium'] > ex['max_calcium']:
+        return {"status": "error", "message": "Minimum calcium cannot be above maximum calcium."}
+
     query = FeedIngredient.query.filter(FeedIngredient.category.ilike('Raw%'))
     if ingredient_ids:
         query = query.filter(FeedIngredient.id.in_(ingredient_ids))
@@ -61,6 +72,7 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
         ).all()}
 
     usable, costs, cp, me, fiber, upper = [], [], [], [], [], []
+    ca, phos, lys, met = [], [], [], []
     no_cost, no_nutrients = [], []
     for ingredient in ingredients:
         stock = stocks.get(ingredient.id)
@@ -69,6 +81,10 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
         protein = float(ingredient.crude_protein_pct or 0.0)
         energy = float(ingredient.metabolizable_energy_mcal or 0.0)
         fibre = float(ingredient.crude_fiber_pct or 0.0)
+        extra_vals = [float(getattr(ingredient, a, 0.0) or 0.0) for a in
+                      ('calcium_pct', 'phosphorus_pct', 'lysine_pct', 'methionine_pct')]
+        if not all(math.isfinite(v) and 0 <= v <= 100 for v in extra_vals):
+            return {"status": "error", "message": f"Invalid calcium, phosphorus, lysine or methionine value for {ingredient.name}."}
         limit = ingredient.max_inclusion_pct
         limit = 100.0 if limit is None else float(limit)
         if not all(math.isfinite(v) and v >= 0 for v in (cost, protein, energy, fibre, limit)) or limit > 100:
@@ -87,6 +103,7 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
         cp.append(protein)
         me.append(energy)
         fiber.append(fibre)
+        ca.append(extra_vals[0]); phos.append(extra_vals[1]); lys.append(extra_vals[2]); met.append(extra_vals[3])
         upper.append(ub)
 
     ingredients = usable
@@ -105,6 +122,21 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
     if max_fiber > 0:
         A_ub.append(np.asarray(fiber, dtype=float))
         b_ub.append(max_fiber)
+    # (label, per-ingredient values, 'min'|'max', limit, unit). Only enforced when the limit is above 0.
+    extra_rules = [
+        ('lysine', lys, 'min', ex['min_lysine'], '%'),
+        ('methionine', met, 'min', ex['min_methionine'], '%'),
+        ('calcium', ca, 'min', ex['min_calcium'], '%'),
+        ('calcium', ca, 'max', ex['max_calcium'], '%'),
+        ('available phosphorus', phos, 'min', ex['min_phosphorus'], '%'),
+    ]
+    extra_rules = [r for r in extra_rules if r[3] > 0]
+    for label, vals, sense, limit, unit in extra_rules:
+        arr = np.asarray(vals, dtype=float)
+        A_ub.append(-arr if sense == 'min' else arr)
+        b_ub.append(-limit if sense == 'min' else limit)
+        if not any(v > 0 for v in vals):
+            warnings.append(f"No ingredient has a {label} value entered, so the {label} {sense}imum cannot be checked or met. Fill it in under Purchasing > Item Master > Edit nutrients.")
     bounds = [(0, ub) for ub in upper]
     result = linprog(
         c=np.asarray(costs, dtype=float),
@@ -132,6 +164,16 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
                 parts.append(f"best possible energy is {-best_me:.2f} Mcal/kg (need {min_me:.2f})")
             if max_fiber > 0 and low_fiber is not None and low_fiber > max_fiber + 1e-9:
                 parts.append(f"lowest possible fibre is {low_fiber:.2f}% (limit {max_fiber:.2f}%)")
+            for label, vals, sense, limit, unit in extra_rules:
+                arr = np.asarray(vals, dtype=float)
+                best = _best_possible(-arr if sense == 'min' else arr, bounds, n)
+                if best is None:
+                    continue
+                best = -best if sense == 'min' else best
+                if sense == 'min' and best < limit - 1e-9:
+                    parts.append(f"best possible {label} is {best:.2f}% (need at least {limit:.2f}%)")
+                elif sense == 'max' and best > limit + 1e-9:
+                    parts.append(f"lowest possible {label} is {best:.2f}% (limit {limit:.2f}%)")
             diagnosis["note"] = ("; ".join(parts).capitalize() + ".") if parts else \
                 "Each target can be met on its own, but not all together. Protein, energy and fibre pull against each other with these ingredients and limits."
         return {"status": "infeasible",
@@ -139,7 +181,7 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
                 "diagnosis": diagnosis, "warnings": warnings}
 
     recipe, total_cost = [], 0.0
-    achieved = {"cp": 0.0, "me": 0.0, "fiber": 0.0}
+    achieved = {"cp": 0.0, "me": 0.0, "fiber": 0.0, "ca": 0.0, "p": 0.0, "lys": 0.0, "met": 0.0}
     for index, ingredient in enumerate(ingredients):
         fraction = float(result.x[index])
         if fraction <= 0.00001:
@@ -150,6 +192,10 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
         achieved["cp"] += fraction * cp[index]
         achieved["me"] += fraction * me[index]
         achieved["fiber"] += fraction * fiber[index]
+        achieved["ca"] += fraction * ca[index]
+        achieved["p"] += fraction * phos[index]
+        achieved["lys"] += fraction * lys[index]
+        achieved["met"] += fraction * met[index]
         recipe.append({
             "ingredient_id": ingredient.id,
             "ingredient_name": ingredient.name,
@@ -174,7 +220,10 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
         "limit_to_stock": bool(limit_to_stock),
         "achieved": {"crude_protein_pct": round(achieved["cp"], 2),
                      "metabolizable_energy_mcal": round(achieved["me"], 3),
-                     "crude_fiber_pct": round(achieved["fiber"], 2)},
+                     "crude_fiber_pct": round(achieved["fiber"], 2),
+                     "calcium_pct": round(achieved["ca"], 3), "phosphorus_pct": round(achieved["p"], 3),
+                     "lysine_pct": round(achieved["lys"], 3), "methionine_pct": round(achieved["met"], 3)},
+        "extra_targets": ex,
         "cost_per_kg": round(float(result.fun), 3),
         "total_batch_cost": round(float(total_cost), 2),
         "recipe": recipe,

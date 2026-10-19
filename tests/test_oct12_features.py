@@ -395,6 +395,34 @@ class Oct12FeatureTests(unittest.TestCase):
         self.assertEqual((rows[0]['amount'], rows[0]['created_by'], rows[0]['note']), (700.0, 'cashier', 'Old balance'))
         self.assertEqual(cashier.get('/api/me').json['staff_credit_limit_max'], 10000.0)
 
+
+    # ---- ledger rounding ------------------------------------------------------------------
+    def test_fractional_cent_bill_posts_a_perfectly_balanced_entry(self):
+        from sqlalchemy import func
+        self.item.retail_price_per_kg = 41.35           # 7.5 kg -> 310.125, a half cent
+        db.session.commit()
+        r = self.client_for(self.cashier_id).post(
+            '/api/pos/checkout', headers={'Idempotency-Key': str(uuid.uuid4())},
+            json={'location_id': self.branch.id,
+                  'cart': [{'ingredient_id': self.item.id, 'unit_type': 'KG', 'qty': 7.5, 'bag_size_kg': 1}],
+                  'payments': [{'payment_method': 'CASH', 'amount': 310.13}]})
+        self.assertEqual(r.status_code, 200, r.json)
+        d, c = db.session.query(func.sum(GeneralLedgerEntry.debit), func.sum(GeneralLedgerEntry.credit)).one()
+        self.assertAlmostEqual(d, c, places=9)
+
+    def test_trial_balance_ignores_sub_cent_residue_but_catches_real_one_sided_entries(self):
+        from services.ledger_service import post_gl_entry
+        post_gl_entry('OLD1', '1000', 10.004, 0.0, 'TEST', 1)       # legacy half-cent noise
+        post_gl_entry('OLD1', '4000', 0.0, 10.0, 'TEST', 1)
+        db.session.commit()
+        admin = self.client_for(self.admin_id)
+        tb = admin.get('/api/reports/trial-balance').json
+        self.assertTrue(tb['balanced'], tb)
+        post_gl_entry('BAD1', '1000', 5.0, 0.0, 'TEST', 2)           # a real one-sided leg
+        db.session.commit()
+        tb = admin.get('/api/reports/trial-balance').json
+        self.assertFalse(tb['balanced'])
+        self.assertEqual([e['reference'] for e in tb['unbalanced_entries']], ['BAD1'])
     # ---- price list PDF ----------------------------------------------------------
     def test_price_list_pdf_has_prices_but_no_costs(self):
         db.session.add(ItemPrice(ingredient_id=self.item.id, pack_kg=70, price=2800))

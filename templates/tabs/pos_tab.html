@@ -36,16 +36,12 @@ window.escHtml = window.escHtml || function (s) {
         </div>
         <div style="display: flex; gap: 10px;">
           <!-- FORCED HEIGHT AND FONT SIZE ON SEARCH & CATEGORY -->
-          <input type="text" id="search-input" placeholder="Search item..." onkeyup="searchProducts()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" />
+          <input type="text" id="search-input" placeholder="Search item..." oninput="searchProductsSoon()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" />
           <select id="category-filter" onchange="searchProducts()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">
             <option value="">All Categories</option>
-            <option value="Finished Feed">Finished Feeds</option>
-            <option value="Raw - Energy">Raw - Energy</option>
-            <option value="Raw - Protein">Raw - Protein</option>
-            <option value="Raw - Mineral">Raw - Mineral</option>
           </select>
         </div>
-        <div id="search-results" class="search-results-box"></div>
+        <div id="search-results" class="search-results-box" style="max-height:440px;"></div>
       </div>
 
       <div class="card">

@@ -91,6 +91,7 @@ input, select, textarea {
   <button class="tab-btn" data-roles="admin" onclick="showTab('customers-tab'); loadCustAdmin();">👥 Customers</button>
   <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">📥 Purchase Orders</button>
   <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('sales-tab')">📄 Sales Ledger</button>
+  <button class="tab-btn" data-roles="admin,accountant,factory" onclick="showTab('matrix-tab'); if(typeof loadStageTargets === 'function') loadStageTargets();">🧮 Ration Formulation</button>
   <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('factory-tab')">🏭 Factory</button>
 </div>
 
@@ -98,14 +99,15 @@ input, select, textarea {
 {% include "tabs/pos_tab.html" %}
 {% include "tabs/po_tab.html" %}
 {% include "tabs/sales_tab.html" %}
+{% include "tabs/formulator_tab.html" %}
 {% include "tabs/factory_tab.html" %}
 {% include "tabs/retail_tab.html" %}
 {% include "tabs/bagprices_tab.html" %}
 {% include "tabs/payables_tab.html" %}
 
 <!-- ==================== SCRIPTS ==================== -->
-<script src="/static/js/main.js?v=10"></script>
-<script src="/static/js/pos.js?v=17"></script>
-<script src="/static/js/factory.js?v=13"></script>
-<script src="/static/js/reports.js?v=3"></script>
+<script src="/static/js/main.js?v=11"></script>
+<script src="/static/js/pos.js?v=18"></script>
+<script src="/static/js/factory.js?v=14"></script>
+<script src="/static/js/reports.js?v=4"></script>
 {% endblock %}

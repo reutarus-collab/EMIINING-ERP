@@ -96,26 +96,51 @@ async function recordTillMovement() {
   await refreshTill();
 }
 
+let searchSeq = 0, searchTimer = null;
+function searchProductsSoon() { clearTimeout(searchTimer); searchTimer = setTimeout(searchProducts, 150); }
+async function loadCategories() {
+  const sel = document.getElementById('category-filter');
+  if (!sel) return;
+  try {
+    const r = await fetch('/api/products/categories', { credentials: 'same-origin' });
+    const cats = await r.json();
+    if (!Array.isArray(cats)) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All Categories</option>' + cats.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+    sel.value = cur;
+  } catch (e) { /* keep whatever options are already in the page */ }
+}
 async function searchProducts() {
+  const seq = ++searchSeq;
   const q = document.getElementById('search-input').value;
   const cat = document.getElementById('category-filter').value;
-  const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&location_id=${encodeURIComponent(activeLocationId)}`);
-  searchResultsCache = await res.json();
   const div = document.getElementById('search-results');
-  div.innerHTML = '';
-  if (searchResultsCache.length === 0) { div.innerHTML = '<div style="padding:10px;">No items match query.</div>'; return; }
-  searchResultsCache.forEach(i => {
+  let items;
+  try {
+    const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&location_id=${encodeURIComponent(activeLocationId)}`, { credentials: 'same-origin' });
+    items = await res.json();
+    if (!res.ok || !Array.isArray(items)) throw new Error((items && items.message) || 'Search failed');
+  } catch (e) {
+    if (seq === searchSeq) div.innerHTML = `<div style="padding:10px;color:#b00;">Could not load items: ${escHtml(e.message)}</div>`;
+    return;
+  }
+  if (seq !== searchSeq) return;   // a newer search is already running
+  searchResultsCache = items;
+  if (items.length === 0) { div.innerHTML = '<div style="padding:10px;">No items match.</div>'; return; }
+  div.innerHTML = `<div style="padding:4px 8px;font-size:.8rem;color:#666;">${items.length} item${items.length === 1 ? '' : 's'}</div>` + items.map(i => {
     const tiers = [];
     if ((i.retail_price_kg || 0) > 0) tiers.push('KSh ' + i.retail_price_kg + '/kg');
     (i.packs || []).forEach(p => tiers.push(p.pack_kg + 'kg bag KSh ' + p.price));
     const priceText = tiers.length ? tiers.join(' | ') : '<b style="color:#b00">NO PRICE</b>';
-    const btn = i.priced
-      ? `<button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button>`
-      : `<button class="btn-sm" disabled>No price</button>`;
-    div.innerHTML += `<div class="product-row">
-      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>${i.is_service ? 'Charged per kg · customer grain is not company stock' : `Stock: ${Number(i.available_stock_kg || 0).toFixed(2)} kg`} | ${priceText}</small></div>
+    const stock = Number(i.available_stock_kg || 0);
+    const noStock = !i.is_service && stock <= 0;
+    const btn = !i.priced ? '<button class="btn-sm" disabled>No price</button>'
+      : noStock ? '<button class="btn-sm" disabled>Out of stock</button>'
+      : `<button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button>`;
+    return `<div class="product-row">
+      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>${i.is_service ? 'Charged per kg · customer grain is not company stock' : `Stock: ${stock.toFixed(2)} kg`} | ${priceText}</small></div>
       ${btn}</div>`;
-  });
+  }).join('');
 }
 
 function buildPackOptions(item) {
@@ -440,15 +465,26 @@ function printReceiptOnly() {
 
 async function loadCustomers() {
   const q = window.activeLocationId ? '?location_id=' + encodeURIComponent(window.activeLocationId) : '';
-  const res = await fetch('/api/customers' + q);
-  customersCache = await res.json();
-  if (!Array.isArray(customersCache)) customersCache = [];
-  const sel = document.getElementById('customer-select'); const currentSelVal = sel.value;
-  sel.innerHTML = '<option value="">CASH CUSTOMER (Walk-In)</option>';
-  customersCache.forEach(c => { 
-      const locText = c.location && c.location !== 'Unknown' ? ` (${escHtml(c.location)})` : '';
-      sel.innerHTML += `<option value="${c.id}">${escHtml(c.name)}${locText} - ${escHtml(c.phone)} - Debt: KSh ${c.balance}</option>`; 
+  const sel = document.getElementById('customer-select');
+  if (!sel) return;
+  const currentSelVal = sel.value;
+  try {
+    const res = await fetch('/api/customers' + q, { credentials: 'same-origin' });
+    const data = await res.json();
+    customersCache = (res.ok && Array.isArray(data)) ? data : [];
+    if (!res.ok) throw new Error((data && data.message) || ('HTTP ' + res.status));
+  } catch (e) {
+    customersCache = [];
+    sel.innerHTML = '<option value="">CASH CUSTOMER (Walk-In)</option><option disabled>Could not load customers - ' + escHtml(e.message) + '</option>';
+    return;
+  }
+  let html = '<option value="">CASH CUSTOMER (Walk-In)</option>';
+  customersCache.forEach(c => {
+    const locText = c.location && c.location !== 'Unknown' ? ` (${escHtml(c.location)})` : '';
+    const phone = c.phone ? ` - ${escHtml(c.phone)}` : '';
+    html += `<option value="${c.id}">${escHtml(c.name)}${locText}${phone} - Debt: KSh ${Number(c.balance || 0).toFixed(2)}</option>`;
   });
+  sel.innerHTML = html;
   sel.value = currentSelVal; updateCustomerDetails();
 }
 
@@ -458,9 +494,10 @@ function updateCustomerDetails() {
   if (!selId) { card.style.display = 'none'; return; }
   const cust = customersCache.find(c => c.id == selId);
   if (cust) {
-    document.getElementById('c-limit').textContent = cust.credit_limit.toFixed(2);
-    document.getElementById('c-debt').textContent = cust.balance.toFixed(2);
-    document.getElementById('c-avail').textContent = (cust.credit_limit - cust.balance).toFixed(2);
+    const limit = Number(cust.credit_limit || 0), debt = Number(cust.balance || 0);
+    document.getElementById('c-limit').textContent = limit.toFixed(2);
+    document.getElementById('c-debt').textContent = debt.toFixed(2);
+    document.getElementById('c-avail').textContent = (limit - debt).toFixed(2);
     card.style.display = 'block';
   }
 }

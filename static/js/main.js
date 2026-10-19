@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     if (typeof loadCustomers === 'function') loadCustomers();
+    if (typeof loadCategories === 'function') loadCategories();
     if (typeof searchProducts === 'function') searchProducts();
 
     if (['admin', 'accountant', 'warehouse', 'factory'].includes(role)) {

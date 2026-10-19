@@ -26,40 +26,37 @@ except ValueError:
 if not (STAFF_CREDIT_LIMIT_MAX >= 0 and math.isfinite(STAFF_CREDIT_LIMIT_MAX)):
     STAFF_CREDIT_LIMIT_MAX = 10000.0
 
+@pos_bp.route('/api/products/categories', methods=['GET'])
+def product_categories():
+    rows = db.session.query(FeedIngredient.category).filter(FeedIngredient.is_active.isnot(False)).distinct().all()
+    return jsonify(sorted({(r[0] or 'Uncategorised') for r in rows}, key=str.lower))
+
+
 @pos_bp.route('/api/products/search', methods=['GET'])
 def search_products():
-    query = request.args.get('q', '').lower()
-    category = request.args.get('category', '')
+    query = request.args.get('q', '').strip().lower()
+    category = request.args.get('category', '').strip()
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return jsonify(status='error', message=str(exc)), 400
     items_query = FeedIngredient.query.filter(FeedIngredient.is_active.isnot(False))
-    if query:
-        items_query = items_query.filter(FeedIngredient.name.ilike(f"%{query}%"))
-    if category:
-        items_query = items_query.filter_by(category=category)
-    # POS shows sellable products carried by THIS outlet. Raw materials stay hidden
-    # unless the cashier explicitly picks a "Raw - ..." category. Milling services
-    # have no stock rows, so they always show.
-    stocked_ids = {r.ingredient_id for r in LocationStock.query.filter_by(location_id=location.id).all()}
-    show_raw = request.args.get('include_raw') == '1' or category.lower().startswith('raw')
-
-    def _sellable(i):
-        cat = (i.category or '').strip().lower()
-        if cat == 'milling service':
-            return True
-        if i.id not in stocked_ids:
-            return False
-        return show_raw or not cat.startswith('raw')
-    items = [i for i in items_query.all() if _sellable(i)]
+    if category == 'Uncategorised':
+        items_query = items_query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category == ''))
+    elif category:
+        items_query = items_query.filter(db.func.lower(FeedIngredient.category) == category.lower())
+    # Every word typed must appear in the item name or its category ("layer mash", "raw protein").
+    for word in query.split():
+        like = f"%{word}%"
+        items_query = items_query.filter(db.or_(FeedIngredient.name.ilike(like), FeedIngredient.category.ilike(like)))
+    items = items_query.order_by(FeedIngredient.name).all()
     packs_by_item = {}
     for pr in ItemPrice.query.order_by(ItemPrice.pack_kg).all():
         if (pr.price or 0) > 0:
             packs_by_item.setdefault(pr.ingredient_id, []).append({'pack_kg': pr.pack_kg, 'price': round(pr.price, 2)})
     return jsonify([{
-        'id': i.id, 'name': i.name, 'category': i.category,
-        'is_service': i.category == 'Milling Service',
+        'id': i.id, 'name': i.name, 'category': i.category or 'Uncategorised',
+        'is_service': (i.category or '').strip().lower() == 'milling service',
         'available_stock_kg': max(0.0, stock_quantity(location.id, i.id) - reserved_quantity(location.id, i.id)),
         'bag_size_kg': i.bag_size_kg,
         'retail_price_kg': round(i.retail_price_per_kg or 0, 2),
@@ -126,8 +123,8 @@ def manage_customers():
             # owners also see customers not yet assigned to an outlet, so none get lost
             q = Customer.query.filter(db.or_(Customer.location_id == outlet.id, Customer.location_id.is_(None)))
     outlet_names = {l.id: l.name for l in Location.query.all()}
-    return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone, 'location': c.location or 'Unknown',
-                     'type': c.customer_type, 'balance': c.current_balance, 'credit_limit': c.credit_limit,
+    return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone or '', 'location': c.location or 'Unknown',
+                     'type': c.customer_type, 'balance': float(c.current_balance or 0.0), 'credit_limit': float(c.credit_limit or 0.0),
                      'outlet_id': c.location_id, 'outlet_name': outlet_names.get(c.location_id, 'Unassigned')}
                     for c in q.order_by(Customer.name).all()])
 
@@ -159,11 +156,8 @@ def add_customer_debt(customer_id):
                                   amount=amount, note=note, created_by=g.user.username)
         db.session.add(entry)
         db.session.flush()
-        from services.ledger_service import post_gl_entry
-        posted = post_gl_entry(ref, '1300', amount, 0.0, 'OPENING_DEBT', entry.id)
-        posted = post_gl_entry(ref, '3000', 0.0, amount, 'OPENING_DEBT', entry.id) and posted
-        if not posted:
-            raise RuntimeError('Could not post the debt to the ledger.')
+        from services.ledger_service import post_gl_transaction
+        post_gl_transaction(ref, [('1300', amount, 0.0), ('3000', 0.0, amount)], 'OPENING_DEBT', entry.id)
         db.session.commit()
         return jsonify({'status': 'success', 'reference': ref, 'new_balance': cust.current_balance})
     except Exception as e:
@@ -183,7 +177,7 @@ def list_customer_debt_entries():
 
 
 @pos_bp.route('/api/customers/<int:customer_id>/repay', methods=['POST'])
-@roles_required('admin', 'accountant', 'sales')
+@roles_required('admin', 'accountant', 'sales', 'warehouse', 'factory')
 @idempotent('customer-repay')
 def repay_customer_debt(customer_id):
     try:
@@ -219,12 +213,9 @@ def repay_customer_debt(customer_id):
                                   payment_method=method, created_by=g.user.username)
         db.session.add(payment)
         db.session.flush()
-        from services.ledger_service import post_gl_entry
+        from services.ledger_service import post_gl_transaction
         payment_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
-        posted = post_gl_entry(ref, payment_account, amount, 0.0, "DEBT_REPAYMENT", payment.id)
-        posted = post_gl_entry(ref, "1300", 0.0, amount, "DEBT_REPAYMENT", payment.id) and posted
-        if not posted:
-            raise RuntimeError('Could not post the customer payment to the ledger.')
+        post_gl_transaction(ref, [(payment_account, amount, 0.0), ('1300', 0.0, amount)], 'DEBT_REPAYMENT', payment.id)
         db.session.commit()
         return jsonify({'status': 'success', 'reference': ref, 'new_balance': cust.current_balance})
     except Exception as e:

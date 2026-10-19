@@ -657,8 +657,18 @@ def trial_balance():
         rows.append({'code': code, 'name': name, 'category': category,
                      'debit': round(dr, 2), 'credit': round(cr, 2)})
     diff = round(total_dr - total_cr, 2)
+    # Judge balance per journal reference. Entries posted before cents-rounding was enforced can be
+    # a fraction of a cent out each; that residue adds up, so it is reported but is not an error.
+    per_ref = db.session.query(GeneralLedgerEntry.transaction_ref, db.func.sum(GeneralLedgerEntry.debit),
+                               db.func.sum(GeneralLedgerEntry.credit)
+                               ).filter(GeneralLedgerEntry.created_at < cutoff
+                                        ).group_by(GeneralLedgerEntry.transaction_ref).all()
+    broken = [(ref, round((d or 0.0) - (c or 0.0), 2)) for ref, d, c in per_ref
+              if abs((d or 0.0) - (c or 0.0)) > 0.0051]
     return jsonify(as_of=end.isoformat(), rows=rows, total_debit=round(total_dr, 2),
-                   total_credit=round(total_cr, 2), difference=diff, balanced=abs(diff) < 0.01,
+                   total_credit=round(total_cr, 2), difference=diff, balanced=not broken,
+                   unbalanced_entries=[{'reference': r, 'difference': d} for r, d in broken[:20]],
+                   unbalanced_count=len(broken),
                    note='Ledger activity only. Opening balances saved under Money & leaks are not ledger entries, so they are not included here.')
 
 

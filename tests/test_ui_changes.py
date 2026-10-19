@@ -45,11 +45,13 @@ class UIChangeTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200, r.json)
         return sorted(i['name'] for i in r.json if i['category'] != 'Milling Service' or i['name'] == 'Milling')
 
-    def test_pos_hides_raw_and_other_outlet_items(self):
+    def test_pos_lists_every_item_and_flags_out_of_stock(self):
         c = self.client(self.cashier_id)
-        self.assertEqual(self.names(c), ['Layer Mash', 'Milling'])
+        self.assertEqual(self.names(c), ['Layer Mash', 'Maize', 'Milling', 'Pig Finisher'])   # All Categories = everything
         self.assertEqual(self.names(c, '&category=Raw - Energy'), ['Maize'])
-        self.assertEqual(self.names(c, '&include_raw=1'), ['Layer Mash', 'Maize', 'Milling'])
+        self.assertEqual(self.names(c, '&category=Finished Feed'), ['Layer Mash', 'Pig Finisher'])
+        stock = {i['name']: i['available_stock_kg'] for i in c.get(f'/api/products/search?location_id={self.a.id}').json}
+        self.assertEqual(stock['Pig Finisher'], 0)      # carried at B only: listed here but cannot be added
 
     def test_customer_edit_permissions(self):
         owner = self.client(self.admin_id)

@@ -117,6 +117,8 @@ def get_po_inventory():
             'crude_protein_pct': i.crude_protein_pct or 0.0,
             'metabolizable_energy_mcal': i.metabolizable_energy_mcal or 0.0,
             'crude_fiber_pct': i.crude_fiber_pct or 0.0,
+            'calcium_pct': i.calcium_pct or 0.0, 'phosphorus_pct': i.phosphorus_pct or 0.0,
+            'lysine_pct': i.lysine_pct or 0.0, 'methionine_pct': i.methionine_pct or 0.0,
             'max_inclusion_pct': 100.0 if i.max_inclusion_pct is None else i.max_inclusion_pct
         })
     return jsonify(result)
@@ -131,6 +133,16 @@ def set_item_nutrients(item_id):
     limits = (('crude_protein_pct', 0, 100), ('metabolizable_energy_mcal', 0, 10),
               ('crude_fiber_pct', 0, 100), ('max_inclusion_pct', 0.01, 100))
     values = {}
+    for key in ('calcium_pct', 'phosphorus_pct', 'lysine_pct', 'methionine_pct'):
+        if data.get(key) in (None, ''):
+            continue            # optional: leave the saved value alone when the field is not sent
+        try:
+            value = float(data.get(key))
+        except (TypeError, ValueError):
+            return jsonify(status='error', message='Enter a number for every nutrient field.'), 400
+        if not math.isfinite(value) or value < 0 or value > 100:
+            return jsonify(status='error', message=f'{key.replace("_", " ")} must be between 0 and 100.'), 400
+        values[key] = value
     for key, low, high in limits:
         try:
             value = float(data.get(key))

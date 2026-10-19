@@ -103,6 +103,10 @@
         <label>Crude protein (%) <input type="number" id="nut-cp" min="0" max="100" step="0.01" style="width:100%; margin-bottom:8px; padding:8px;"></label>
         <label>Metabolizable energy (Mcal/kg) <input type="number" id="nut-me" min="0" max="10" step="0.01" style="width:100%; margin-bottom:8px; padding:8px;"></label>
         <label>Crude fibre (%) <input type="number" id="nut-fiber" min="0" max="100" step="0.01" style="width:100%; margin-bottom:8px; padding:8px;"></label>
+        <label>Calcium (%) <input type="number" id="nut-ca" min="0" max="100" step="0.001" style="width:100%; margin-bottom:8px; padding:8px;"></label>
+        <label>Available phosphorus (%) <input type="number" id="nut-p" min="0" max="100" step="0.001" style="width:100%; margin-bottom:8px; padding:8px;"></label>
+        <label>Lysine (%) <input type="number" id="nut-lys" min="0" max="100" step="0.001" style="width:100%; margin-bottom:8px; padding:8px;"></label>
+        <label>Methionine (%) <input type="number" id="nut-met" min="0" max="100" step="0.001" style="width:100%; margin-bottom:8px; padding:8px;"></label>
         <label>Max inclusion in a ration (%) <input type="number" id="nut-max" min="0.01" max="100" step="0.01" style="width:100%; margin-bottom:12px; padding:8px;"></label>
         <button class="btn btn-info" onclick="po_saveNutrients()">Save</button>
         <span id="nutrient-msg" role="status" style="margin-left:10px"></span>
@@ -653,6 +657,10 @@ function po_openNutrients(id) {
     document.getElementById('nut-me').value = i.metabolizable_energy_mcal;
     document.getElementById('nut-fiber').value = i.crude_fiber_pct;
     document.getElementById('nut-max').value = i.max_inclusion_pct;
+    document.getElementById('nut-ca').value = i.calcium_pct || 0;
+    document.getElementById('nut-p').value = i.phosphorus_pct || 0;
+    document.getElementById('nut-lys').value = i.lysine_pct || 0;
+    document.getElementById('nut-met').value = i.methionine_pct || 0;
     document.getElementById('nutrient-msg').textContent = '';
     document.getElementById('nutrient-modal').style.display = 'block';
 }
@@ -665,6 +673,10 @@ async function po_saveNutrients() {
                 crude_protein_pct: document.getElementById('nut-cp').value,
                 metabolizable_energy_mcal: document.getElementById('nut-me').value,
                 crude_fiber_pct: document.getElementById('nut-fiber').value,
+                calcium_pct: document.getElementById('nut-ca').value,
+                phosphorus_pct: document.getElementById('nut-p').value,
+                lysine_pct: document.getElementById('nut-lys').value,
+                methionine_pct: document.getElementById('nut-met').value,
                 max_inclusion_pct: document.getElementById('nut-max').value})
         });
         const data = await res.json().catch(() => ({}));

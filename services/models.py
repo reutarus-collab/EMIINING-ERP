@@ -21,6 +21,10 @@ class FeedIngredient(db.Model):
     crude_protein_pct = db.Column(db.Float, default=0.0)
     metabolizable_energy_mcal = db.Column(db.Float, default=0.0)
     crude_fiber_pct = db.Column(db.Float, nullable=False, default=0.0)
+    calcium_pct = db.Column(db.Float, nullable=False, default=0.0)
+    phosphorus_pct = db.Column(db.Float, nullable=False, default=0.0)   # available phosphorus
+    lysine_pct = db.Column(db.Float, nullable=False, default=0.0)
+    methionine_pct = db.Column(db.Float, nullable=False, default=0.0)
     # Safe upper limit for this ingredient in a ration, as % of the mix (100 = no limit).
     max_inclusion_pct = db.Column(db.Float, nullable=False, default=100.0)
     # False = hidden from Stock and POS only. Formulation, purchasing and rations still use the item.
@@ -106,6 +110,11 @@ class AnimalRequirement(db.Model):
     min_cp = db.Column(db.Float, default=0.0)
     min_me = db.Column(db.Float, default=0.0)
     max_fiber = db.Column(db.Float, nullable=False, default=0.0)  # max crude fibre %, 0 = not enforced
+    min_calcium = db.Column(db.Float, nullable=False, default=0.0)    # all below: 0 = not enforced
+    max_calcium = db.Column(db.Float, nullable=False, default=0.0)
+    min_phosphorus = db.Column(db.Float, nullable=False, default=0.0)
+    min_lysine = db.Column(db.Float, nullable=False, default=0.0)
+    min_methionine = db.Column(db.Float, nullable=False, default=0.0)
 
 class TillSession(db.Model):
     __tablename__ = 'till_sessions'

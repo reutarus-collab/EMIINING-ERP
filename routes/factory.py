@@ -43,8 +43,9 @@ def run_formulation():
         target_fiber = float(data.get('target_fiber_max_pct')) if data.get('target_fiber_max_pct') not in (None, '') else None
     except (TypeError, ValueError):
         return jsonify(status='error', message='Enter valid protein, energy and fibre targets.'), 400
+    extra = {k: data.get(k) for k in ('min_lysine', 'min_methionine', 'min_calcium', 'max_calcium', 'min_phosphorus')}
     result = solve_feed_formulation(species, batch, raw_ids, location.id, target_cp, target_me,
-                                    target_fiber, bool(data.get('limit_to_stock')))
+                                    target_fiber, bool(data.get('limit_to_stock')), extra=extra)
     return jsonify(result), 200 if result.get('status') == 'optimal' else 422
 
 
@@ -57,7 +58,12 @@ def get_stage_requirements():
     return jsonify(species=species, saved=bool(row),
                    min_cp=(row.min_cp if row and row.min_cp else 16.0),
                    min_me=(row.min_me if row and row.min_me else 2.5),
-                   max_fiber=(row.max_fiber if row and row.max_fiber else 0.0))
+                   max_fiber=(row.max_fiber if row and row.max_fiber else 0.0),
+                   min_lysine=(row.min_lysine if row and row.min_lysine else 0.0),
+                   min_methionine=(row.min_methionine if row and row.min_methionine else 0.0),
+                   min_calcium=(row.min_calcium if row and row.min_calcium else 0.0),
+                   max_calcium=(row.max_calcium if row and row.max_calcium else 0.0),
+                   min_phosphorus=(row.min_phosphorus if row and row.min_phosphorus else 0.0))
 
 
 @factory_bp.route('/api/formulate/requirements', methods=['POST'])
@@ -75,8 +81,20 @@ def save_stage_requirements():
         return jsonify(status='error', message='Enter numbers for the targets.'), 400
     if not (0 < min_cp <= 100 and min_me > 0 and 0 <= max_fiber <= 100):
         return jsonify(status='error', message='Protein must be 0-100%, energy above 0, fibre 0-100% (0 = no limit).'), 400
+    extras = {}
+    for key in ('min_lysine', 'min_methionine', 'min_calcium', 'max_calcium', 'min_phosphorus'):
+        try:
+            extras[key] = float(data.get(key) or 0)
+        except (TypeError, ValueError):
+            return jsonify(status='error', message='Enter numbers for the targets.'), 400
+        if not 0 <= extras[key] <= 100 or extras[key] != extras[key]:
+            return jsonify(status='error', message='Lysine, methionine, calcium and phosphorus limits must be 0-100% (0 = not enforced).'), 400
+    if extras['max_calcium'] > 0 and extras['min_calcium'] > extras['max_calcium']:
+        return jsonify(status='error', message='Minimum calcium cannot be above maximum calcium.'), 400
     row = AnimalRequirement.query.filter_by(species_stage=species).first() or AnimalRequirement(species_stage=species)
     row.min_cp, row.min_me, row.max_fiber = min_cp, min_me, max_fiber
+    for key, value in extras.items():
+        setattr(row, key, value)
     db.session.add(row)
     db.session.commit()
     return jsonify(status='success')

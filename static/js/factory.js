@@ -1,5 +1,13 @@
 let factoryInventory = [];
 
+const EXTRA_IDS = {min_lysine: 'target-lys', min_methionine: 'target-met', min_calcium: 'target-ca-min',
+                   max_calcium: 'target-ca-max', min_phosphorus: 'target-p'};
+function extraTargets() {
+    const out = {};
+    for (const [key, id] of Object.entries(EXTRA_IDS)) { const el = document.getElementById(id); out[key] = el ? (el.value || 0) : 0; }
+    return out;
+}
+
 async function runFormulation() {
     const speciesSelect = document.getElementById('species-select');
     if (!speciesSelect) return;
@@ -15,6 +23,7 @@ async function runFormulation() {
                 target_cp_pct: document.getElementById('target-cp').value,
                 target_me_mcal: document.getElementById('target-me').value,
                 target_fiber_max_pct: document.getElementById('target-fiber').value,
+                ...extraTargets(),
                 limit_to_stock: document.getElementById('limit-stock').checked,
                 location_id: window.activeLocationId || ''
             })
@@ -34,6 +43,7 @@ async function runFormulation() {
           <div style="overflow-x:auto"><table class="data-table" style="margin-top:8px"><thead><tr><th>Nutrient</th><th>Required</th><th>This recipe</th></tr></thead><tbody>
             <tr><td>Crude protein</td><td>at least ${Number(data.target_crude_protein_pct).toFixed(2)}%</td><td${ok(a.crude_protein_pct + 0.005 >= data.target_crude_protein_pct)}>${a.crude_protein_pct.toFixed(2)}%</td></tr>
             <tr><td>Metabolizable energy</td><td>at least ${Number(data.target_metabolizable_energy_mcal).toFixed(2)} Mcal/kg</td><td${ok(a.metabolizable_energy_mcal + 0.0005 >= data.target_metabolizable_energy_mcal)}>${a.metabolizable_energy_mcal.toFixed(2)} Mcal/kg</td></tr>
+            ${extraRows(data)}
             <tr><td>Crude fibre</td><td>${fiberLimit ? 'at most ' + Number(fiberLimit).toFixed(2) + '%' : 'no limit'}</td><td${ok(!fiberLimit || a.crude_fiber_pct <= fiberLimit + 0.005)}>${a.crude_fiber_pct.toFixed(2)}%</td></tr>
           </tbody></table></div>
           <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Ingredient</th><th>%</th><th>Recipe kg</th><th>At outlet kg</th><th>Cost/kg</th><th>Line cost</th></tr></thead><tbody>
@@ -43,6 +53,19 @@ async function runFormulation() {
     } catch (err) {
         result.textContent = 'Could not calculate a formulation. Check the connection and try again.';
     }
+}
+
+function extraRows(data) {
+    const t = data.extra_targets || {}, a = data.achieved || {};
+    const row = (label, req, got, good) => `<tr><td>${label}</td><td>${req}</td><td${good ? '' : ' style="color:#b42318"'}>${Number(got).toFixed(3)}%</td></tr>`;
+    let h = '';
+    if (t.min_lysine > 0) h += row('Lysine', 'at least ' + t.min_lysine + '%', a.lysine_pct, a.lysine_pct + 0.0005 >= t.min_lysine);
+    if (t.min_methionine > 0) h += row('Methionine', 'at least ' + t.min_methionine + '%', a.methionine_pct, a.methionine_pct + 0.0005 >= t.min_methionine);
+    if (t.min_calcium > 0 || t.max_calcium > 0)
+        h += row('Calcium', [t.min_calcium > 0 ? 'at least ' + t.min_calcium + '%' : '', t.max_calcium > 0 ? 'at most ' + t.max_calcium + '%' : ''].filter(Boolean).join(', '), a.calcium_pct,
+                 a.calcium_pct + 0.0005 >= (t.min_calcium || 0) && (!t.max_calcium || a.calcium_pct <= t.max_calcium + 0.0005));
+    if (t.min_phosphorus > 0) h += row('Available phosphorus', 'at least ' + t.min_phosphorus + '%', a.phosphorus_pct, a.phosphorus_pct + 0.0005 >= t.min_phosphorus);
+    return h;
 }
 
 async function loadStageTargets() {
@@ -55,6 +78,7 @@ async function loadStageTargets() {
         document.getElementById('target-cp').value = r.min_cp;
         document.getElementById('target-me').value = r.min_me;
         document.getElementById('target-fiber').value = r.max_fiber || 0;
+        for (const [key, id] of Object.entries(EXTRA_IDS)) { const el = document.getElementById(id); if (el) el.value = r[key] || 0; }
     } catch (e) { /* keep whatever is typed */ }
 }
 
@@ -67,7 +91,8 @@ async function saveStageTargets() {
                 species: document.getElementById('species-select').value,
                 min_cp: document.getElementById('target-cp').value,
                 min_me: document.getElementById('target-me').value,
-                max_fiber: document.getElementById('target-fiber').value || 0
+                max_fiber: document.getElementById('target-fiber').value || 0,
+                ...extraTargets()
             })
         });
         const data = await res.json().catch(() => ({}));

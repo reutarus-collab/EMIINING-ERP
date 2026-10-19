@@ -186,7 +186,7 @@ function renderCashFlow(d) {
 
 function renderTrialBalance(d) {
   const body = d.rows.map(r => `<tr><td>${reportEsc(r.code)} ${reportEsc(r.name)}</td><td style="text-align:right">${r.debit ? stmtMoney(r.debit) : ''}</td><td style="text-align:right">${r.credit ? stmtMoney(r.credit) : ''}</td></tr>`).join('');
-  const warn = d.balanced ? '' : `<p style="color:#b42318"><b>OUT OF BALANCE by KSh ${stmtMoney(Math.abs(d.difference))}.</b> Some ledger postings are one-sided; find them before trusting the profit figures.</p>`;
+  const warn = d.balanced ? (Math.abs(d.difference) >= 0.005 ? `<p style="color:#666">Every entry balances. The ${stmtMoney(Math.abs(d.difference))} total difference is sub-cent rounding from older sales.</p>` : '') : `<p style="color:#b42318"><b>${d.unbalanced_count} ledger entr${d.unbalanced_count === 1 ? 'y does' : 'ies do'} not balance (total difference KSh ${stmtMoney(Math.abs(d.difference))}).</b> Some postings are one-sided: ${d.unbalanced_entries.slice(0, 5).map(e => reportEsc(e.reference) + ' (' + stmtMoney(e.difference) + ')').join(', ')}. Find them before trusting the profit figures.</p>`;
   return warn + `<table class="data-table"><thead><tr><th>Account as of ${reportEsc(d.as_of)}</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th></tr></thead><tbody>${body}<tr><th>Total</th><th style="text-align:right">${stmtMoney(d.total_debit)}</th><th style="text-align:right">${stmtMoney(d.total_credit)}</th></tr></tbody></table><p style="color:#666">${reportEsc(d.note)}</p>`;
 }
 

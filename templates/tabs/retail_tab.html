@@ -310,18 +310,23 @@ async function savePrice(id) {
 <script>
 async function loadCustAdmin() {
   const body = document.getElementById('cust-body');
-  const r = await fetch('/api/customers?all=1', {credentials: 'same-origin'});
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="6">Cannot load customers.</td></tr>'; return; }
-  const rows = await r.json();
-  const inp = 'style="width:100%;padding:6px"';
-  body.innerHTML = rows.map(c =>
-    `<tr><td><input id="cn-${c.id}" value="${retailEsc(c.name)}" ${inp}></td>
-     <td>${retailEsc(c.outlet_name)}</td>
-     <td><input id="cp-${c.id}" value="${retailEsc(c.phone || '')}" ${inp}></td>
-     <td>${Number(c.balance || 0).toFixed(2)}</td>
-     <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
-     <td><button class="btn-sm btn-primary" onclick="saveCustomer(${c.id})">Save</button></td></tr>`
-  ).join('') || '<tr><td colspan="6">No customers.</td></tr>';
+  body.innerHTML = '<tr><td colspan="6">Loading...</td></tr>';
+  try {
+    const r = await fetch('/api/customers?all=1', {credentials: 'same-origin'});
+    const rows = await r.json();
+    if (!r.ok || !Array.isArray(rows)) throw new Error((rows && rows.message) || ('HTTP ' + r.status));
+    const inp = 'style="width:100%;padding:6px"';
+    body.innerHTML = rows.map(c =>
+      `<tr><td><input id="cn-${c.id}" value="${retailEsc(c.name)}" ${inp}></td>
+       <td>${retailEsc(c.outlet_name)}</td>
+       <td><input id="cp-${c.id}" value="${retailEsc(c.phone || '')}" ${inp}></td>
+       <td>${Number(c.balance || 0).toFixed(2)}</td>
+       <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
+       <td><button class="btn-sm btn-primary" onclick="saveCustomer(${c.id})">Save</button></td></tr>`
+    ).join('') || '<tr><td colspan="6">No customers.</td></tr>';
+  } catch (e) {
+    body.innerHTML = '<tr><td colspan="6" style="color:#b00">Cannot load customers: ' + retailEsc(e.message) + ' <button class="btn-sm btn-info" onclick="loadCustAdmin()">Retry</button></td></tr>';
+  }
 }
 async function saveCustomer(id) {
   const msg = document.getElementById('cust-msg');

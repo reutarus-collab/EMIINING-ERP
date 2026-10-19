@@ -26,10 +26,19 @@
       <label>Maximum crude fibre (%): <small>0 = no limit</small></label>
       <input type="number" id="target-fiber" min="0" max="100" step="0.01" value="0" />
     </div>
+    <details class="form-group" id="extra-nutrients">
+      <summary style="cursor:pointer;font-weight:600">More nutrient limits (0 = not enforced)</summary>
+      <div class="form-group"><label>Minimum lysine (%):</label><input type="number" id="target-lys" min="0" max="100" step="0.001" value="0" /></div>
+      <div class="form-group"><label>Minimum methionine (%):</label><input type="number" id="target-met" min="0" max="100" step="0.001" value="0" /></div>
+      <div class="form-group"><label>Minimum calcium (%):</label><input type="number" id="target-ca-min" min="0" max="100" step="0.001" value="0" /></div>
+      <div class="form-group"><label>Maximum calcium (%):</label><input type="number" id="target-ca-max" min="0" max="100" step="0.001" value="0" /></div>
+      <div class="form-group"><label>Minimum available phosphorus (%):</label><input type="number" id="target-p" min="0" max="100" step="0.001" value="0" /></div>
+      <p style="font-size:.85rem;color:#666">Each ingredient's lysine, methionine, calcium and phosphorus must be filled in under Purchasing &rarr; Item Master &rarr; Edit nutrients, or the limit cannot be met.</p>
+    </details>
     <div class="form-group">
       <label><input type="checkbox" id="limit-stock" /> Only use what is in stock at this outlet</label>
     </div>
-    <p>This calculator enforces minimum crude protein and energy, maximum fibre, and each ingredient's max inclusion limit, using the nutrient profiles saved in Purchasing &rarr; Item Master. It does not check amino acids, minerals or medicine, so confirm the result with a nutritionist.</p>
+    <p>This calculator enforces minimum crude protein and energy, maximum fibre, and each ingredient's max inclusion limit, using the nutrient profiles saved in Purchasing &rarr; Item Master. It can also enforce lysine, methionine, calcium and phosphorus limits when you set them below. It does not check other amino acids, trace minerals, salt or medicine, so confirm the result with a nutritionist.</p>
     <button class="btn-primary" onclick="runFormulation()" style="padding: 10px;">Calculate Optimal Batch Recipe</button>
     <button class="btn-sm btn-info" data-roles="admin,accountant" onclick="saveStageTargets()" style="padding: 10px;">Save these targets as this stage's defaults</button>
     <div id="formulation-result" role="status" aria-live="polite" style="background:#f8f9fa; padding:10px; margin-top:10px; border-radius:4px;">Choose a stage and batch size, then calculate.</div>

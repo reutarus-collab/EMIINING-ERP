@@ -99,7 +99,8 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
     max_discount = round(total_bill * max_pct / 100.0, 2)
     if discount_amount > max_discount + 0.01:
         raise Exception(f"Discount KSh {discount_amount:.2f} is above the {max_pct:.0f}% limit for your role (max KSh {max_discount:.2f}).")
-    final_due = max(0.0, total_bill - discount_amount)
+    # Whole cents: the ledger legs below are posted from this, and customers can only pay in cents.
+    final_due = round(max(0.0, total_bill - discount_amount), 2)
     if final_due + 0.01 < total_cost:
         raise Exception(f"Sale is below the cost of the goods (KSh {final_due:.2f} vs cost KSh {total_cost:.2f}). Reduce the discount.")
     
@@ -190,8 +191,8 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
         if credit_amount > 0:
             post_gl_entry(sale_id, '1300', credit_amount, 0.0, 'POS', order.id)
         if total_cost > 0:
-            post_gl_entry(sale_id, '5000', total_cost, 0.0, 'POS', order.id)
-            post_gl_entry(sale_id, '1200', 0.0, total_cost, 'POS', order.id)
+            post_gl_entry(sale_id, '5000', round(total_cost, 2), 0.0, 'POS', order.id)
+            post_gl_entry(sale_id, '1200', 0.0, round(total_cost, 2), 'POS', order.id)
     except Exception as e:
         db.session.rollback()
         raise Exception(f"Sale blocked: accounting ledger failed to post ({e}). No stock or payment was recorded - try again or check ledger_service.py.")
