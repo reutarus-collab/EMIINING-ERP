@@ -342,6 +342,7 @@
         try {
             const locId = document.getElementById('po-location')?.value || activeLocationId || '';
             const res = await fetch('/api/po?location_id=' + encodeURIComponent(locId));
+            if (res.status === 401) return;   // session-expired banner is shown globally
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             
             po_orderHistory = await res.json();
@@ -570,7 +571,10 @@ async function submitPO() {
             });
             // ... rest of the function stays the same
             
-            const data = await res.json();
+            if (res.status === 401) {
+                return alert("Your session expired, so this purchase order was NOT saved. Log in again, then re-enter it.");
+            }
+            const data = await res.json().catch(() => ({}));
             
             if (!res.ok || data.status === 'error') {
                 // This extracts the EXACT database error from Python
@@ -632,7 +636,10 @@ async function submitGRN() {
                     vehicle_reg: document.getElementById('grn-vehicle-reg').value })
             });
             
-            const data = await res.json();
+            if (res.status === 401) {
+                return alert("Your session expired, so this GRN was NOT posted. Log in again, open the PO, and post it again.");
+            }
+            const data = await res.json().catch(() => ({}));
             if (!res.ok || data.status === 'error') {
                 throw new Error(data.message || `HTTP ${res.status}`);
             }

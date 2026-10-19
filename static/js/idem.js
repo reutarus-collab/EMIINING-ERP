@@ -82,3 +82,26 @@
     });                                   // network failure rejects: key is kept for the retry
   };
 })();
+
+/* Session-expiry notice: any same-origin /api/ 401 shows a login banner. */
+(function () {
+  const inner = window.fetch.bind(window);
+  function banner() {
+    if (document.getElementById('session-expired-banner') || !document.body) return;
+    const b = document.createElement('div');
+    b.id = 'session-expired-banner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#b00;color:#fff;padding:12px;text-align:center;font-weight:bold';
+    b.innerHTML = 'Your session expired. Nothing was lost or saved. ' +
+      '<a href="/login?next=/" style="color:#fff;text-decoration:underline">Log in again</a>, then repeat the last action.';
+    document.body.appendChild(b);
+  }
+  window.fetch = function (input, init) {
+    return inner(input, init).then(resp => {
+      try {
+        const u = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, window.location.origin);
+        if (resp.status === 401 && u.origin === window.location.origin && u.pathname.startsWith('/api/')) banner();
+      } catch (e) {}
+      return resp;
+    });
+  };
+})();
