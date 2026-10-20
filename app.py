@@ -12,6 +12,7 @@ from routes.factory import factory_bp
 from routes.pos import pos_bp
 from routes.po import po_bp
 from routes.reports import reports_bp
+from routes.nutrition import nutrition_bp
 
 
 def create_app(config=None):
@@ -29,6 +30,10 @@ def create_app(config=None):
         raise RuntimeError('Set SECRET_KEY before starting the ERP.')
 
     init_db(app)
+    with app.app_context():
+        from services import formulation_engine
+        formulation_engine.seed_nutrients()
+        formulation_engine.seed_templates()
     Migrate(app, db)
     app.register_blueprint(auth_bp)
     app.register_blueprint(retail_bp)
@@ -37,6 +42,7 @@ def create_app(config=None):
     app.register_blueprint(pos_bp)
     app.register_blueprint(po_bp)
     app.register_blueprint(reports_bp)
+    app.register_blueprint(nutrition_bp)
     init_auth(app)
 
     @app.route('/')

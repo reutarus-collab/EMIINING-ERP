@@ -185,6 +185,14 @@ def record_production_run():
     if len(loss_reason) > 200:
         return jsonify(status='error', message='Loss reason must be 200 characters or fewer.'), 400
 
+    from services.models import SavedFormula
+    from routes.nutrition import release_check
+    saved = SavedFormula.query.filter(db.func.lower(SavedFormula.name) == formula_name.lower()).first()
+    if saved is not None:
+        gate = release_check(saved)
+        if gate['controlled'] and not gate['ok']:
+            return jsonify(status='error', message='Formula "%s" is blocked: it does not pass its requirement profile. %s' % (
+                saved.name, ' '.join(gate['reasons'][:4]))), 409
     try:
         location = resolve_location(data.get('location_id'))
         output_id = int(data.get('output_ingredient_id'))

@@ -338,17 +338,16 @@ def receive_grpo_partial(po_id):
             if (received + rejected + incoming_po_qty + rejected_po_qty) > ordered: 
                 raise ValueError(f"Exceeds PO limit for {ing.name}")
 
-            stock_row = location_stock(location.id, ing.id, lock=True)
-            
-            # NOTE: Using incoming_kg instead of incoming_qty to match po.py
             new_subtotal = incoming_po_qty * line.unit_cost
+            # A line can be a rejection only (nothing accepted, e.g. wet or mouldy maize turned away). It has no
+            # kilograms to price or stock, so only an accepted quantity creates stock and a cost per kg.
             if incoming_kg > 0 and incoming_po_qty > 0:
+                stock_row = location_stock(location.id, ing.id, lock=True)
                 implied = new_subtotal / incoming_kg
                 known = stock_row.unit_cost_per_kg or 0.0
                 if known > 0 and not (known / 3.0 <= implied <= known * 3.0):
                     raise ValueError(f"Cost per kg works out to {implied:.2f} for {ing.name}, far from its current {known:.2f}. Check the quantity received and the unit cost on the PO.")
-            receive_stock(location.id, ing, incoming_kg, new_subtotal / incoming_kg,
-                          'GRPO_RECEIPT', grpo_ref)
+                receive_stock(location.id, ing, incoming_kg, implied, 'GRPO_RECEIPT', grpo_ref)
             
             # Write back the PO units
             line.qty_received = received + incoming_po_qty

@@ -106,12 +106,14 @@ async function loadFactoryDropdowns() {
     factoryInventory = await res.json();
     const prodOut = document.getElementById('prod-output-select');
     if (!prodOut) return;
-    prodOut.innerHTML = '';
+    const keepOutput = prodOut.value;
+    prodOut.innerHTML = '<option value="">-- choose the finished feed --</option>';
     factoryInventory.forEach(item => {
         const category = item.category || '';
         const option = `<option value="${item.id}">${escHtml(item.name)} (${Number(item.stock_quantity_kg || 0).toFixed(2)} kg available)</option>`;
         if (category === 'Finished Feed') prodOut.insertAdjacentHTML('beforeend', option);
     });
+    if (keepOutput && Array.from(prodOut.options).some(o => o.value === keepOutput)) prodOut.value = keepOutput;
     const firstRaw = factoryInventory.find(item => (item.category || '').includes('Raw'));
     if (firstRaw && !document.querySelector('#prod-inputs tr[data-input-row]')) addProductionInput(firstRaw.id);
     loadProductionRuns();
@@ -229,6 +231,11 @@ async function submitProductionBatch() {
         actual_qty_kg: row.querySelector('.prod-actual-input').value
     }));
     const message = document.getElementById('prod-message');
+    if (!document.getElementById('prod-output-select').value) {
+        message.style.color = 'red';
+        message.textContent = 'Choose the target finished feed for this batch.';
+        return;
+    }
     const payload = {
         formula_name: document.getElementById('prod-formula').value,
         output_ingredient_id: document.getElementById('prod-output-select').value,
@@ -249,8 +256,14 @@ async function submitProductionBatch() {
         if (!res.ok || data.status !== 'success') throw new Error(data.message || 'Could not record batch.');
         message.style.color = 'green';
         message.textContent = `Batch ${data.batch_no} recorded. Loss: ${data.loss_kg.toFixed(2)} kg (${data.loss_pct.toFixed(2)}%). Input cost: KSh ${data.total_input_cost.toFixed(2)}.`;
+        // Start the next batch clean: nothing from this one may carry over into it by accident.
         document.getElementById('prod-actual-output').value = '';
+        document.getElementById('prod-planned-output').value = '';
         document.getElementById('prod-loss-reason').value = '';
+        document.getElementById('prod-formula').value = '';
+        document.getElementById('prod-output-select').value = '';
+        const savedPick = document.getElementById('saved-formula-select');
+        if (savedPick) savedPick.value = '';
         rows.forEach(row => {
             row.querySelector('.prod-planned-input').value = '';
             row.querySelector('.prod-actual-input').value = '';
@@ -353,11 +366,18 @@ async function loadSavedFormulas() {
     renderFormulaLibrary();
 }
 
-function loadSavedFormula() {
+async function loadSavedFormula() {
     const fm = savedFormulas.find(x => String(x.id) === String(document.getElementById('saved-formula-select').value));
     const batch = Number(document.getElementById('saved-formula-batch').value);
     if (!fm) { alert('Choose a saved formula first.'); return; }
     if (!(batch > 0)) { alert('Enter the batch size in kg.'); return; }
+    try {   // formulas checked against a requirement profile are re-verified live and blocked when they fail
+        const gate = await fetch('/api/nutrition/formulas/' + fm.id + '/release-check', { credentials: 'same-origin' });
+        if (gate.ok) {
+            const g = await gate.json();
+            if (g.controlled && !g.ok) { alert('This formula is BLOCKED from production:\n' + (g.reasons || []).join('\n')); return; }
+        }
+    } catch (e) { /* the server also enforces this when the batch is recorded */ }
     const rawIds = new Set(factoryInventory.filter(i => (i.category || '').includes('Raw')).map(i => i.id));
     const missing = fm.lines.filter(l => !rawIds.has(Number(l.ingredient_id))).map(l => l.ingredient_name);
     if (missing.length) {

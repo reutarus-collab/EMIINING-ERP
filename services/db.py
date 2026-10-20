@@ -29,6 +29,7 @@ def _migrate_location_schema():
                                 'min_calcium': 'FLOAT NOT NULL DEFAULT 0', 'max_calcium': 'FLOAT NOT NULL DEFAULT 0',
                                 'min_phosphorus': 'FLOAT NOT NULL DEFAULT 0', 'min_lysine': 'FLOAT NOT NULL DEFAULT 0',
                                 'min_methionine': 'FLOAT NOT NULL DEFAULT 0'},
+        'saved_formulas': {'profile_id': 'INTEGER', 'last_verified_ok': 'BOOLEAN', 'last_verified_at': 'DATETIME'},
         'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT', 'open_key': 'VARCHAR(120)'},
         'app_users': {'location_id': 'INTEGER'},
         'customers': {'location_id': 'INTEGER'},

@@ -1,46 +1,134 @@
 <div id="matrix-tab" class="tab-content">
+<style>
+  #matrix-tab .lab-bar { display:flex; flex-wrap:wrap; gap:10px; align-items:end; }
+  #matrix-tab .lab-bar label { display:block; font-size:.8rem; color:#555; margin-bottom:2px; }
+  #matrix-tab .lab-modes { display:flex; gap:6px; margin:12px 0 6px; flex-wrap:wrap; }
+  #matrix-tab .lab-modes button { padding:8px 14px; border:1px solid #0a58ca; background:#fff; color:#0a58ca; border-radius:6px; cursor:pointer; font-weight:600; }
+  #matrix-tab .lab-modes button.on { background:#0a58ca; color:#fff; }
+  #matrix-tab table.lab { width:100%; border-collapse:collapse; font-size:.9rem; }
+  #matrix-tab table.lab th, #matrix-tab table.lab td { padding:5px 6px; border-bottom:1px solid #eceff3; text-align:left; vertical-align:middle; }
+  #matrix-tab table.lab th { background:#f6f8fa; font-size:.8rem; }
+  #matrix-tab .lab-wrap { overflow-x:auto; }
+  #matrix-tab input.lab-n { width:78px; padding:4px; text-align:right; }
+  #matrix-tab input.lab-gap { background:#fff1c2; }
+  #matrix-tab .lab-pass { color:#157347; font-weight:700; }
+  #matrix-tab .lab-fail { color:#b42318; font-weight:700; }
+  #matrix-tab .lab-miss { color:#9a6700; font-weight:700; }
+  #matrix-tab .lab-warn { color:#9a6700; }
+  #matrix-tab .lab-info, #matrix-tab .lab-off { color:#7a8794; }
+  #matrix-tab .lab-banner { padding:10px 14px; border-radius:6px; font-weight:700; margin:10px 0; }
+  #matrix-tab .lab-banner.pass, #matrix-tab .lab-banner.optimal { background:#d1f2dd; color:#0f5132; }
+  #matrix-tab .lab-banner.fail { background:#fde2e0; color:#842029; }
+  #matrix-tab .lab-banner.incomplete { background:#fff1c2; color:#664d03; }
+  #matrix-tab ul.lab-list { margin:6px 0 6px 18px; padding:0; font-size:.88rem; }
+  #matrix-tab .lab-panel { display:none; }
+  #matrix-tab .lab-small { font-size:.82rem; color:#555; }
+  #matrix-tab textarea.lab-paste { width:100%; min-height:110px; font-family:monospace; font-size:.85rem; }
+</style>
+
   <div class="card">
-    <h3>Ration Formulator</h3>
-    <p>Calculates a least-cost recipe using raw-ingredient cost at your assigned outlet. Confirm the ration with a qualified nutritionist before production.</p>
-    <div class="form-group">
-      <label>Target Livestock Stage:</label>
-      <select id="species-select" onchange="loadStageTargets()">
-        <option value="Dairy Cattle (High Yield 15L+)">Dairy Cattle (High Yield 15L+)</option>
-        <option value="Poultry Broiler Starter">Poultry Broiler Starter</option>
-        <option value="Pig Grower Rations">Pig Grower Rations</option>
-      </select>
+    <h3 style="margin-top:0">Ration Formulation Lab</h3>
+    <div class="lab-bar">
+      <div><label>Requirement profile</label><select id="lab-profile" onchange="labPickProfile()" style="min-width:230px;padding:6px"></select></div>
+      <div><label>&nbsp;</label>
+        <button class="btn-sm btn-primary" onclick="labSaveProfile(false)">Save profile</button>
+        <button class="btn-sm btn-info" onclick="labSaveProfile(true)">Save as new...</button>
+        <button class="btn-sm btn-info" onclick="labTogglePanel('lab-reqimport')">Import limits from Excel</button>
+        <button class="btn-sm btn-info" onclick="labShowData()">Ingredient data</button>
+      </div>
+      <div><label>Batch (kg)</label><input type="number" id="lab-batch" value="1000" min="1" step="1" style="width:90px;padding:6px" onchange="labRender()"></div>
+      <div><label>Weigh to (kg)</label>
+        <select id="lab-precision" style="padding:6px"><option>0.01</option><option selected>0.1</option><option>0.5</option><option>1</option><option>5</option></select></div>
     </div>
-    <div class="form-group">
-      <label>Batch Size (KG):</label>
-      <input type="number" id="batch-kg" value="1000" />
+    <div class="lab-small" id="lab-profile-note" style="margin-top:6px"></div>
+    <div class="lab-modes">
+      <button id="lab-mode-manual" onclick="labSetMode('manual')">1. Manual formulation</button>
+      <button id="lab-mode-optimize" onclick="labSetMode('optimize')">2. Least-cost optimisation</button>
+      <button id="lab-mode-verify" onclick="labSetMode('verify')">3. Verify formula</button>
     </div>
-    <div class="form-group">
-      <label>Minimum crude protein (%):</label>
-      <input type="number" id="target-cp" min="0.01" max="100" step="0.01" value="16" />
+    <div class="lab-small" id="lab-hint"></div>
+  </div>
+
+  <div class="card lab-panel" id="lab-reqimport">
+    <h4 style="margin-top:0">Import requirement limits</h4>
+    <p class="lab-small">Copy the cells from Excel (Nutrient, Min, Actual, Max, Unit - or just Nutrient, Min, Max) and paste them here, or upload an .xlsx/.csv. A Min of 0 and a Max at the placeholder cap (100 %, 1000 mg/kg) mean "no limit".</p>
+    <textarea class="lab-paste" id="lab-req-text" placeholder="Paste here"></textarea>
+    <div style="margin:6px 0">or file: <input type="file" id="lab-req-file" accept=".xlsx,.csv,.tsv,.txt"></div>
+    <button class="btn-sm btn-primary" onclick="labReqImport(false)">Preview</button>
+    <input id="lab-req-name" placeholder="Import as profile named..." style="padding:6px;width:240px">
+    <button class="btn-sm btn-success" onclick="labReqImport(true)">Import as profile</button>
+    <div id="lab-req-out" style="margin-top:8px"></div>
+  </div>
+
+  <div id="lab-formulate">
+    <div class="card">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+        <input list="lab-ing-list" id="lab-add-ing" placeholder="Add ingredient..." style="padding:6px;min-width:220px">
+        <datalist id="lab-ing-list"></datalist>
+        <button class="btn-sm btn-primary" onclick="labAddFromInput()">Add</button>
+        <button class="btn-sm btn-info" onclick="labAddAll()">Add all raw items</button>
+        <select id="lab-load-saved" style="padding:6px"><option value="">Load a saved formula...</option></select>
+        <button class="btn-sm btn-info" onclick="labLoadSaved()">Load</button>
+      </div>
+      <div class="lab-wrap"><table class="lab" id="lab-ing-table"></table></div>
+      <div id="lab-actions" style="margin-top:10px"></div>
+      <div id="lab-summary" style="margin-top:8px"></div>
     </div>
-    <div class="form-group">
-      <label>Minimum metabolizable energy (Mcal/kg):</label>
-      <input type="number" id="target-me" min="0.01" step="0.01" value="2.5" />
+
+    <div class="card"><div id="lab-messages"></div></div>
+
+    <div class="card">
+      <h4 style="margin-top:0">Nutrient limits <span class="lab-small">(edit Min / Max here, then Save profile to keep them)</span></h4>
+      <div class="lab-wrap"><table class="lab" id="lab-con-table"></table></div>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="lab-add-nut" style="padding:6px"></select>
+        <button class="btn-sm btn-primary" onclick="labAddLine()">+ Add limit</button>
+        <span class="lab-small">Ratio:</span>
+        <select id="lab-ratio-a" style="padding:6px"></select> <span>:</span> <select id="lab-ratio-b" style="padding:6px"></select>
+        <button class="btn-sm btn-info" onclick="labAddRatio()">+ Add ratio</button>
+        <button class="btn-sm btn-warning" onclick="labAddSidSet()">+ Add poultry/pig SID amino acid set</button>
+      </div>
+      <div class="lab-small" id="lab-sid-note" style="margin-top:6px"></div>
     </div>
-    <div class="form-group">
-      <label>Maximum crude fibre (%): <small>0 = no limit</small></label>
-      <input type="number" id="target-fiber" min="0" max="100" step="0.01" value="0" />
+
+    <div class="card">
+      <h4 style="margin-top:0">Save and release</h4>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="lab-formula-name" placeholder="Formula name" style="padding:6px;min-width:220px">
+        <button class="btn-sm btn-success" onclick="labSaveFormula()">Save formula (checked against the saved profile)</button>
+        <button class="btn-sm btn-warning" id="lab-use-prod" onclick="labUseInProduction()">Use in Production Batch</button>
+      </div>
+      <div id="lab-save-out" style="margin-top:8px"></div>
     </div>
-    <details class="form-group" id="extra-nutrients">
-      <summary style="cursor:pointer;font-weight:600">More nutrient limits (0 = not enforced)</summary>
-      <div class="form-group"><label>Minimum lysine (%):</label><input type="number" id="target-lys" min="0" max="100" step="0.001" value="0" /></div>
-      <div class="form-group"><label>Minimum methionine (%):</label><input type="number" id="target-met" min="0" max="100" step="0.001" value="0" /></div>
-      <div class="form-group"><label>Minimum calcium (%):</label><input type="number" id="target-ca-min" min="0" max="100" step="0.001" value="0" /></div>
-      <div class="form-group"><label>Maximum calcium (%):</label><input type="number" id="target-ca-max" min="0" max="100" step="0.001" value="0" /></div>
-      <div class="form-group"><label>Minimum available phosphorus (%):</label><input type="number" id="target-p" min="0" max="100" step="0.001" value="0" /></div>
-      <p style="font-size:.85rem;color:#666">Each ingredient's lysine, methionine, calcium and phosphorus must be filled in under Purchasing &rarr; Item Master &rarr; Edit nutrients, or the limit cannot be met.</p>
+  </div>
+
+  <div id="lab-data" class="card lab-panel">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h4 style="margin:0">Ingredient nutrient data</h4>
+      <button class="btn-sm btn-info" onclick="labHideData()">&larr; Back to formulation</button>
+    </div>
+    <p class="lab-small">Blank means <b>unknown</b> (never zero). Yellow cells are blank but needed by your current limits. Enter 0 only when the true value is 0.</p>
+    <details open style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">Paste or upload from Excel</summary>
+      <p class="lab-small">First column = ingredient name, other columns = nutrient names (CP, Ca, SID Lys...). Sheets with nutrients down the side are flipped automatically. A bare "Lysine" column is <b>never</b> assumed to be SID.</p>
+      <textarea class="lab-paste" id="lab-imp-text" placeholder="Paste here"></textarea>
+      <div style="margin:6px 0">or file: <input type="file" id="lab-imp-file" accept=".xlsx,.csv,.tsv,.txt"></div>
+      <button class="btn-sm btn-primary" onclick="labImport(false)">Preview</button>
+      <button class="btn-sm btn-success" onclick="labImport(true)">Import</button>
+      <div id="lab-imp-out" style="margin-top:8px"></div>
     </details>
-    <div class="form-group">
-      <label><input type="checkbox" id="limit-stock" /> Only use what is in stock at this outlet</label>
-    </div>
-    <p>This calculator enforces minimum crude protein and energy, maximum fibre, and each ingredient's max inclusion limit, using the nutrient profiles saved in Purchasing &rarr; Item Master. It can also enforce lysine, methionine, calcium and phosphorus limits when you set them below. It does not check other amino acids, trace minerals, salt or medicine, so confirm the result with a nutritionist.</p>
-    <button class="btn-primary" onclick="runFormulation()" style="padding: 10px;">Calculate Optimal Batch Recipe</button>
-    <button class="btn-sm btn-info" data-roles="admin,accountant" onclick="saveStageTargets()" style="padding: 10px;">Save these targets as this stage's defaults</button>
-    <div id="formulation-result" role="status" aria-live="polite" style="background:#f8f9fa; padding:10px; margin-top:10px; border-radius:4px;">Choose a stage and batch size, then calculate.</div>
+    <details style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">Columns shown / add a nutrient</summary>
+      <button class="btn-sm btn-warning" onclick="labShowSidCols()">Show SID amino acid columns</button>
+      <div id="lab-col-pick" style="margin:6px 0"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <input id="lab-nn-code" placeholder="CODE" style="width:90px;padding:5px">
+        <input id="lab-nn-name" placeholder="Name" style="width:150px;padding:5px">
+        <input id="lab-nn-unit" placeholder="Unit" style="width:80px;padding:5px">
+        <select id="lab-nn-basis" style="padding:5px"><option value="asfed">as fed</option><option value="dm">per kg DM</option><option value="pct_cp">% of CP</option></select>
+        <button class="btn-sm btn-info" onclick="labAddNutrient()">+ New nutrient</button>
+      </div>
+    </details>
+    <div style="margin:6px 0">Source for values you type below: <input id="lab-cell-source" placeholder="e.g. lab report 12 Oct 2026" style="padding:5px;width:280px">
+      <button class="btn-sm btn-success" onclick="labSaveCells()">Save changed cells</button> <span id="lab-cell-msg" class="lab-small"></span></div>
+    <div class="lab-wrap"><table class="lab" id="lab-matrix"></table></div>
   </div>
 </div>

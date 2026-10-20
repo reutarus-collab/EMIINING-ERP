@@ -473,6 +473,11 @@ class SavedFormula(db.Model):
     name = db.Column(db.String(100), nullable=False, unique=True)
     notes = db.Column(db.String(300))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    # Set when a formula is saved from the Formulation Lab against a requirement profile. Such a formula
+    # is re-verified live before it can be used in production (see services/formulation_engine.py).
+    profile_id = db.Column(db.Integer, db.ForeignKey('requirement_profiles.id'), nullable=True)
+    last_verified_ok = db.Column(db.Boolean, nullable=True)
+    last_verified_at = db.Column(db.DateTime, nullable=True)
     lines = db.relationship('SavedFormulaLine', backref='formula', cascade='all, delete-orphan')
 
 
@@ -489,3 +494,59 @@ class FormulaAlias(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     alias = db.Column(db.String(150), nullable=False, unique=True)
     ingredient_id = db.Column(db.Integer, nullable=False)
+
+
+class Nutrient(db.Model):
+    """One column in the ingredient nutrient matrix. basis says how ingredient values are written:
+    asfed = as fed, dm = per kg dry matter, pct_cp = percent of that ingredient's crude protein."""
+    __tablename__ = 'nutrients'
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(20), nullable=False, unique=True)
+    name = db.Column(db.String(100), nullable=False)
+    unit = db.Column(db.String(20), nullable=False, default='%')
+    basis = db.Column(db.String(10), nullable=False, default='asfed')
+    group = db.Column(db.String(30), nullable=False, default='other')
+    line_per = db.Column(db.String(20), nullable=False, default='asfed')   # default denominator for a requirement line
+    line_scale = db.Column(db.Float, nullable=False, default=1.0)
+    aliases = db.Column(db.String(400), nullable=False, default='')        # '|' separated, normalised
+    sort = db.Column(db.Integer, nullable=False, default=0)
+
+
+class IngredientNutrient(db.Model):
+    """A nutrient value for one ingredient. A missing row means UNKNOWN, never zero."""
+    __tablename__ = 'ingredient_nutrients'
+    id = db.Column(db.Integer, primary_key=True)
+    ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
+    nutrient_code = db.Column(db.String(20), nullable=False)
+    value = db.Column(db.Float, nullable=False)
+    source = db.Column(db.String(200))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('ingredient_id', 'nutrient_code', name='uq_ingredient_nutrient'),)
+
+
+class RequirementProfile(db.Model):
+    __tablename__ = 'requirement_profiles'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    species = db.Column(db.String(30), nullable=False, default='other')
+    stage = db.Column(db.String(60))
+    source = db.Column(db.String(300))           # where these requirements came from
+    notes = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    lines = db.relationship('RequirementLine', backref='profile', cascade='all, delete-orphan',
+                            order_by='RequirementLine.sort')
+
+
+class RequirementLine(db.Model):
+    __tablename__ = 'requirement_lines'
+    id = db.Column(db.Integer, primary_key=True)
+    profile_id = db.Column(db.Integer, db.ForeignKey('requirement_profiles.id'), nullable=False)
+    nutrient_code = db.Column(db.String(20), nullable=False)
+    per = db.Column(db.String(20), nullable=False, default='asfed')   # asfed | dm | another nutrient code (ratio)
+    scale = db.Column(db.Float, nullable=False, default=1.0)         # 100 for "% of CP" style lines
+    min_value = db.Column(db.Float)
+    max_value = db.Column(db.Float)
+    tolerance = db.Column(db.Float, nullable=False, default=0.0)
+    required = db.Column(db.Boolean, nullable=False, default=True)   # False = advisory only
+    enabled = db.Column(db.Boolean, nullable=False, default=True)
+    sort = db.Column(db.Integer, nullable=False, default=0)
