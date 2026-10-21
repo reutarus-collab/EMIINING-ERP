@@ -62,3 +62,11 @@ Every POST that moves cash or stock (expenses, supplier payments, repayments, re
 When adding a new money- or stock-moving POST route: put `@idempotent('some-scope')` under its `@roles_required`, and add its path to `PROTECTED` in `static/js/idem.js`. `tests/test_idempotency.py` fails if the two lists drift apart.
 
 Run the tests with `SECRET_KEY=test python -m unittest discover -s tests`. A request that fails validation does not use up its key, so the same screen can be corrected and resubmitted.
+
+## Rules the code now enforces (and the tests that guard them)
+
+- **Ledger:** every journal is posted with `post_gl_transaction()` in `services/ledger_service.py`. It works in exact cents (`Decimal`), refuses anything that does not balance, and adds nothing to the session unless the whole entry is valid. A second guard blocks any COMMIT that would leave an unbalanced journal, even if code adds ledger rows directly. `post_gl_entry()` is retired and raises. Tests: `tests/test_ledger_integrity.py`.
+- **Stock:** `LocationStock` is the only authoritative stock and cost. `FeedIngredient.stock_quantity_kg` is a summary rebuilt by `refresh_global_valuation()`; read stock with `services.inventory.stock_quantity(location_id, item_id)`. Test: `tests/test_stock_authority.py` fails if new code touches the aggregate field.
+- **Access:** every route declares its roles with `@roles_required(...)` (constants `ALL_STAFF`, `PURCHASING_STAFF`, `SALES_FLOOR_STAFF` in `routes/auth.py`). The path-prefix list is only a first filter. Test: `tests/test_rbac_matrix.py` fails if a route has no declaration.
+- **Errors:** routes return `error_response(exc)` from `services/errors.py`. Validation messages are shown; unexpected faults are logged with a reference code (`ERR-XXXXXXXX`) and the browser sees only a safe message. Find the reference in the server error log.
+- **Offline:** the app is online-only by decision. The unfinished offline queue and service workers were removed. See `tests/test_offline_policy.py`.

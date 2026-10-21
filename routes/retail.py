@@ -1,17 +1,19 @@
 ﻿import math
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request, g
+from services.errors import error_response
 from sqlalchemy import func
-from routes.auth import roles_required
+from routes.auth import roles_required, ALL_STAFF, SALES_FLOOR_STAFF
 from services.models import db, Customer, FeedIngredient, OrderHeader, PaymentSplit, ItemPrice, TillSession, LocationStock, OperatingExpense, SalesRefund, TillCashMovement
 from services.inventory import resolve_location, stock_quantity
 retail_bp = Blueprint('retail', __name__)
 @retail_bp.route('/api/stock')
+@roles_required(*ALL_STAFF)
 def stock():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     rows = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service'),
                                        FeedIngredient.is_active.isnot(False)).order_by(FeedIngredient.name).all()
     show_cost = g.user.role in ('admin', 'accountant', 'warehouse')
@@ -72,11 +74,12 @@ def prices_save():
     db.session.commit()
     return jsonify(status='success')
 @retail_bp.route('/api/reports/daily')
+@roles_required(*SALES_FLOOR_STAFF)
 def daily_report():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     now_eat = datetime.utcnow() + timedelta(hours=3)
     start_eat = now_eat.replace(hour=0, minute=0, second=0, microsecond=0)
     start = start_eat - timedelta(hours=3)
@@ -215,6 +218,7 @@ def packs_save():
 
 
 @retail_bp.route('/api/price-list.pdf')
+@roles_required(*ALL_STAFF)
 def price_list_pdf():
     """Customer-facing retail price list. Prices only: no costs, margins or stock."""
     import io

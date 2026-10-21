@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from flask import Blueprint, g, jsonify, request
+from services.errors import error_response
 
 from routes.auth import roles_required
 from services.db import db
@@ -36,7 +37,7 @@ def run_formulation():
                 raise ValueError('Choose at least one raw ingredient.')
             raw_ids = sorted({int(value) for value in raw_ids})
     except (TypeError, ValueError) as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     try:
         target_cp = float(data.get('target_cp_pct')) if data.get('target_cp_pct') not in (None, '') else None
         target_me = float(data.get('target_me_mcal')) if data.get('target_me_mcal') not in (None, '') else None
@@ -108,7 +109,7 @@ def milling_runs():
         location = resolve_location((request.get_json(silent=True) or {}).get('location_id')
                                     if request.method == 'POST' else request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
     if request.method == 'GET':
         runs = (MillingRun.query.filter_by(location_id=location.id)
@@ -155,7 +156,7 @@ def milling_runs():
         db.session.commit()
     except (TypeError, ValueError) as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     except Exception:
         db.session.rollback()
         return jsonify(status='error', message='Could not record the customer milling job.'), 500
@@ -288,17 +289,14 @@ def record_production_run():
                       'PRODUCTION_OUTPUT', batch_no)
         run.total_input_cost = input_cost
         run.loss_cost = loss_cost
-        from services.ledger_service import post_gl_entry
-        ledger_ok = post_gl_entry(batch_no, '1200', output_cost, 0.0, 'PRODUCTION', run.id)
-        if loss_cost > 0:
-            ledger_ok = post_gl_entry(batch_no, '5100', loss_cost, 0.0, 'PRODUCTION_LOSS', run.id) and ledger_ok
-        ledger_ok = post_gl_entry(batch_no, '1200', 0.0, input_cost, 'PRODUCTION', run.id) and ledger_ok
-        if not ledger_ok:
-            raise RuntimeError('Could not post production accounting entries.')
+        from services.ledger_service import post_gl_transaction
+        # Finished goods in + production loss = raw materials out. Zero-cost batches post nothing.
+        post_gl_transaction(batch_no, [('1200', output_cost, 0.0), ('5100', loss_cost, 0.0), ('1200', 0.0, input_cost)],
+                            'PRODUCTION', run.id, skip_zero=True)
         db.session.commit()
     except (TypeError, ValueError) as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     except Exception:
         db.session.rollback()
         return jsonify(status='error', message='Could not record the production batch.'), 500
@@ -321,7 +319,7 @@ def production_run_history():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     runs = ProductionRun.query.filter_by(location_id=location.id).order_by(ProductionRun.created_at.desc()).limit(100).all()
     item_names = {item.id: item.name for item in FeedIngredient.query.all()}
     return jsonify([{
@@ -348,7 +346,7 @@ def production_run_lines(batch_no):
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     run = ProductionRun.query.filter_by(batch_no=batch_no, location_id=location.id).first()
     if not run:
         return jsonify(status='error', message='Production batch not found.'), 404
@@ -462,7 +460,7 @@ def save_formula():
     try:
         name, notes, lines = _clean_formula(data)
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     same_name = SavedFormula.query.filter(db.func.lower(SavedFormula.name) == name.lower()).first()
     fm = None
     if data.get('id') not in (None, ''):
@@ -493,7 +491,7 @@ def save_formula():
         return jsonify(status='error', message='A formula with this name already exists.'), 409
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 
 @factory_bp.route('/api/factory/formulas/<int:formula_id>', methods=['DELETE'])

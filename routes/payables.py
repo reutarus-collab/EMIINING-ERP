@@ -2,6 +2,7 @@ from services.idempotency import idempotent
 import math
 import uuid
 from flask import Blueprint, jsonify, request, g
+from services.errors import error_response
 from sqlalchemy import func
 from routes.auth import roles_required
 from services.models import db, Supplier, SupplierTxn
@@ -23,18 +24,16 @@ def _balances():
     return out
 def record_purchase(supplier_id, po_id, ref, amount, method, username):
     """Books a receipt: inventory in, and either cash out or a supplier payable."""
-    from services.ledger_service import post_gl_entry
+    from services.ledger_service import post_gl_transaction
     amount = round(amount, 2)
     if amount <= 0:
         return
-    post_gl_entry(ref, ACC_INVENTORY, amount, 0.0, 'PURCHASE', po_id)
+    credit_account = ACC_PAYABLE if method == 'ON_ACCOUNT' else _payment_account(method)
+    post_gl_transaction(ref, [(ACC_INVENTORY, amount, 0.0), (credit_account, 0.0, amount)], 'PURCHASE', po_id)
     if method == 'ON_ACCOUNT':
-        post_gl_entry(ref, ACC_PAYABLE, 0.0, amount, 'PURCHASE', po_id)
         db.session.add(SupplierTxn(supplier_id=supplier_id, po_id=po_id, ref=ref,
                                    kind='PURCHASE', amount=amount, method='ON_ACCOUNT',
                                    created_by=username))
-    else:
-        post_gl_entry(ref, _payment_account(method), 0.0, amount, 'PURCHASE', po_id)
 @payables_bp.route('/api/admin/payables')
 @roles_required('admin', 'accountant')
 def payables_list():
@@ -79,14 +78,14 @@ def pay_supplier(supplier_id):
                        message='Payment of KSh %.2f is more than the KSh %.2f owed.' % (amount, owed)), 400
     ref = 'SPAY-' + uuid.uuid4().hex[:6].upper()
     try:
-        from services.ledger_service import post_gl_entry
-        post_gl_entry(ref, ACC_PAYABLE, amount, 0.0, 'SUPPLIER_PAYMENT', supplier_id)
-        post_gl_entry(ref, _payment_account(method), 0.0, amount, 'SUPPLIER_PAYMENT', supplier_id)
+        from services.ledger_service import post_gl_transaction
+        post_gl_transaction(ref, [(ACC_PAYABLE, amount, 0.0), (_payment_account(method), 0.0, amount)],
+                            'SUPPLIER_PAYMENT', supplier_id)
         db.session.add(SupplierTxn(supplier_id=supplier_id, ref=ref, kind='PAYMENT',
                                    amount=amount, method=method, note=note,
                                    created_by=g.user.username))
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        return jsonify(status='error', message='Could not record the payment: ' + str(e)), 400
+        return error_response(e, prefix='Could not record the payment: ')
     return jsonify(status='success', ref=ref, owed=round(owed - amount, 2))

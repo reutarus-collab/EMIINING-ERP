@@ -6,12 +6,13 @@ import uuid
 from datetime import date, datetime, time, timedelta
 
 from flask import Blueprint, jsonify, request, g
+from services.errors import error_response
 from sqlalchemy import func
 
 from routes.auth import roles_required
 from services.db import db
 from services.inventory import resolve_location
-from services.ledger_service import post_gl_entry
+from services.ledger_service import post_gl_transaction
 from services.models import (
     Account, CashWalkOpening, Customer, EquipmentPurchase, FeedIngredient, GeneralLedgerEntry,
     GoodsReceiptLine, GoodsReceiptNote, InventoryTransfer, LocationStock,
@@ -118,7 +119,7 @@ def save_cash_walk_opening():
                        cash_difference=round(amounts['cash'] - sum(_ledger_balance_at(code, as_of) for code in CASH_CODES), 2))
     except (TypeError, ValueError) as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 
 @reports_bp.route('/api/reports/opening-balances')
@@ -127,7 +128,7 @@ def get_cash_walk_opening():
     try:
         as_of = _date_arg('as_of_date', _today_local())
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     row = CashWalkOpening.query.filter_by(as_of_date=as_of).first()
     if row:
         ledger_cash = sum(_ledger_balance_at(code, as_of) for code in CASH_CODES)
@@ -199,15 +200,12 @@ def record_owner_withdrawal():
         db.session.add(withdrawal)
         db.session.flush()
         cash_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
-        if not post_gl_entry(ref, '3000', amount, 0.0, 'OWNER_WITHDRAWAL', withdrawal.id):
-            raise RuntimeError('Could not post owner withdrawal.')
-        if not post_gl_entry(ref, cash_account, 0.0, amount, 'OWNER_WITHDRAWAL', withdrawal.id):
-            raise RuntimeError('Could not post owner withdrawal payment.')
+        post_gl_transaction(ref, [('3000', amount, 0.0), (cash_account, 0.0, amount)], 'OWNER_WITHDRAWAL', withdrawal.id)
         db.session.commit()
         return jsonify(status='success', reference=ref), 201
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 
 @reports_bp.route('/api/reports/equipment-purchases', methods=['POST'])
@@ -245,15 +243,12 @@ def record_equipment_purchase():
         db.session.add(purchase)
         db.session.flush()
         credit_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
-        if not post_gl_entry(ref, '1500', amount, 0.0, 'EQUIPMENT_PURCHASE', purchase.id):
-            raise RuntimeError('Could not post the equipment asset.')
-        if not post_gl_entry(ref, credit_account, 0.0, amount, 'EQUIPMENT_PURCHASE', purchase.id):
-            raise RuntimeError('Could not post the equipment payment.')
+        post_gl_transaction(ref, [('1500', amount, 0.0), (credit_account, 0.0, amount)], 'EQUIPMENT_PURCHASE', purchase.id)
         db.session.commit()
         return jsonify(status='success', reference=ref), 201
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 
 @reports_bp.route('/api/reports/cash-walk')
@@ -264,7 +259,7 @@ def cash_walk():
         end = _date_arg('end', today)
         start = _date_arg('start', end - timedelta(days=6))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     if end < start or (end - start).days > 31:
         return jsonify(status='error', message='Choose a period of 1 to 32 days.'), 400
     opening = CashWalkOpening.query.filter_by(as_of_date=start).first()
@@ -550,7 +545,7 @@ def leak_report():
         end = _date_arg('end', today)
         start = _date_arg('start', end - timedelta(days=6))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     if end < start or (end - start).days > 31:
         return jsonify(status='error', message='Choose a period of 1 to 32 days.'), 400
     current = _leak_metrics(start, end)
@@ -642,7 +637,7 @@ def trial_balance():
     try:
         end = _date_arg('end', _today_local())
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     cutoff = datetime.combine(end + timedelta(days=1), time.min) - LOCAL_UTC_OFFSET
     totals = _sum_by_account(GeneralLedgerEntry.query.filter(GeneralLedgerEntry.created_at < cutoff).all())
     chart = _chart()
@@ -678,7 +673,7 @@ def profit_loss():
     try:
         start, end = _statement_period()
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     totals = _sum_by_account(_period_entries(start, end))
     chart = _chart()
 
@@ -740,7 +735,7 @@ def cash_flow():
     try:
         start, end = _statement_period()
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     by_source = {}
     for e in _period_entries(start, end):
         if str(e.account_code) in CASH_CODES:

@@ -4,6 +4,7 @@ from services.models import ItemPrice
 from datetime import datetime, timedelta, time, date
 import math
 from flask import g
+from services.errors import error_response
 import uuid
 from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError
@@ -13,7 +14,7 @@ from services.db import db
 from services.models import LocationStock, FeedIngredient, Customer, CustomerPayment, CustomerDebtEntry, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, SalesRefundLine, IdempotencyKey
 from services.pos_service import process_full_pos_checkout
 from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
-from routes.auth import roles_required
+from routes.auth import roles_required, ALL_STAFF, SALES_FLOOR_STAFF
 
 pos_bp = Blueprint('pos_bp', __name__)
 
@@ -27,19 +28,21 @@ if not (STAFF_CREDIT_LIMIT_MAX >= 0 and math.isfinite(STAFF_CREDIT_LIMIT_MAX)):
     STAFF_CREDIT_LIMIT_MAX = 10000.0
 
 @pos_bp.route('/api/products/categories', methods=['GET'])
+@roles_required(*ALL_STAFF)
 def product_categories():
     rows = db.session.query(FeedIngredient.category).filter(FeedIngredient.is_active.isnot(False)).distinct().all()
     return jsonify(sorted({(r[0] or 'Uncategorised') for r in rows}, key=str.lower))
 
 
 @pos_bp.route('/api/products/search', methods=['GET'])
+@roles_required(*ALL_STAFF)
 def search_products():
     query = request.args.get('q', '').strip().lower()
     category = request.args.get('category', '').strip()
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     items_query = FeedIngredient.query.filter(FeedIngredient.is_active.isnot(False))
     if category == 'Uncategorised':
         items_query = items_query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category == ''))
@@ -64,12 +67,13 @@ def search_products():
         'packs': packs_by_item.get(i.id, [])
     } for i in items])
 @pos_bp.route('/api/inventory', methods=['GET'])
+@roles_required(*ALL_STAFF)
 def get_inventory():
     show_cost = g.user.role in ('admin', 'accountant', 'warehouse')
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     out = []
     for i in FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).all():
         row = {'id': i.id, 'name': i.name, 'category': i.category,
@@ -82,6 +86,7 @@ def get_inventory():
     return jsonify(out)
 
 @pos_bp.route('/api/customers', methods=['GET', 'POST'])
+@roles_required(*ALL_STAFF)
 @idempotent('customer-add')
 def manage_customers():
     if request.method == 'POST':
@@ -103,7 +108,7 @@ def manage_customers():
         try:
             outlet = resolve_location(data.get('location_id'))
         except ValueError as exc:
-            return jsonify({'status': 'error', 'message': str(exc)}), 400
+            return error_response(exc)
         cust = Customer(name=name, phone=phone, location=loc, customer_type=ctype,
                         credit_limit=limit, location_id=outlet.id)
         db.session.add(cust)
@@ -129,6 +134,7 @@ def manage_customers():
                     for c in q.order_by(Customer.name).all()])
 
 @pos_bp.route('/api/customers/<int:customer_id>/add-debt', methods=['POST'])
+@roles_required(*ALL_STAFF)
 @idempotent('customer-add-debt')
 def add_customer_debt(customer_id):
     """Record debt a customer already owed before the system (no sale, no stock, no cash).
@@ -162,7 +168,7 @@ def add_customer_debt(customer_id):
         return jsonify({'status': 'success', 'reference': ref, 'new_balance': cust.current_balance})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return error_response(e)
 
 
 @pos_bp.route('/api/customers/debt-entries', methods=['GET'])
@@ -220,8 +226,9 @@ def repay_customer_debt(customer_id):
         return jsonify({'status': 'success', 'reference': ref, 'new_balance': cust.current_balance})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return error_response(e)
 @pos_bp.route('/api/pos/checkout', methods=['POST'])
+@roles_required(*ALL_STAFF)
 def checkout():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -259,14 +266,15 @@ def checkout():
         return jsonify(status='error', message='Checkout conflicted with another request. Retry with the same key.'), 409
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return error_response(e)
 
 @pos_bp.route('/api/till/current')
+@roles_required(*ALL_STAFF)
 def till_current():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     till = active_till(location.id, g.user.username)
     return jsonify(location_id=location.id, location_name=location.name,
                    session={'id': till.id, 'opening_cash': till.opening_cash,
@@ -274,6 +282,7 @@ def till_current():
                    if till else None)
 
 @pos_bp.route('/api/till/open', methods=['POST'])
+@roles_required(*ALL_STAFF)
 def till_open():
     data = request.get_json(silent=True) or {}
     try:
@@ -293,9 +302,10 @@ def till_open():
         db.session.rollback()
         if isinstance(exc, IntegrityError):
             return jsonify(status='error', message='A till was opened for you at this outlet in another request. Refresh the till status.'), 409
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/till/close', methods=['POST'])
+@roles_required(*ALL_STAFF)
 def till_close():
     data = request.get_json(silent=True) or {}
     try:
@@ -314,22 +324,18 @@ def till_close():
         till.counted_cash = round(counted, 2)
         till.cash_variance = variance
         if abs(variance) >= 0.01:
-            from services.ledger_service import post_gl_entry
+            from services.ledger_service import post_gl_transaction
             ref = f'TILL-{till.id}-CLOSE'
             if variance > 0:
-                posted = post_gl_entry(ref, '1000', variance, 0.0, 'TILL_OVER_SHORT', till.id)
-                posted = post_gl_entry(ref, '5200', 0.0, variance, 'TILL_OVER_SHORT', till.id) and posted
+                post_gl_transaction(ref, [('1000', variance, 0.0), ('5200', 0.0, variance)], 'TILL_OVER_SHORT', till.id)
             else:
-                posted = post_gl_entry(ref, '5100', abs(variance), 0.0, 'TILL_OVER_SHORT', till.id)
-                posted = post_gl_entry(ref, '1000', 0.0, abs(variance), 'TILL_OVER_SHORT', till.id) and posted
-            if not posted:
-                raise RuntimeError('Could not post till cash variance to the ledger.')
+                post_gl_transaction(ref, [('5100', abs(variance), 0.0), ('1000', 0.0, abs(variance))], 'TILL_OVER_SHORT', till.id)
         db.session.commit()
         return jsonify(status='success', expected_cash=round(till.expected_cash, 2),
                        counted_cash=round(counted, 2), variance=variance)
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/till/cash-movements', methods=['GET', 'POST'])
 @roles_required('admin', 'accountant', 'sales', 'warehouse', 'factory')
@@ -339,7 +345,7 @@ def till_cash_movements():
         try:
             location = resolve_location(request.args.get('location_id'))
         except ValueError as exc:
-            return jsonify(status='error', message=str(exc)), 400
+            return error_response(exc)
         rows = (TillCashMovement.query.join(TillSession)
                 .filter(TillSession.location_id == location.id)
                 .order_by(TillCashMovement.created_at.desc()).limit(50).all())
@@ -371,20 +377,17 @@ def till_cash_movements():
                                         reason=reason, created_by=g.user.username))
         sign = 1 if movement_type == 'PAID_IN' else -1
         till.expected_cash = round((till.expected_cash or 0.0) + sign * amount, 2)
-        from services.ledger_service import post_gl_entry
+        from services.ledger_service import post_gl_transaction
         if movement_type == 'PAID_IN':
-            posted = post_gl_entry(ref, '1000', amount, 0.0, 'TILL_CASH_MOVEMENT', till.id)
-            posted = post_gl_entry(ref, '1100', 0.0, amount, 'TILL_CASH_MOVEMENT', till.id) and posted
+            legs = [('1000', amount, 0.0), ('1100', 0.0, amount)]
         else:
-            posted = post_gl_entry(ref, '1100', amount, 0.0, 'TILL_CASH_MOVEMENT', till.id)
-            posted = post_gl_entry(ref, '1000', 0.0, amount, 'TILL_CASH_MOVEMENT', till.id) and posted
-        if not posted:
-            raise RuntimeError('Could not post the cash movement to the ledger.')
+            legs = [('1100', amount, 0.0), ('1000', 0.0, amount)]
+        post_gl_transaction(ref, legs, 'TILL_CASH_MOVEMENT', till.id)
         db.session.commit()
         return jsonify(status='success', reference=ref, expected_cash=till.expected_cash), 201
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/pos/orders/<int:order_id>/refund', methods=['POST'])
 @roles_required('admin', 'accountant', 'sales')
@@ -460,10 +463,9 @@ def refund_sale(order_id):
         db.session.flush()
         if till:
             till.expected_cash = round((till.expected_cash or 0.0) - amount, 2)
-        from services.ledger_service import post_gl_entry
+        from services.ledger_service import post_gl_transaction
         payment_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
-        posted = post_gl_entry(ref, '4100', amount, 0.0, 'SALES_REFUND', order.id)
-        posted = post_gl_entry(ref, payment_account, 0.0, amount, 'SALES_REFUND', order.id) and posted
+        post_gl_transaction(ref, [('4100', amount, 0.0), (payment_account, 0.0, amount)], 'SALES_REFUND', order.id)
         return_value = 0.0
         for line, ingredient, quantity, unit_cost in return_rows:
             receive_stock(location.id, ingredient, quantity, unit_cost, 'SALES_RETURN', ref,
@@ -472,18 +474,16 @@ def refund_sale(order_id):
                                            ingredient_id=ingredient.id, quantity_kg=quantity,
                                            unit_cost_per_kg=unit_cost))
             return_value += quantity * unit_cost
+        return_value = round(return_value, 2)
         if return_value > 0:
-            posted = post_gl_entry(ref, '1200', return_value, 0.0, 'SALES_RETURN', order.id) and posted
-            posted = post_gl_entry(ref, '5000', 0.0, return_value, 'SALES_RETURN', order.id) and posted
-        if not posted:
-            raise RuntimeError('Could not post the refund to the ledger.')
+            post_gl_transaction(ref, [('1200', return_value, 0.0), ('5000', 0.0, return_value)], 'SALES_RETURN', order.id)
         db.session.commit()
         return jsonify(status='success', reference=ref,
                        restocked_kg=round(sum(row[2] for row in return_rows), 3),
                        restocked_cost=round(return_value, 2)), 201
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/inventory/adjust', methods=['POST'])
 @roles_required('admin', 'warehouse')
@@ -503,20 +503,19 @@ def adjust_inventory():
         adjustment_value = round(abs(delta) * (balance.unit_cost_per_kg or 0.0), 2)
         ref = 'ADJ-' + uuid.uuid4().hex[:10].upper()
         change_stock(location.id, ingredient, delta, 'STOCK_ADJUSTMENT', ref, reason)
-        from services.ledger_service import post_gl_entry
+        from services.ledger_service import post_gl_transaction
         if delta < 0:
-            posted = post_gl_entry(ref, '5100', adjustment_value, 0.0, 'STOCK_ADJUSTMENT', ingredient.id)
-            posted = post_gl_entry(ref, '1200', 0.0, adjustment_value, 'STOCK_ADJUSTMENT', ingredient.id) and posted
+            legs = [('5100', adjustment_value, 0.0), ('1200', 0.0, adjustment_value)]
         else:
-            posted = post_gl_entry(ref, '1200', adjustment_value, 0.0, 'STOCK_ADJUSTMENT', ingredient.id)
-            posted = post_gl_entry(ref, '5400', 0.0, adjustment_value, 'STOCK_ADJUSTMENT', ingredient.id) and posted
-        if not posted:
-            raise RuntimeError('Could not post the stock adjustment to the ledger.')
+            legs = [('1200', adjustment_value, 0.0), ('5400', 0.0, adjustment_value)]
+        # A zero-cost item has nothing to value; stock still moves, the ledger gets no empty journal.
+        if adjustment_value >= 0.005:
+            post_gl_transaction(ref, legs, 'STOCK_ADJUSTMENT', ingredient.id)
         db.session.commit()
         return jsonify(status='success', quantity_kg=location_stock(location.id, ingredient.id).quantity_kg)
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/inventory/transfers', methods=['POST'])
 @roles_required('admin', 'warehouse')
@@ -550,7 +549,7 @@ def transfer_inventory():
         return jsonify(status='success', transfer_no=ref, status_text='IN_TRANSIT')
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/inventory/transfers/incoming', methods=['GET'])
 @roles_required('admin', 'sales', 'warehouse')
@@ -558,7 +557,7 @@ def incoming_inventory_transfers():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     query = InventoryTransfer.query.filter(
         InventoryTransfer.to_location_id == location.id,
         InventoryTransfer.status.in_(('IN_TRANSIT', 'PARTIALLY_RECEIVED')))
@@ -623,7 +622,7 @@ def receive_inventory_transfer(transfer_id):
                        transfer_status=transfer.status)
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/inventory/transfers/<int:transfer_id>/close-short', methods=['POST'])
 @roles_required('admin', 'sales', 'warehouse')
@@ -648,11 +647,8 @@ def close_transfer_shortfall(transfer_id):
         loss_value = round(shortfall * (transfer.unit_cost_per_kg or 0.0), 2)
         ref = f'{transfer.transfer_no}-SHORT'
         if loss_value > 0:
-            from services.ledger_service import post_gl_entry
-            posted = post_gl_entry(ref, '5100', loss_value, 0.0, 'TRANSFER_SHORTFALL', transfer.id)
-            posted = post_gl_entry(ref, '1200', 0.0, loss_value, 'TRANSFER_SHORTFALL', transfer.id) and posted
-            if not posted:
-                raise RuntimeError('Could not post the transfer shortfall loss to the ledger.')
+            from services.ledger_service import post_gl_transaction
+            post_gl_transaction(ref, [('5100', loss_value, 0.0), ('1200', 0.0, loss_value)], 'TRANSFER_SHORTFALL', transfer.id)
         from datetime import datetime
         transfer.shortfall_quantity_kg = shortfall
         transfer.shortfall_reason = reason
@@ -665,7 +661,7 @@ def close_transfer_shortfall(transfer_id):
                        transfer_status=transfer.status)
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 EXPENSE_CATEGORIES = {
     'TRANSPORT': ('Transport', '5300'), 'UTILITIES': ('KPLC / Utilities', '5310'),
@@ -682,7 +678,7 @@ def operating_expenses():
         try:
             location = resolve_location(request.args.get('location_id'))
         except ValueError as exc:
-            return jsonify(status='error', message=str(exc)), 400
+            return error_response(exc)
         records = OperatingExpense.query.filter_by(location_id=location.id).order_by(
             OperatingExpense.created_at.desc()).limit(100).all()
         return jsonify(location_id=location.id, location_name=location.name,
@@ -721,25 +717,23 @@ def operating_expenses():
         db.session.add(expense)
         if till:
             till.expected_cash = round((till.expected_cash or 0.0) - amount, 2)
-        from services.ledger_service import post_gl_entry
+        from services.ledger_service import post_gl_transaction
         expense_account = EXPENSE_CATEGORIES[category][1]
         payment_account = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020'}[method]
-        if not post_gl_entry(ref, expense_account, amount, 0.0, 'OPERATING_EXPENSE', None):
-            raise RuntimeError('Could not post the expense debit to the ledger.')
-        if not post_gl_entry(ref, payment_account, 0.0, amount, 'OPERATING_EXPENSE', None):
-            raise RuntimeError('Could not post the payment credit to the ledger.')
+        post_gl_transaction(ref, [(expense_account, amount, 0.0), (payment_account, 0.0, amount)], 'OPERATING_EXPENSE', None)
         db.session.commit()
         return jsonify(status='success', reference=ref), 201
     except Exception as exc:
         db.session.rollback()
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
 
 @pos_bp.route('/api/sales-history', methods=['GET'])
+@roles_required(*SALES_FLOOR_STAFF)
 def get_sales_history():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     orders = OrderHeader.query.filter_by(location_id=location.id).order_by(OrderHeader.created_at.desc()).limit(30).all()
     out = []
     for o in orders:
@@ -775,6 +769,7 @@ def get_sales_history():
 
 
 @pos_bp.route('/api/customers/<int:customer_id>', methods=['PUT', 'PATCH'])
+@roles_required(*ALL_STAFF)
 def edit_customer(customer_id):
     cust = db.session.get(Customer, customer_id)
     if not cust:
@@ -809,11 +804,12 @@ def _utc_window(first_day, last_day):
 
 
 @pos_bp.route('/api/sales-history/summary', methods=['GET'])
+@roles_required(*SALES_FLOOR_STAFF)
 def sales_summary():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     today = (datetime.utcnow() + LOCAL_OFFSET).date()
     windows = {
         'today': (today, today),

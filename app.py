@@ -4,8 +4,9 @@ from flask import Flask, jsonify, render_template, request
 from flask_migrate import Migrate
 
 from services.db import db, init_db
+from services.ledger_service import install_ledger_guard
 from services.models import Location
-from routes.auth import auth_bp, init_auth, roles_required
+from routes.auth import auth_bp, init_auth, roles_required, ALL_STAFF
 from routes.retail import retail_bp
 from routes.payables import payables_bp
 from routes.factory import factory_bp
@@ -29,6 +30,7 @@ def create_app(config=None):
     if not app.config.get('SECRET_KEY'):
         raise RuntimeError('Set SECRET_KEY before starting the ERP.')
 
+    install_ledger_guard()
     init_db(app)
     with app.app_context():
         from services import formulation_engine
@@ -46,10 +48,12 @@ def create_app(config=None):
     init_auth(app)
 
     @app.route('/')
+    @roles_required(*ALL_STAFF)
     def dashboard():
         return render_template('dashboard.html')
 
     @app.route('/api/locations', methods=['GET'])
+    @roles_required(*ALL_STAFF)
     def get_locations():
         locations = Location.query.order_by(Location.name).all()
         return jsonify([{'id': loc.id, 'name': loc.name, 'code': loc.code,

@@ -153,9 +153,14 @@ class Oct12FeatureTests(unittest.TestCase):
         cw = admin.get('/api/reports/cash-walk?start=%s&end=%s' % (pl['start'], pl['end'])).json
         self.assertAlmostEqual(cw['lines']['profit'], pl['net_profit'], places=2)
 
+    def _legacy_gl_row(self, ref, account, debit, credit):
+        """Simulate bad data that is ALREADY in the database (the commit guard blocks new ORM writes)."""
+        from sqlalchemy import insert
+        db.session.execute(insert(GeneralLedgerEntry.__table__).values(
+            transaction_ref=ref, account_code=account, debit=debit, credit=credit, source_type='TEST', source_id=1))
+
     def test_trial_balance_flags_one_sided_postings(self):
-        from services.ledger_service import post_gl_entry
-        post_gl_entry('X1', '1000', 50.0, 0.0, 'TEST', 1)
+        self._legacy_gl_row('X1', '1000', 50.0, 0.0)
         db.session.commit()
         tb = self.client_for(self.admin_id).get('/api/reports/trial-balance').json
         self.assertFalse(tb['balanced'])
@@ -411,14 +416,13 @@ class Oct12FeatureTests(unittest.TestCase):
         self.assertAlmostEqual(d, c, places=9)
 
     def test_trial_balance_ignores_sub_cent_residue_but_catches_real_one_sided_entries(self):
-        from services.ledger_service import post_gl_entry
-        post_gl_entry('OLD1', '1000', 10.004, 0.0, 'TEST', 1)       # legacy half-cent noise
-        post_gl_entry('OLD1', '4000', 0.0, 10.0, 'TEST', 1)
+        self._legacy_gl_row('OLD1', '1000', 10.004, 0.0)       # legacy half-cent noise
+        self._legacy_gl_row('OLD1', '4000', 0.0, 10.0)
         db.session.commit()
         admin = self.client_for(self.admin_id)
         tb = admin.get('/api/reports/trial-balance').json
         self.assertTrue(tb['balanced'], tb)
-        post_gl_entry('BAD1', '1000', 5.0, 0.0, 'TEST', 2)           # a real one-sided leg
+        self._legacy_gl_row('BAD1', '1000', 5.0, 0.0)           # a real one-sided leg
         db.session.commit()
         tb = admin.get('/api/reports/trial-balance').json
         self.assertFalse(tb['balanced'])

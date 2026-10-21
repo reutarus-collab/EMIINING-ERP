@@ -119,12 +119,11 @@ def logout():
     return redirect(url_for('auth.login'))
 
 
-@auth_bp.route('/api/me')
-def me():
-    from routes.pos import STAFF_CREDIT_LIMIT_MAX
-    return jsonify(username=g.user.username, role=g.user.role,
-                   location=g.user.location, location_id=g.user.location_id,
-                   staff_credit_limit_max=STAFF_CREDIT_LIMIT_MAX)
+# Every route names the roles it serves. The path-prefix gate below is a first filter only;
+# tests/test_rbac_matrix.py fails if any route is left without an explicit declaration.
+ALL_STAFF = ('admin', 'accountant', 'sales', 'warehouse', 'factory')
+PURCHASING_STAFF = ('admin', 'accountant', 'warehouse', 'factory')
+SALES_FLOOR_STAFF = ('admin', 'accountant', 'sales', 'factory')
 
 
 def roles_required(*roles):
@@ -134,8 +133,19 @@ def roles_required(*roles):
             if g.user.role not in roles:
                 abort(403)
             return f(*a, **kw)
+        wrapper.allowed_roles = frozenset(roles)
         return wrapper
     return deco
+
+
+@auth_bp.route('/api/me')
+@roles_required(*ALL_STAFF)
+def me():
+    from routes.pos import STAFF_CREDIT_LIMIT_MAX
+    return jsonify(username=g.user.username, role=g.user.role,
+                   location=g.user.location, location_id=g.user.location_id,
+                   staff_credit_limit_max=STAFF_CREDIT_LIMIT_MAX)
+
 
 @auth_bp.route('/api/admin/users', methods=['GET'])
 @roles_required('admin')

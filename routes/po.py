@@ -1,6 +1,6 @@
-from routes.auth import roles_required
 from services.idempotency import idempotent
 from flask import g
+from services.errors import error_response
 import math
 from flask import Blueprint, request, jsonify
 import uuid
@@ -10,12 +10,13 @@ from sqlalchemy.exc import IntegrityError
 from services.db import db
 from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, FeedIngredient, StockMovement, GoodsReceiptNote, GoodsReceiptLine, IdempotencyKey
 from services.po_service import create_purchase_order, item_usage, purge_empty_stock_rows
-from routes.auth import roles_required
+from routes.auth import roles_required, PURCHASING_STAFF
 from services.inventory import resolve_location, location_stock, stock_quantity, change_stock, receive_stock
 
 po_bp = Blueprint('po_bp', __name__)
 
 @po_bp.route('/api/suppliers', methods=['GET', 'POST'])
+@roles_required(*PURCHASING_STAFF)
 @idempotent('supplier-add')
 def manage_suppliers():
     if request.method == 'POST':
@@ -33,6 +34,7 @@ def manage_suppliers():
     return jsonify([{'id': s.id, 'name': s.name, 'contact_info': s.contact_info} for s in suppliers])
 
 @po_bp.route('/api/po', methods=['POST'])
+@roles_required(*PURCHASING_STAFF)
 @idempotent('po-create')
 def create_po():
     try:
@@ -40,14 +42,15 @@ def create_po():
         po_number = create_purchase_order(data)
         return jsonify({'status': 'success', 'po_number': po_number})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return error_response(e)
 
 @po_bp.route('/api/po', methods=['GET'])
+@roles_required(*PURCHASING_STAFF)
 def list_pos():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     pos = PurchaseOrderHeader.query.filter_by(location_id=str(location.id)).order_by(PurchaseOrderHeader.order_date.desc()).limit(50).all()
     result = []
     for po in pos:
@@ -63,6 +66,7 @@ def list_pos():
     return jsonify(result)
 
 @po_bp.route('/api/po/<int:po_id>/lines', methods=['GET'])
+@roles_required(*PURCHASING_STAFF)
 def get_po_lines_by_id(po_id):
     try:
         location = resolve_location(request.args.get('location_id'))
@@ -93,15 +97,16 @@ def get_po_lines_by_id(po_id):
             })
         return jsonify({'id': po_id, 'lines': out})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return error_response(e)
 
 # --- ISOLATED PURCHASING INVENTORY ROUTES ---
 @po_bp.route('/api/po/inventory', methods=['GET'])
+@roles_required(*PURCHASING_STAFF)
 def get_po_inventory():
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
-        return jsonify(status='error', message=str(exc)), 400
+        return error_response(exc)
     items = FeedIngredient.query.all()
     result = []
     for i in items:
@@ -175,10 +180,10 @@ def set_item_active(item_id):
     return jsonify(status='success', id=item.id, is_active=item.is_active)
 
 @po_bp.route('/api/po/inventory/add', methods=['POST'])
+@roles_required(*PURCHASING_STAFF)
 def add_new_item():
     try:
         data = request.get_json()
-        print("📥 Incoming new item data:", data)
 
         clean_name = str(data.get('name', '')).strip()
         clean_cat = str(data.get('category') or '').strip()[:50]
@@ -203,13 +208,11 @@ def add_new_item():
 
         db.session.add(new_item)
         db.session.commit()
-        print("✅ Item saved to DB successfully! ID:", new_item.id)
         
         return jsonify({'status': 'success', 'item_id': new_item.id})
     except Exception as e:
         db.session.rollback()
-        print("❌ DB Save Error:", str(e))
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return error_response(e)
 
 @po_bp.route('/api/po/inventory/<int:item_id>', methods=['DELETE'])
 @roles_required('admin')
@@ -227,9 +230,10 @@ def delete_item(item_id):
         return jsonify(status='success')
     except Exception as e:
         db.session.rollback()
-        return jsonify(status='error', message=str(e)), 400
+        return error_response(e)
 
 @po_bp.route('/api/suppliers/add', methods=['POST'])
+@roles_required(*PURCHASING_STAFF)
 @idempotent('supplier-add-2')
 def add_supplier():
     try:
@@ -252,7 +256,7 @@ def add_supplier():
         return jsonify({'status': 'success', 'id': new_sup.id})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'message': str(e)}), 400 
+        return error_response(e) 
 
 def _grpo_replay(key, request_hash):
     """Return the original response if this receipt key was already posted."""
@@ -264,6 +268,7 @@ def _grpo_replay(key, request_hash):
     return jsonify(dict(existing.response_json or {'status': 'success'}, already_processed=True))
 
 @po_bp.route('/api/po/<int:po_id>/grpo', methods=['POST'])
+@roles_required(*PURCHASING_STAFF)
 def receive_grpo_partial(po_id):
     key = None
     request_hash = None
@@ -388,4 +393,4 @@ def receive_grpo_partial(po_id):
         return jsonify(status='error', message='Receipt conflicted with another request. Check the PO history before posting again.'), 409
     except Exception as e:
         db.session.rollback()
-        return jsonify({'status': 'error', 'message': str(e)}), 400
+        return error_response(e)

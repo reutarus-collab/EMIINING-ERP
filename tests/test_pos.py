@@ -189,6 +189,13 @@ class POSCheckoutTests(unittest.TestCase):
                    'debtors': 2000, 'creditors': 1000, 'equipment': 0}
         saved = client.post('/api/reports/opening-balances', json=payload)
         self.assertEqual(saved.status_code, 200, saved.json)
+        # The opening balances must also exist in the ledger, dated before the period starts. The report
+        # correctly shows a gap if they do not, which is what this test used to leave out.
+        before = datetime.utcnow() - timedelta(days=2)
+        for code, debit, credit in (('1000', 10000, 0), ('3000', 0, 10000)):
+            db.session.add(GeneralLedgerEntry(transaction_ref='OPENING-TEST', account_code=code, debit=debit,
+                                               credit=credit, source_type='OPENING', created_at=before))
+        db.session.commit()
         rows = [
             ('1000', 1000, 0, 'POS'), ('1300', 200, 0, 'POS'), ('4000', 0, 1200, 'POS'),
             ('1200', 500, 0, 'PURCHASE'), ('2000', 0, 500, 'PURCHASE'),
