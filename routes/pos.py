@@ -360,8 +360,8 @@ def till_cash_movements():
         movement_type = str(data.get('movement_type') or '').strip().upper()
         amount = round(float(data.get('amount')), 2)
         reason = str(data.get('reason') or '').strip()
-        if movement_type not in ('PAID_IN', 'PAID_OUT'):
-            raise ValueError('Choose cash paid-in or paid-out.')
+        if movement_type not in ('PAID_IN', 'PAID_OUT', 'MPESA_DEPOSIT'):
+            raise ValueError('Choose remove from counter, deposit to M-Pesa, or add float.')
         if not math.isfinite(amount) or amount <= 0:
             raise ValueError('Cash movement amount must be above zero.')
         if len(reason) < 4 or len(reason) > 200 or any(ch in reason for ch in '<>'):
@@ -369,8 +369,8 @@ def till_cash_movements():
         till = active_till(location.id, g.user.username, lock=True)
         if not till:
             raise ValueError('Open your outlet till before recording a cash movement.')
-        if movement_type == 'PAID_OUT' and amount > (till.expected_cash or 0.0) + 0.001:
-            raise ValueError('Cash paid-out exceeds the expected till cash.')
+        if movement_type in ('PAID_OUT', 'MPESA_DEPOSIT') and amount > (till.expected_cash or 0.0) + 0.001:
+            raise ValueError('That is more than the expected cash in the till.')
         ref = 'TILL-' + uuid.uuid4().hex[:10].upper()
         db.session.add(TillCashMovement(reference=ref, till_session_id=till.id,
                                         movement_type=movement_type, amount=amount,

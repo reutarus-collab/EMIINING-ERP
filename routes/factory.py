@@ -163,6 +163,109 @@ def milling_runs():
     return jsonify(status='success', run_no=run.run_no, loss_kg=run.variance_loss_kg), 201
 
 
+ELECTRICITY_RATE_PER_KG = 2.0   # KES per kg of grain milled, added to the cost of the milled product
+
+
+@factory_bp.route('/api/factory/own-milling', methods=['GET', 'POST'])
+@roles_required('admin', 'accountant', 'warehouse', 'factory')
+@idempotent('own-milling-run')
+def own_milling_runs():
+    """Mill company-owned grain into another stock item.
+
+    cost of output = (input kg x stock cost) + (input kg x electricity rate)
+    Loss is the weight difference; its cost stays inside the output, so a loss raises the cost per kg.
+    """
+    from services.models import InternalMillingRun
+    from services.ledger_service import post_gl_entry
+    try:
+        location = resolve_location((request.get_json(silent=True) or {}).get('location_id')
+                                    if request.method == 'POST' else request.args.get('location_id'))
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+
+    if request.method == 'GET':
+        runs = (InternalMillingRun.query.filter_by(location_id=location.id)
+                .order_by(InternalMillingRun.created_at.desc()).limit(100).all())
+        names = {i.id: i.name for i in FeedIngredient.query.filter(FeedIngredient.id.in_(
+            {r.input_ingredient_id for r in runs} | {r.output_ingredient_id for r in runs})).all()} if runs else {}
+        return jsonify([{
+            'run_no': r.run_no, 'input_name': names.get(r.input_ingredient_id, '?'),
+            'output_name': names.get(r.output_ingredient_id, '?'),
+            'input_kg': round(r.input_kg, 2), 'output_kg': round(r.output_kg, 2),
+            'loss_kg': round(r.loss_kg, 2), 'loss_pct': round(r.loss_pct, 2),
+            'input_cost': round(r.input_cost, 2), 'electricity_cost': round(r.electricity_cost, 2),
+            'output_cost_per_kg': round(r.output_cost_per_kg, 2), 'notes': r.notes or '',
+            'created_by': r.created_by or '', 'created_at': r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '',
+        } for r in runs])
+
+    data = request.get_json(silent=True) or {}
+    notes = str(data.get('notes') or '').strip()
+    try:
+        if len(notes) > 200:
+            raise ValueError('Notes must be 200 characters or fewer.')
+        in_id, out_id = int(data.get('input_ingredient_id')), int(data.get('output_ingredient_id'))
+        if in_id == out_id:
+            raise ValueError('Choose a different item for the milled output.')
+        input_kg = _positive_number(data.get('input_kg'), 'Grain milled')
+        output_kg = _positive_number(data.get('output_kg'), 'Milled weight obtained')
+        rate = _positive_number(data.get('electricity_rate_per_kg', ELECTRICITY_RATE_PER_KG),
+                                'Electricity rate', allow_zero=True)
+        if rate > 50:
+            raise ValueError('Electricity rate per kg looks too high (maximum 50).')
+        if output_kg > input_kg + 0.001:
+            raise ValueError('Milled weight cannot exceed the grain put in.')
+        items = {i.id: i for i in FeedIngredient.query.filter(FeedIngredient.id.in_([in_id, out_id]))
+                 .order_by(FeedIngredient.id).with_for_update().all()}
+        if len(items) != 2:
+            raise ValueError('Input or output item not found.')
+        src, dst = items[in_id], items[out_id]
+        for item in (src, dst):
+            if not (item.category or '').startswith('Raw'):
+                raise ValueError(f'{item.name} is not a raw material item.')
+        src_stock = location_stock(location.id, src.id, lock=True)
+        if input_kg > (src_stock.quantity_kg or 0.0) + 0.000001:
+            raise ValueError(f'Insufficient stock for {src.name}. Available: {(src_stock.quantity_kg or 0.0):.2f} kg.')
+        unit_cost = src_stock.unit_cost_per_kg or 0.0
+        if unit_cost <= 0:
+            raise ValueError(f'{src.name} has no cost on record at this outlet. Receive it with a cost first.')
+
+        input_cost = round(input_kg * unit_cost, 2)
+        electricity = round(input_kg * rate, 2)
+        total_cost = round(input_cost + electricity, 2)
+        loss_kg = round(max(0.0, input_kg - output_kg), 3)
+        loss_pct = (loss_kg / input_kg * 100.0) if input_kg else 0.0
+        run_no = f'OMILL-{uuid.uuid4().hex[:10].upper()}'
+        run = InternalMillingRun(
+            run_no=run_no, input_ingredient_id=src.id, output_ingredient_id=dst.id,
+            input_kg=input_kg, output_kg=output_kg, loss_kg=loss_kg, loss_pct=loss_pct,
+            input_cost=input_cost, electricity_rate_per_kg=rate, electricity_cost=electricity,
+            output_cost_per_kg=total_cost / output_kg, notes=notes or None,
+            created_by=g.user.username, location_id=location.id, created_at=datetime.utcnow())
+        db.session.add(run)
+        db.session.flush()
+        change_stock(location.id, src, -input_kg, 'MILLING_CONSUMPTION', run_no)
+        receive_stock(location.id, dst, output_kg, total_cost / output_kg, 'MILLING_OUTPUT', run_no)
+        # Balanced: Dr inventory (output) = Cr inventory (grain used) + Cr 5370 (electricity absorbed into stock).
+        # The full electricity bill stays in Utilities (5310) with lights, incubators etc; 5370 is the milling share.
+        ok = post_gl_entry(run_no, '1200', total_cost, 0.0, 'OWN_MILLING', run.id)
+        ok = post_gl_entry(run_no, '1200', 0.0, input_cost, 'OWN_MILLING', run.id) and ok
+        if electricity > 0:
+            ok = post_gl_entry(run_no, '5370', 0.0, electricity, 'OWN_MILLING', run.id) and ok
+        if not ok:
+            raise RuntimeError('Could not post milling accounting entries.')
+        db.session.commit()
+    except (TypeError, ValueError) as exc:
+        db.session.rollback()
+        return jsonify(status='error', message=str(exc)), 400
+    except Exception:
+        db.session.rollback()
+        return jsonify(status='error', message='Could not record the milling run.'), 500
+    return jsonify(status='success', run_no=run_no, input_kg=round(input_kg, 2), output_kg=round(output_kg, 2),
+                   loss_kg=round(loss_kg, 2), loss_pct=round(loss_pct, 2), input_cost=input_cost,
+                   electricity_cost=electricity, total_cost=total_cost,
+                   output_cost_per_kg=round(total_cost / output_kg, 2)), 201
+
+
 def _positive_number(value, label, allow_zero=False):
     try:
         number = float(value)

@@ -193,7 +193,7 @@ class SafetyRuleTests(Base):
         routes = [r for r in self.app.url_map.iter_rules()
                   if getattr(self.app.view_functions[r.endpoint], 'idempotent_scope', None)
                   and 'POST' in r.methods]
-        self.assertEqual(len(routes), 18)
+        self.assertEqual(len(routes), 20)  # 18 + own-milling + customer-merge
         admin = self.client('admin')
         for rule in routes:
             url = re.sub(r'<int:\w+>', '1', rule.rule)

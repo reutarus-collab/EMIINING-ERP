@@ -332,6 +332,42 @@ class MillingRun(db.Model):
     location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+class InternalMillingRun(db.Model):
+    """Company-owned grain milled in-house (e.g. whole maize -> broken maize).
+    All input cost plus electricity is carried into the output, so losses raise the cost per kg."""
+    __tablename__ = 'internal_milling_runs'
+    id = db.Column(db.Integer, primary_key=True)
+    run_no = db.Column(db.String(50), unique=True, nullable=False)
+    input_ingredient_id = db.Column(db.Integer, nullable=False)
+    output_ingredient_id = db.Column(db.Integer, nullable=False)
+    input_kg = db.Column(db.Float, nullable=False)
+    output_kg = db.Column(db.Float, nullable=False)
+    loss_kg = db.Column(db.Float, nullable=False, default=0.0)
+    loss_pct = db.Column(db.Float, nullable=False, default=0.0)
+    input_cost = db.Column(db.Float, nullable=False, default=0.0)
+    electricity_rate_per_kg = db.Column(db.Float, nullable=False, default=0.0)
+    electricity_cost = db.Column(db.Float, nullable=False, default=0.0)
+    output_cost_per_kg = db.Column(db.Float, nullable=False, default=0.0)
+    notes = db.Column(db.String(200))
+    created_by = db.Column(db.String(50))
+    location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+class CustomerMergeLog(db.Model):
+    """Audit row written whenever one customer record is merged into another."""
+    __tablename__ = 'customer_merge_log'
+    id = db.Column(db.Integer, primary_key=True)
+    source_id = db.Column(db.Integer, nullable=False)
+    source_name = db.Column(db.String(100))
+    target_id = db.Column(db.Integer, nullable=False)
+    target_name = db.Column(db.String(100))
+    orders_moved = db.Column(db.Integer, default=0)
+    payments_moved = db.Column(db.Integer, default=0)
+    debt_entries_moved = db.Column(db.Integer, default=0)
+    balance_moved = db.Column(db.Float, default=0.0)
+    merged_by = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
 class ProductionRun(db.Model):
     __tablename__ = 'production_runs'
     id = db.Column(db.Integer, primary_key=True)

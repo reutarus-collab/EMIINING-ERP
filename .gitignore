@@ -15,3 +15,11 @@ check_gl.py
 *.bak*
 *.rej
 *.patch
+
+*.rej
+*.patch
+*.orig
+
+*.rej
+*.patch
+*.orig

@@ -117,6 +117,8 @@ async function loadFactoryDropdowns() {
     const firstRaw = factoryInventory.find(item => (item.category || '').includes('Raw'));
     if (firstRaw && !document.querySelector('#prod-inputs tr[data-input-row]')) addProductionInput(firstRaw.id);
     loadProductionRuns();
+    populateOwnMilling();
+    loadOwnMilling();
     loadMillingRuns();
     loadSavedFormulas();
 }
@@ -824,3 +826,73 @@ function renderFormulaViewer() {
 }
 
 if (document.getElementById('species-select')) loadStageTargets();
+
+
+/* ---------- Own-grain milling (whole maize -> broken maize) ---------- */
+function populateOwnMilling() {
+    const inSel = document.getElementById('om-input'), outSel = document.getElementById('om-output');
+    if (!inSel || !outSel) return;
+    const keepIn = inSel.value, keepOut = outSel.value;
+    const raws = factoryInventory.filter(i => (i.category || '').startsWith('Raw'));
+    const opts = raws.map(i => `<option value="${i.id}">${escHtml(i.name)} (${Number(i.stock_quantity_kg || 0).toFixed(2)} kg)</option>`).join('');
+    inSel.innerHTML = opts; outSel.innerHTML = opts;
+    if (keepIn) inSel.value = keepIn;
+    if (keepOut) outSel.value = keepOut;
+    else if (outSel.options.length > 1) outSel.selectedIndex = 1;
+    inSel.onchange = outSel.onchange = previewOwnMilling;
+}
+function previewOwnMilling() {
+    const box = document.getElementById('om-preview'); if (!box) return;
+    const inKg = parseFloat(document.getElementById('om-input-kg').value);
+    const outKg = parseFloat(document.getElementById('om-output-kg').value);
+    const rate = parseFloat(document.getElementById('om-rate').value) || 0;
+    if (!(inKg > 0) || !(outKg > 0)) { box.textContent = 'Enter the kg put in and the kg obtained to see the loss and the new cost per kg.'; return; }
+    if (outKg > inKg + 0.001) { box.style.color = 'red'; box.textContent = 'Milled weight cannot exceed the grain put in.'; return; }
+    box.style.color = '';
+    const loss = Math.max(0, inKg - outKg), lossPct = loss / inKg * 100, elec = inKg * rate;
+    const src = factoryInventory.find(i => String(i.id) === document.getElementById('om-input').value);
+    let text = `Loss: ${loss.toFixed(2)} kg (${lossPct.toFixed(1)}%). Electricity: KSh ${elec.toFixed(2)}.`;
+    if (src && src.cost_per_kg) {
+        const total = inKg * src.cost_per_kg + elec;
+        text += ` Estimated new cost: KSh ${(total / outKg).toFixed(2)} per kg (grain at KSh ${Number(src.cost_per_kg).toFixed(2)}/kg). The saved run uses this outlet's stock cost.`;
+    }
+    box.textContent = text;
+}
+async function recordOwnMilling() {
+    const msg = document.getElementById('om-message');
+    const payload = {
+        location_id: window.activeLocationId || '',
+        input_ingredient_id: document.getElementById('om-input').value,
+        output_ingredient_id: document.getElementById('om-output').value,
+        input_kg: document.getElementById('om-input-kg').value,
+        output_kg: document.getElementById('om-output-kg').value,
+        electricity_rate_per_kg: document.getElementById('om-rate').value,
+        notes: document.getElementById('om-notes').value
+    };
+    try {
+        const res = await fetch('/api/factory/own-milling', {method:'POST', credentials:'same-origin',
+            headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        const d = await res.json();
+        if (!res.ok || d.status !== 'success') throw new Error(d.message || 'Could not record milling.');
+        msg.style.color = 'green';
+        msg.textContent = `Milling ${d.run_no} recorded. Loss ${d.loss_kg} kg (${d.loss_pct}%). Electricity KSh ${Number(d.electricity_cost).toFixed(2)}. New cost KSh ${Number(d.output_cost_per_kg).toFixed(2)} per kg.`;
+        ['om-input-kg', 'om-output-kg', 'om-notes'].forEach(id => document.getElementById(id).value = '');
+        previewOwnMilling();
+        await loadFactoryDropdowns();
+    } catch (err) {
+        msg.style.color = 'red';
+        msg.textContent = err.message || 'Could not record milling.';
+    }
+}
+async function loadOwnMilling() {
+    const body = document.getElementById('om-history'); if (!body) return;
+    try {
+        const res = await fetch('/api/factory/own-milling?location_id=' + encodeURIComponent(window.activeLocationId || ''), {credentials:'same-origin'});
+        const rows = await res.json();
+        if (!res.ok) throw new Error();
+        body.innerHTML = rows.map(r => `<tr><td>${escHtml(r.run_no)}</td><td>${escHtml(r.input_name)}</td><td>${escHtml(r.output_name)}</td>
+          <td>${r.input_kg.toFixed(2)}</td><td>${r.output_kg.toFixed(2)}</td><td>${r.loss_kg.toFixed(2)}</td><td>${r.loss_pct.toFixed(1)}%</td>
+          <td>${r.input_cost.toFixed(2)}</td><td>${r.electricity_cost.toFixed(2)}</td><td><b>${r.output_cost_per_kg.toFixed(2)}</b></td><td>${escHtml(r.created_at)}</td></tr>`).join('')
+          || '<tr><td colspan="11">No milling runs recorded.</td></tr>';
+    } catch (_) { body.innerHTML = '<tr><td colspan="11">Could not load milling history.</td></tr>'; }
+}

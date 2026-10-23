@@ -23,6 +23,7 @@ async function initOutletTill() {
     }
     activeLocationId = select.value;
     window.activeLocationId = activeLocationId;
+    searchProducts();   // the first search ran before the outlet was known
     await refreshTill();
     if (typeof loadCustomers === 'function') loadCustomers();
     if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
@@ -75,6 +76,7 @@ async function closeTill() {
   alert(`Till closed. Expected KSh ${d.expected_cash.toFixed(2)}, counted KSh ${d.counted_cash.toFixed(2)}, variance KSh ${d.variance.toFixed(2)}.`);
   await refreshTill();
 }
+const TILL_MOVE_LABELS = {PAID_IN:'Float added to counter', PAID_OUT:'Removed from counter', MPESA_DEPOSIT:'Deposited to M-Pesa'};
 async function loadTillMovementHistory() {
   const el = document.getElementById('till-movement-history');
   if (!el) return;
@@ -82,13 +84,16 @@ async function loadTillMovementHistory() {
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { el.textContent = d.message || 'Could not load till movements.'; return; }
   const rows = d.movements || [];
-  el.innerHTML = rows.length ? rows.map(m => `${escHtml(m.created_at)} · ${escHtml(m.type)} KSh ${Number(m.amount).toFixed(2)} · ${escHtml(m.reason)} · ${escHtml(m.created_by)}`).join('<br>') : 'No paid-in / paid-out movements recorded.';
+  el.innerHTML = rows.length ? rows.map(m => `${escHtml(m.created_at)} · ${escHtml(TILL_MOVE_LABELS[m.type] || m.type)} KSh ${Number(m.amount).toFixed(2)} · ${escHtml(m.reason)} · ${escHtml(m.created_by)}`).join('<br>') : 'No cash movements recorded.';
 }
 async function recordTillMovement() {
   const msg = document.getElementById('till-movement-message');
+  const kind = document.getElementById('till-movement-type').value;
+  const reason = document.getElementById('till-movement-reason').value.trim()
+    || ({PAID_OUT:'Removed from counter', MPESA_DEPOSIT:'M-Pesa deposit', PAID_IN:'Float added to counter'}[kind]);
   const r = await fetch('/api/till/cash-movements', {method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({location_id:activeLocationId, movement_type:document.getElementById('till-movement-type').value,
-      amount:document.getElementById('till-movement-amount').value, reason:document.getElementById('till-movement-reason').value})});
+    body:JSON.stringify({location_id:activeLocationId, movement_type:kind,
+      amount:document.getElementById('till-movement-amount').value, reason:reason})});
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { msg.textContent = d.message || 'Could not save cash movement.'; return; }
   msg.textContent = `Saved ${d.reference}. Expected till cash KSh ${Number(d.expected_cash).toFixed(2)}.`;
@@ -581,34 +586,83 @@ async function recordOldDebt() {
 }
 
 let salesHistoryByOrder = {};
+let salesFilter = {period: '', creditOnly: false, sort: 'date'};
+const SALES_PERIOD_LABELS = {today:'Today', yesterday:'Yesterday', this_week:'This week', this_month:'This month', this_year:'This year'};
+function setSalesPeriod(k) { salesFilter.period = (salesFilter.period === k) ? '' : k; loadSalesHistory(); }
+function clearSalesPeriod() { salesFilter.period = ''; salesFilter.creditOnly = false; salesFilter.sort = 'date';
+  const c = document.getElementById('sales-credit-only'); if (c) c.checked = false;
+  const so = document.getElementById('sales-sort'); if (so) so.value = 'date'; loadSalesHistory(); }
+function setSalesSort(v) { salesFilter.sort = v; loadSalesHistory(); }
+function setSalesCreditOnly(v) { salesFilter.creditOnly = !!v; loadSalesHistory(); }
 async function loadSalesSummary() {
   const box = document.getElementById('sales-summary');
   if (!box) return;
   const res = await fetch('/api/sales-history/summary?location_id=' + encodeURIComponent(activeLocationId));
   if (!res.ok) { box.innerHTML = ''; return; }
   const d = (await res.json()).periods;
-  const labels = {today:'Today', yesterday:'Yesterday', this_week:'This week', this_month:'This month', this_year:'This year'};
-  box.innerHTML = Object.keys(labels).map(k => {
-    const p = d[k];
-    return `<div style="border:1px solid #dee2e6;border-radius:8px;padding:10px">
-      <div style="font-size:.8rem;color:#6c757d">${labels[k]}</div>
+  box.innerHTML = Object.keys(SALES_PERIOD_LABELS).map(k => {
+    const p = d[k], on = salesFilter.period === k;
+    return `<button type="button" aria-pressed="${on}" onclick="setSalesPeriod('${k}')" style="text-align:left;cursor:pointer;min-height:44px;border:${on ? '2px solid #1b7f4f' : '1px solid #dee2e6'};background:${on ? '#e8f5ee' : '#fff'};color:inherit;border-radius:8px;padding:10px">
+      <div style="font-size:.8rem;color:#6c757d">${SALES_PERIOD_LABELS[k]}</div>
       <div style="font-size:1.25rem;font-weight:700">KSh ${Number(p.net_sales).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
-      <small>${p.orders} sales${p.refunds ? ' · refunds ' + Number(p.refunds).toFixed(0) : ''}${p.credit_given ? ' · credit ' + Number(p.credit_given).toFixed(0) : ''}</small></div>`;
+      <small>${p.orders} sales${p.refunds ? ' · refunds ' + Number(p.refunds).toFixed(0) : ''}${p.credit_given ? ' · credit ' + Number(p.credit_given).toFixed(0) : ''}</small></button>`;
   }).join('');
 }
 async function loadSalesHistory() {
   loadSalesSummary();
-  const res = await fetch('/api/sales-history?location_id=' + encodeURIComponent(activeLocationId));
+  const q = new URLSearchParams({location_id: activeLocationId});
+  if (salesFilter.period) q.set('period', salesFilter.period);
+  if (salesFilter.creditOnly) q.set('credit_only', '1');
+  if (salesFilter.sort === 'credit') q.set('sort', 'credit');
+  const label = document.getElementById('sales-filter-label');
+  if (label) label.textContent = 'Showing: ' + (salesFilter.period ? SALES_PERIOD_LABELS[salesFilter.period] : 'latest 30 sales') + (salesFilter.creditOnly ? ' · credit only' : '');
+  const res = await fetch('/api/sales-history?' + q.toString());
   const history = await res.json();
-  const tbody = document.getElementById('sales-table-body'); 
+  const tbody = document.getElementById('sales-table-body');
   if(!tbody) return;
+  if (!res.ok || !Array.isArray(history)) { tbody.innerHTML = '<tr><td colspan="9" style="color:#b00">Could not load sales.</td></tr>'; return; }
   tbody.innerHTML = '';
   salesHistoryByOrder = Object.fromEntries(history.map(s => [s.order_id, s]));
-  if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="9">No sales logged.</td></tr>'; return; }
+  if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="9">No sales match this filter.</td></tr>'; return; }
   history.forEach(s => {
     const refundDetails = (s.refunds || []).map(r => `<small>${escHtml(r.reference)} · ${escHtml(r.payment_method)} KSh ${Number(r.amount).toFixed(2)} · ${escHtml(r.reason)} · ${escHtml(r.created_by)}</small>`).join('<br>');
-    tbody.innerHTML += `<tr><td><small>${escHtml(s.created_at)}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${Number(s.total_amount).toFixed(2)}</b></td><td>KSh ${Number(s.paid_amount).toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+Number(s.credit_amount).toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${(s.payments || []).map(p => `${escHtml(p.method)}: KSh${Number(p.amount).toFixed(2)}`).join(', ') || 'CASH'}</small></td><td>KSh ${Number(s.refunded_amount || 0).toFixed(2)}${refundDetails ? '<br>' + refundDetails : ''}</td><td><button class="btn-sm btn-warning" onclick="refundSale(${s.order_id}, ${Number(s.refundable_amount || 0)})" ${Number(s.refundable_amount || 0) <= 0 ? 'disabled' : ''}>Refund</button></td></tr>`;
+    tbody.innerHTML += `<tr><td><small>${escHtml(s.created_at)}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${Number(s.total_amount).toFixed(2)}</b></td><td>KSh ${Number(s.paid_amount).toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+Number(s.credit_amount).toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${(s.payments || []).map(p => `${escHtml(p.method)}: KSh${Number(p.amount).toFixed(2)}`).join(', ') || 'CASH'}</small></td><td>KSh ${Number(s.refunded_amount || 0).toFixed(2)}${refundDetails ? '<br>' + refundDetails : ''}</td><td style="white-space:nowrap"><button class="btn-sm btn-info" onclick="showSaleReceipt(${s.order_id})">Receipt</button> <button class="btn-sm btn-warning" onclick="refundSale(${s.order_id}, ${Number(s.refundable_amount || 0)})" ${Number(s.refundable_amount || 0) <= 0 ? 'disabled' : ''}>Refund</button></td></tr>`;
   });
+}
+function saleReceiptHtml(s) {
+  const lines = (s.items || []).map(i => `<div class="r-row"><span>${escHtml(i.qty_entered)} ${escHtml(i.unit || '')} x ${escHtml(i.name)}</span><span>KSh ${Number(i.subtotal || 0).toFixed(2)}</span></div>`).join('');
+  const pays = (s.payments || []).map(p => `<div class="r-row"><span>${escHtml(p.method)}</span><span>KSh ${Number(p.amount).toFixed(2)}</span></div>`).join('');
+  return `<h3>EMINING FEEDS</h3><p>Quality Feeds For You</p><hr>
+    <div>Date: ${escHtml(s.created_at)}</div><div>Receipt: ${escHtml(s.sale_id)}</div><div>Customer: ${escHtml(s.customer_name)}</div><hr>
+    ${lines}<hr>
+    <div class="r-row"><b>TOTAL</b><b>KSh ${Number(s.total_amount).toFixed(2)}</b></div>
+    <div class="r-row"><span>Paid</span><span>KSh ${Number(s.paid_amount).toFixed(2)}</span></div>${pays}
+    ${s.credit_amount > 0 ? `<div class="r-row"><b>On credit</b><b>KSh ${Number(s.credit_amount).toFixed(2)}</b></div>` : ''}
+    ${s.refunded_amount > 0 ? `<div class="r-row"><span>Refunded</span><span>KSh ${Number(s.refunded_amount).toFixed(2)}</span></div>` : ''}
+    <hr><p>Thank you!</p>`;
+}
+function showSaleReceipt(orderId) {
+  const s = salesHistoryByOrder[orderId];
+  if (!s) return alert('Receipt not available. Refresh the list and try again.');
+  let ov = document.getElementById('sale-receipt-overlay');
+  if (ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'sale-receipt-overlay';
+  ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-label', 'Sale receipt');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:flex;align-items:center;justify-content:center;padding:12px';
+  ov.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:360px;width:100%;max-height:90vh;overflow:auto;padding:16px;font-family:monospace">
+    <style>#sale-receipt-overlay h3,#sale-receipt-overlay p{text-align:center;margin:4px 0}#sale-receipt-overlay hr{border:0;border-top:1px dashed #000;margin:8px 0}#sale-receipt-overlay .r-row{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px}</style>
+    <div id="sale-receipt-body">${saleReceiptHtml(s)}</div>
+    <div style="display:flex;gap:8px;margin-top:12px;font-family:system-ui"><button class="btn-primary" style="flex:1;min-height:44px" id="sale-receipt-print">Print</button><button class="btn-info" style="flex:1;min-height:44px" id="sale-receipt-close">Close</button></div></div>`;
+  document.body.appendChild(ov);
+  document.getElementById('sale-receipt-close').onclick = () => ov.remove();
+  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  document.getElementById('sale-receipt-print').onclick = () => {
+    const w = window.open('', '', 'width=400,height=600');
+    if (!w) return alert('Allow pop-ups to print, or use the browser menu to print this page.');
+    w.document.write(`<html><head><style>body{font-family:monospace;width:300px;margin:0 auto;padding:20px}h3,p{text-align:center;margin:5px 0}hr{border-top:1px dashed #000;margin:10px 0}.r-row{display:flex;justify-content:space-between;margin-bottom:4px}</style></head><body>${saleReceiptHtml(s)}</body></html>`);
+    w.document.close(); w.focus(); w.print(); w.close();
+  };
 }
 async function refundSale(orderId, refundable) {
   if (refundable <= 0) return alert('No paid amount remains available to refund.');

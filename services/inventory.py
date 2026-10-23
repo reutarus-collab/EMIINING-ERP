@@ -16,6 +16,13 @@ def resolve_location(requested_id=None):
     else:
         location_id = getattr(user, 'location_id', None)
         location = db.session.get(Location, location_id) if location_id is not None else None
+    if not location and role in ('admin', 'accountant'):
+        # Owners reading without a chosen outlet get the main factory (or the first outlet) instead of an error.
+        # Writes still need an explicit outlet, so nothing is ever posted to a guessed location.
+        from flask import request
+        if request.method in ('GET', 'HEAD'):
+            location = (Location.query.filter_by(location_type='FACTORY').order_by(Location.id).first()
+                        or Location.query.order_by(Location.id).first())
     if not location:
         raise ValueError('Your user must be assigned to a specific valid outlet by an administrator.')
     return location

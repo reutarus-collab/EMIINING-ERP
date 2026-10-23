@@ -14,6 +14,8 @@
   const PROTECTED = [
     /^\/api\/admin\/payables\/\d+\/pay$/,
     /^\/api\/factory\/milling-runs$/,
+    /^\/api\/factory\/own-milling$/,
+    /^\/api\/admin\/customers\/merge$/,
     /^\/api\/factory\/produce$/,
     /^\/api\/customers$/,
     /^\/api\/customers\/\d+\/repay$/,

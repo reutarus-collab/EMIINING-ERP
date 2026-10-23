@@ -1,4 +1,5 @@
 ﻿import math
+from services.idempotency import idempotent
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request, g
 from services.errors import error_response
@@ -138,7 +139,8 @@ def daily_report():
         expenses_by_category=expense_categories,
         refunds_total=round(sum(r.amount or 0 for r in refunds), 2),
         cash_paid_in=round(sum(m.amount or 0 for m in till_movements if m.movement_type == 'PAID_IN'), 2),
-        cash_paid_out=round(sum(m.amount or 0 for m in till_movements if m.movement_type == 'PAID_OUT'), 2))
+        cash_paid_out=round(sum(m.amount or 0 for m in till_movements if m.movement_type == 'PAID_OUT'), 2),
+        cash_to_mpesa=round(sum(m.amount or 0 for m in till_movements if m.movement_type == 'MPESA_DEPOSIT'), 2))
 
 
 @retail_bp.route('/api/admin/customers/<int:customer_id>/credit-limit', methods=['POST'])
@@ -157,6 +159,64 @@ def set_credit_limit(customer_id):
     cust.credit_limit = limit
     db.session.commit()
     return jsonify(status='success')
+
+
+@retail_bp.route('/api/admin/customers/<int:customer_id>', methods=['DELETE'])
+@roles_required('admin')
+def delete_customer(customer_id):
+    """Delete only a customer with no history at all. Anyone with sales, payments or debt is merged instead."""
+    from services.models import CustomerPayment, CustomerDebtEntry
+    cust = db.session.get(Customer, customer_id)
+    if not cust:
+        return jsonify(status='error', message='Customer not found.'), 404
+    orders = OrderHeader.query.filter_by(customer_id=cust.id).count()
+    pays = CustomerPayment.query.filter_by(customer_id=cust.id).count()
+    debts = CustomerDebtEntry.query.filter_by(customer_id=cust.id).count()
+    if orders or pays or debts or abs(cust.current_balance or 0.0) > 0.005:
+        return jsonify(status='error', message=(
+            'This customer has sales, payments or a balance on record, so it cannot be deleted. '
+            'Use Merge to move the history into the correct customer.')), 409
+    db.session.delete(cust)
+    db.session.commit()
+    return jsonify(status='success')
+
+
+@retail_bp.route('/api/admin/customers/merge', methods=['POST'])
+@roles_required('admin')
+@idempotent('customer-merge')
+def merge_customers():
+    """Move every sale, payment and debt entry from `source_id` to `target_id`, add the balances, remove the source."""
+    from services.models import CustomerPayment, CustomerDebtEntry, CustomerMergeLog
+    data = request.get_json(silent=True) or {}
+    try:
+        source_id, target_id = int(data.get('source_id')), int(data.get('target_id'))
+    except (TypeError, ValueError):
+        return jsonify(status='error', message='Choose the customer to merge and the customer to keep.'), 400
+    if source_id == target_id:
+        return jsonify(status='error', message='Choose two different customers.'), 400
+    source, target = db.session.get(Customer, source_id), db.session.get(Customer, target_id)
+    if not source or not target:
+        return jsonify(status='error', message='Customer not found.'), 404
+    try:
+        moved_orders = OrderHeader.query.filter_by(customer_id=source.id).update({'customer_id': target.id})
+        moved_pays = CustomerPayment.query.filter_by(customer_id=source.id).update({'customer_id': target.id})
+        moved_debts = CustomerDebtEntry.query.filter_by(customer_id=source.id).update({'customer_id': target.id})
+        moved_balance = round(source.current_balance or 0.0, 2)
+        target.current_balance = round((target.current_balance or 0.0) + moved_balance, 2)
+        target.credit_limit = max(target.credit_limit or 0.0, source.credit_limit or 0.0)
+        if not target.phone and source.phone:
+            target.phone = source.phone
+        db.session.add(CustomerMergeLog(
+            source_id=source.id, source_name=source.name, target_id=target.id, target_name=target.name,
+            orders_moved=moved_orders, payments_moved=moved_pays, debt_entries_moved=moved_debts,
+            balance_moved=moved_balance, merged_by=g.user.username))
+        db.session.delete(source)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify(status='error', message='Could not merge the customers.'), 500
+    return jsonify(status='success', orders_moved=moved_orders, payments_moved=moved_pays,
+                   debt_entries_moved=moved_debts, balance_moved=moved_balance, kept_id=target.id)
 
 
 PACK_SIZES = (50, 70)

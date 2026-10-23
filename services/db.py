@@ -191,6 +191,7 @@ def _migrate_location_schema():
                                  ('5340', 'Repairs and Maintenance Expense', 'EXPENSE'),
                                  ('5350', 'Operating Supplies Expense', 'EXPENSE'),
                                  ('5360', 'Payment Channel Fees (M-Pesa/Bank)', 'EXPENSE'),
+                                 ('5370', 'Electricity Absorbed into Stock (milling)', 'EXPENSE'),
                                  ('5390', 'Other Operating Expense', 'EXPENSE')):
         if not Account.query.filter_by(account_code=code).first():
             db.session.add(Account(account_code=code, name=name, category=category))

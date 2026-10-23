@@ -45,6 +45,18 @@
     <table class="data-table"><thead><tr><th>Reference</th><th>Date</th><th>Category</th><th>Description</th><th>Paid by</th><th>Recorded by</th><th>Amount (KSh)</th></tr></thead>
       <tbody id="expense-body"><tr><td colspan="7">Loading expenses…</td></tr></tbody></table>
   </div>
+  <div class="card" id="cash-movement-card">
+    <h3>Cash movements</h3>
+    <p style="font-size:.9rem;color:#555">Take cash out of the counter, deposit cash to M-Pesa, or add float back to the counter. These change the till's expected cash. Business costs (fuel, welding, KPLC) belong in the expense form above.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <select id="till-movement-type"><option value="PAID_OUT">Remove from counter (to safe)</option><option value="MPESA_DEPOSIT">Deposit to M-Pesa</option><option value="PAID_IN">Add float to counter (from safe)</option></select>
+      <input id="till-movement-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Amount (KSh)">
+      <input id="till-movement-reason" maxlength="200" placeholder="Note (optional)">
+      <button class="btn-sm btn-primary" onclick="recordTillMovement()">Record cash movement</button>
+    </div>
+    <div id="till-movement-message" style="margin-top:6px"></div>
+    <div id="till-movement-history" style="font-size:.85rem;margin-top:6px">No cash movements loaded.</div>
+  </div>
 </div>
 <div id="report-tab" class="tab-content">
   <div class="card">
@@ -261,7 +273,7 @@ async function loadDailyReport() {
   const tills = (d.till_closures || []).map(t => `<tr><td>${retailEsc(t.cashier)}</td><td>${t.closed_at}</td><td>${t.opening_cash.toFixed(2)}</td><td>${t.expected_cash.toFixed(2)}</td><td>${t.counted_cash.toFixed(2)}</td><td>${t.variance.toFixed(2)}</td></tr>`).join('');
   const expenseBreakdown = Object.entries(d.expenses_by_category || {}).map(([category, amount]) => `<tr><td>${retailEsc(category)}</td><td>${Number(amount).toFixed(2)}</td></tr>`).join('');
   box.innerHTML = `<p>Sales: <b>${d.sales_count}</b> &nbsp; Total: <b>KSh ${d.total_sales.toFixed(2)}</b> &nbsp; Discounts: KSh ${d.discounts.toFixed(2)} &nbsp; On credit: KSh ${(d.credit_sales || 0).toFixed(2)}</p>
-    <p>Expenses: <b>KSh ${Number(d.expenses_total || 0).toFixed(2)}</b> &nbsp; Refunds: KSh ${Number(d.refunds_total || 0).toFixed(2)} &nbsp; Cash paid-in: KSh ${Number(d.cash_paid_in || 0).toFixed(2)} &nbsp; Cash paid-out: KSh ${Number(d.cash_paid_out || 0).toFixed(2)}</p>
+    <p>Expenses: <b>KSh ${Number(d.expenses_total || 0).toFixed(2)}</b> &nbsp; Refunds: KSh ${Number(d.refunds_total || 0).toFixed(2)} &nbsp; Cash paid-in: KSh ${Number(d.cash_paid_in || 0).toFixed(2)} &nbsp; Removed from counter: KSh ${Number(d.cash_paid_out || 0).toFixed(2)} &nbsp; Deposited to M-Pesa: KSh ${Number(d.cash_to_mpesa || 0).toFixed(2)}</p>
     <table class="data-table"><thead><tr><th>Expense category</th><th>KSh</th></tr></thead><tbody>${expenseBreakdown || '<tr><td colspan="2">No expenses today.</td></tr>'}</tbody></table>
     <table class="data-table"><thead><tr><th>Payment method</th><th>KSh</th></tr></thead>
     <tbody>${methods || '<tr><td colspan="2">No payments today.</td></tr>'}</tbody></table>
@@ -299,7 +311,7 @@ async function savePrice(id) {
 <div id="customers-tab" class="tab-content">
   <div class="card">
     <h3>Customers and Credit Limits (admin only)</h3>
-    <p style="font-size:.9rem;color:#666">Customers created at the till start at a limit of 0. Set a limit here to allow credit sales.</p>
+    <p style="font-size:.9rem;color:#666">Customers created at the till start at a limit of 0. Set a limit here to allow credit sales. <b>Delete</b> only works for a customer with no history. For a duplicate with sales or debt, use <b>Merge</b>.</p>
     <table class="data-table">
       <thead><tr><th>Customer</th><th>Outlet</th><th>Phone</th><th>Debt</th><th>Credit limit</th><th></th></tr></thead>
       <tbody id="cust-body"><tr><td colspan="6">Loading...</td></tr></tbody>
@@ -315,6 +327,7 @@ async function loadCustAdmin() {
     const r = await fetch('/api/customers?all=1', {credentials: 'same-origin'});
     const rows = await r.json();
     if (!r.ok || !Array.isArray(rows)) throw new Error((rows && rows.message) || ('HTTP ' + r.status));
+    window.custAdminRows = rows;
     const inp = 'style="width:100%;padding:6px"';
     body.innerHTML = rows.map(c =>
       `<tr><td><input id="cn-${c.id}" value="${retailEsc(c.name)}" ${inp}></td>
@@ -322,7 +335,9 @@ async function loadCustAdmin() {
        <td><input id="cp-${c.id}" value="${retailEsc(c.phone || '')}" ${inp}></td>
        <td>${Number(c.balance || 0).toFixed(2)}</td>
        <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
-       <td><button class="btn-sm btn-primary" onclick="saveCustomer(${c.id})">Save</button></td></tr>`
+       <td style="white-space:nowrap"><button class="btn-sm btn-primary" onclick="saveCustomer(${c.id})">Save</button>
+         <button class="btn-sm btn-info" onclick="startMergeCustomer(${c.id})">Merge</button>
+         <button class="btn-sm btn-danger" onclick="deleteCustomer(${c.id})">Delete</button></td></tr>`
     ).join('') || '<tr><td colspan="6">No customers.</td></tr>';
   } catch (e) {
     body.innerHTML = '<tr><td colspan="6" style="color:#b00">Cannot load customers: ' + retailEsc(e.message) + ' <button class="btn-sm btn-info" onclick="loadCustAdmin()">Retry</button></td></tr>';
@@ -337,6 +352,40 @@ async function saveCustomer(id) {
   const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
   if (d.status !== 'success') { msg.innerHTML = '<span style="color:red">' + retailEsc(d.message) + '</span>'; return; }
   await saveCreditLimit(id);   // credit limit has its own admin-only endpoint
+}
+async function deleteCustomer(id) {
+  const msg = document.getElementById('cust-msg');
+  const c = (window.custAdminRows || []).find(x => x.id === id);
+  if (!confirm('Delete customer "' + (c ? c.name : id) + '"? This only works for a customer with no sales, payments or debt.')) return;
+  const r = await fetch('/api/admin/customers/' + id, {method: 'DELETE', credentials: 'same-origin'});
+  const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
+  msg.innerHTML = d.status === 'success' ? '<span style="color:green">Customer deleted.</span>'
+    : '<span style="color:red">' + retailEsc(d.message) + '</span>';
+  if (d.status === 'success') loadCustAdmin();
+}
+function startMergeCustomer(id) {
+  const rows = window.custAdminRows || [];
+  const src = rows.find(x => x.id === id);
+  if (!src) return;
+  const others = rows.filter(x => x.id !== id);
+  if (!others.length) return alert('There is no other customer to merge into.');
+  const list = others.map(o => o.id + ': ' + o.name + (o.phone ? ' (' + o.phone + ')' : '')).join('\n');
+  const pick = prompt('Merge "' + src.name + '" INTO which customer? Enter the number before the colon.\n\n' + list);
+  if (pick === null) return;
+  const target = others.find(o => String(o.id) === String(pick).trim());
+  if (!target) return alert('That number is not in the list.');
+  if (!confirm('Merge "' + src.name + '" into "' + target.name + '"?\nAll sales, payments and debt move to "' + target.name + '". "' + src.name + '" is removed. This cannot be undone.')) return;
+  mergeCustomer(src.id, target.id);
+}
+async function mergeCustomer(sourceId, targetId) {
+  const msg = document.getElementById('cust-msg');
+  const r = await fetch('/api/admin/customers/merge', {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({source_id: sourceId, target_id: targetId})});
+  const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
+  msg.innerHTML = d.status === 'success'
+    ? '<span style="color:green">Merged. Moved ' + d.orders_moved + ' sales, ' + d.payments_moved + ' payments, ' + d.debt_entries_moved + ' debt entries and KSh ' + Number(d.balance_moved).toFixed(2) + ' of balance.</span>'
+    : '<span style="color:red">' + retailEsc(d.message) + '</span>';
+  if (d.status === 'success') loadCustAdmin();
 }
 async function saveCreditLimit(id) {
   const limit = parseFloat(document.getElementById('cl-' + id).value);

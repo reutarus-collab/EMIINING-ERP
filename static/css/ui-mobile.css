@@ -1,0 +1,93 @@
+/* Mobile POS UI layer (UI-only). Loaded after inline page styles. No logic, no ids changed. */
+:root{--ui-green-900:#0f4d34;--ui-accent:#1b7f4f;--ui-accent-dk:#145f3b;--ui-border:#d5ded8;--ui-muted:#55655c}
+html,body{max-width:100%}
+.pos-grid>div,.tab-content{min-width:0}
+.pos-search-row{display:flex;gap:10px}
+.pos-search-row>input,.pos-search-row>select{min-width:0}
+
+/* Brand colour: header, tabs, POS primary actions */
+header{background:var(--ui-green-900)!important}
+.tab-btn.active{background:var(--ui-accent)!important}
+#pos-tab .btn-primary,#pos-tab .btn-success{background:var(--ui-accent)}
+#pos-tab .btn-primary:hover,#pos-tab .btn-success:hover{background:var(--ui-accent-dk)}
+#pos-tab button:focus-visible,#pos-tab input:focus-visible,#pos-tab select:focus-visible{outline:3px solid #7fb69a;outline-offset:2px}
+
+/* Collapsible online-only note and till panel */
+.pos-online-note{background:#fff3cd;border:1px solid #e0a800;color:#6b4f00;border-radius:6px;margin-bottom:12px}
+.pos-online-note summary,.till-panel summary{min-height:44px;display:flex;align-items:center;padding:0 12px;cursor:pointer;font-weight:600}
+.pos-online-note p{margin:0;padding:0 12px 12px}
+.till-panel{margin-bottom:12px;border:1px solid var(--ui-border);border-radius:8px;background:#fff}
+.till-panel>.card{box-shadow:none;border-top:1px solid var(--ui-border);border-radius:0;margin-bottom:0}
+.till-panel summary{justify-content:space-between;gap:8px}
+
+/* Sticky total bar (mobile only) */
+.pos-sticky-bar{display:none}
+@media (max-width:700px){
+  .container{padding:12px}
+  .pos-search-row{flex-direction:column}
+  .pos-search-row>input,.pos-search-row>select{width:100%;flex:none!important}
+  .till-panel .card>div{flex-wrap:wrap}
+  .till-panel input,.till-panel select{width:100%}
+  #pos-tab{padding-bottom:96px}   /* room so the sticky bar never covers the last card */
+  .pos-sticky-bar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:40;align-items:center;
+    justify-content:space-between;gap:12px;background:#fff;border-top:1px solid var(--ui-border);
+    padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))}
+  .pos-sticky-bar>div{min-width:0;flex:1}
+  .pos-sticky-bar .lbl{font-size:.8rem;color:var(--ui-muted)}
+  .pos-sticky-bar .amt{font-size:clamp(1.1rem,5.6vw,1.4rem);font-weight:800;white-space:nowrap}
+  .pos-sticky-bar button{flex:0 0 auto;min-height:48px;padding:0 14px;background:var(--ui-accent);font-size:1rem;font-weight:700}
+}
+
+/* ---- Bottom nav + More sheet (mobile). Original tab buttons stay in the DOM and are clicked programmatically. ---- */
+.ui-bottom-nav,.ui-more-sheet,.ui-more-scrim{display:none}
+.ui-stepbtn{display:none}
+@media (max-width:700px){
+  header{flex-wrap:wrap;gap:6px 12px;text-align:left!important;padding:10px 14px!important}
+  header h2{font-size:1.05rem;margin:0}
+  header nav{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  header nav a{margin:0!important}
+  .status-badge{white-space:nowrap}
+  .container>h2:first-child{font-size:1.05rem;margin:2px 0 10px}
+  .nav-tabs{display:none!important}
+  .container{padding-bottom:84px}
+  .ui-bottom-nav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;background:#fff;border-top:1px solid var(--ui-border);
+    padding-bottom:max(env(safe-area-inset-bottom,0px),10px)}
+  .ui-bottom-nav button{flex:1;min-height:56px;border:0;background:transparent;color:var(--ui-muted);font-size:.75rem;font-weight:500;border-radius:0}
+  .ui-bottom-nav button.is-active{color:var(--ui-accent);font-weight:700;box-shadow:inset 0 3px 0 var(--ui-accent)}
+  /* sticky total bar now sits ABOVE the bottom nav */
+  .pos-sticky-bar{bottom:calc(56px + max(env(safe-area-inset-bottom,0px),10px))}
+  #pos-tab{padding-bottom:150px}
+  .ui-more-scrim.open{display:block;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:60}
+  .ui-more-sheet.open{display:flex;flex-direction:column;gap:6px;position:fixed;left:0;right:0;bottom:0;z-index:61;background:#fff;
+    border-radius:16px 16px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px));max-height:70vh;overflow-y:auto}
+  .ui-more-sheet button{min-height:50px;text-align:left;background:#f3f6f4;color:#14231b;border:1px solid var(--ui-border);font-size:1rem}
+  .ui-more-sheet button.is-active{background:var(--ui-accent);color:#fff;border-color:var(--ui-accent)}
+
+  /* ---- Card-style cart: same table, same inline handlers, restyled ---- */
+  .cart-table{display:block;overflow:visible}
+  .cart-table thead{display:none}
+  .cart-table tbody{display:grid;gap:10px}
+  .cart-table tbody tr{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center;background:#fff;
+    border:1px solid var(--ui-border);border-radius:12px;padding:12px}
+  .cart-table tbody td{display:block;border:0;padding:0;min-width:0}
+  .cart-table tbody td[colspan]{grid-column:1/-1}
+  .cart-table td:nth-child(1){grid-area:1/1/2/3;font-size:1.05rem}
+  .cart-table td:nth-child(6){grid-area:1/3}
+  .cart-table td:nth-child(2){grid-area:2/1/3/4;display:flex;gap:6px;align-items:center}
+  .cart-table td:nth-child(3){grid-area:3/1/4/4}
+  .cart-table td:nth-child(4){grid-area:4/1/5/3;color:var(--ui-muted)}
+  .cart-table td:nth-child(4){font-size:.95rem}
+  .cart-table td:nth-child(4)::before{content:"Price KSh ";font-size:.95rem}
+  .cart-table td:nth-child(5){grid-area:4/3;text-align:right;font-size:1.1rem}
+  .cart-table td:nth-child(2) input{width:100%!important;min-width:90px;flex:1;min-height:50px;font-size:1.25rem;text-align:center}
+  .cart-table td:nth-child(3) select{min-width:0!important}
+  .ui-stepbtn{display:inline-flex;align-items:center;justify-content:center;width:44px;min-height:50px;padding:0;
+    background:#fff;color:#14231b;border:1px solid var(--ui-border);font-size:1.3rem;flex:none}
+}
+
+/* Collapsible panels show an arrow so cashiers know they open */
+.pos-online-note summary,.till-panel summary{list-style:none}
+.pos-online-note summary::-webkit-details-marker,.till-panel summary::-webkit-details-marker{display:none}
+.pos-online-note summary::after,.till-panel summary::after{content:"\25BE";margin-left:auto;color:var(--ui-muted)}
+.pos-online-note[open] summary::after,.till-panel[open] summary::after{transform:rotate(180deg)}
+.till-panel[open] #till-state-mirror{display:none}   /* the same text is already inside the open panel */

@@ -6,9 +6,12 @@ window.escHtml = window.escHtml || function (s) {
 };
 </script>
 <div id="pos-tab" class="tab-content active">
-  <div role="alert" style="background:#fff3cd;border:1px solid #e0a800;color:#6b4f00;padding:12px 16px;border-radius:6px;margin-bottom:12px;font-weight:600">
-    Online only: checkout requires a live server connection. If the connection is down, record the sale on paper and enter it after service returns. An unanswered checkout must be retried in this tab before entering it again.
-  </div>
+  <details class="pos-online-note" role="alert">
+    <summary>Online only: checkout needs a live server connection</summary>
+    <p>Online only: checkout requires a live server connection. If the connection is down, record the sale on paper and enter it after service returns. An unanswered checkout must be retried in this tab before entering it again.</p>
+  </details>
+  <details id="till-panel" class="till-panel">
+    <summary><span>Till (open / close)</span><span id="till-state-mirror" style="font-weight:400;color:#55655c">…</span></summary>
   <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
     <label>Outlet <select id="pos-location" onchange="changePosLocation()"></select></label>
     <span id="till-state">Loading till…</span>
@@ -16,17 +19,7 @@ window.escHtml = window.escHtml || function (s) {
     <button class="btn-sm btn-success" id="till-open-btn" onclick="openTill()">Open till</button>
     <button class="btn-sm btn-warning" id="till-close-btn" onclick="closeTill()" style="display:none">Close till</button>
   </div>
-  <div class="card">
-    <h4>Cash paid-in / paid-out (float and safe transfers)</h4>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <select id="till-movement-type"><option value="PAID_IN">Paid in from safe</option><option value="PAID_OUT">Paid out to safe</option></select>
-      <input id="till-movement-amount" type="number" min="0.01" step="0.01" placeholder="Amount (KSh)">
-      <input id="till-movement-reason" maxlength="200" placeholder="Reason / safe reference">
-      <button class="btn-sm btn-primary" onclick="recordTillMovement()">Record cash movement</button>
-    </div>
-    <div id="till-movement-message" style="margin-top:6px"></div>
-    <div id="till-movement-history" style="font-size:.85rem;margin-top:6px">No till movements loaded.</div>
-  </div>
+  </details>
   <div class="pos-grid">
     <div>
       <div class="card">
@@ -34,7 +27,7 @@ window.escHtml = window.escHtml || function (s) {
           <h4 style="margin:0;">🔍 Product & Service Catalog Search</h4>
           <a class="btn-sm btn-info" href="/api/price-list.pdf" target="_blank" rel="noopener" style="text-decoration:none; padding:10px 14px;">📄 Price list (PDF)</a>
         </div>
-        <div style="display: flex; gap: 10px;">
+        <div class="pos-search-row">
           <!-- FORCED HEIGHT AND FONT SIZE ON SEARCH & CATEGORY -->
           <input type="text" id="search-input" placeholder="Search item..." oninput="searchProductsSoon()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" />
           <select id="category-filter" onchange="searchProducts()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">
@@ -107,7 +100,7 @@ window.escHtml = window.escHtml || function (s) {
     </div>
 
     <div>
-      <div class="card">
+      <div class="card" id="checkout-card">
         <h4>💳 Checkout & Payment</h4>
         <div style="background:#eef6ff; padding:15px; border-radius:6px; border:1px solid #b6d4fe; margin-bottom:15px;">
             <h4 style="margin: 0; color: #333;">Total Amount Due:</h4>
@@ -155,5 +148,9 @@ window.escHtml = window.escHtml || function (s) {
         </div>
       </div>
     </div>
+  </div>
+  <div class="pos-sticky-bar" aria-label="Sale total">
+    <div><div class="lbl">Total due</div><div class="amt">KSh <span id="sticky-total">0.00</span></div></div>
+    <button type="button" id="sticky-go">Checkout ↓</button>
   </div>
 </div>
