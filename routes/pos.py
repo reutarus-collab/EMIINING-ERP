@@ -380,6 +380,9 @@ def till_cash_movements():
         from services.ledger_service import post_gl_transaction
         if movement_type == 'PAID_IN':
             legs = [('1000', amount, 0.0), ('1100', 0.0, amount)]
+        elif movement_type == 'MPESA_DEPOSIT':
+            # cash leaves the till and lands in the M-Pesa account
+            legs = [('1010', amount, 0.0), ('1000', 0.0, amount)]
         else:
             legs = [('1100', amount, 0.0), ('1000', 0.0, amount)]
         post_gl_transaction(ref, legs, 'TILL_CASH_MOVEMENT', till.id)

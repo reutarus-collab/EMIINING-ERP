@@ -176,7 +176,7 @@ def own_milling_runs():
     Loss is the weight difference; its cost stays inside the output, so a loss raises the cost per kg.
     """
     from services.models import InternalMillingRun
-    from services.ledger_service import post_gl_entry
+    from services.ledger_service import post_gl_transaction
     try:
         location = resolve_location((request.get_json(silent=True) or {}).get('location_id')
                                     if request.method == 'POST' else request.args.get('location_id'))
@@ -247,12 +247,10 @@ def own_milling_runs():
         receive_stock(location.id, dst, output_kg, total_cost / output_kg, 'MILLING_OUTPUT', run_no)
         # Balanced: Dr inventory (output) = Cr inventory (grain used) + Cr 5370 (electricity absorbed into stock).
         # The full electricity bill stays in Utilities (5310) with lights, incubators etc; 5370 is the milling share.
-        ok = post_gl_entry(run_no, '1200', total_cost, 0.0, 'OWN_MILLING', run.id)
-        ok = post_gl_entry(run_no, '1200', 0.0, input_cost, 'OWN_MILLING', run.id) and ok
+        legs = [('1200', total_cost, 0.0), ('1200', 0.0, input_cost)]
         if electricity > 0:
-            ok = post_gl_entry(run_no, '5370', 0.0, electricity, 'OWN_MILLING', run.id) and ok
-        if not ok:
-            raise RuntimeError('Could not post milling accounting entries.')
+            legs.append(('5370', 0.0, electricity))
+        post_gl_transaction(run_no, legs, 'OWN_MILLING', run.id)
         db.session.commit()
     except (TypeError, ValueError) as exc:
         db.session.rollback()
