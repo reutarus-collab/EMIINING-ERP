@@ -363,6 +363,7 @@ async function completeCheckout() {
           if (JSON.stringify(cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}))) === attempt.cartFingerprint) { clearCart(); resetSaleForm(); }
           else alert('The earlier checkout was confirmed. Your current cart was kept separate.');
           searchProducts();
+          if (typeof loadSalesHistory === 'function') loadSalesHistory();
       } else {
           if (res.status === 400) {
               pendingCheckoutAttempt = null;
@@ -587,6 +588,7 @@ async function recordOldDebt() {
 
 let salesHistoryByOrder = {};
 let salesFilter = {period: '', creditOnly: false, sort: 'date'};
+let salesOffset = 0;
 const SALES_PERIOD_LABELS = {today:'Today', yesterday:'Yesterday', this_week:'This week', this_month:'This month', this_year:'This year'};
 function setSalesPeriod(k) { salesFilter.period = (salesFilter.period === k) ? '' : k; loadSalesHistory(); }
 function clearSalesPeriod() { salesFilter.period = ''; salesFilter.creditOnly = false; salesFilter.sort = 'date';
@@ -608,9 +610,11 @@ async function loadSalesSummary() {
       <small>${p.orders} sales${p.refunds ? ' · refunds ' + Number(p.refunds).toFixed(0) : ''}${p.credit_given ? ' · credit ' + Number(p.credit_given).toFixed(0) : ''}</small></button>`;
   }).join('');
 }
-async function loadSalesHistory() {
-  loadSalesSummary();
+async function loadSalesHistory(append) {
+  append = append === true;
+  if (!append) { salesOffset = 0; loadSalesSummary(); }
   const q = new URLSearchParams({location_id: activeLocationId});
+  if (salesOffset > 0) q.set('offset', salesOffset);
   if (salesFilter.period) q.set('period', salesFilter.period);
   if (salesFilter.creditOnly) q.set('credit_only', '1');
   if (salesFilter.sort === 'credit') q.set('sort', 'credit');
@@ -621,9 +625,12 @@ async function loadSalesHistory() {
   const tbody = document.getElementById('sales-table-body');
   if(!tbody) return;
   if (!res.ok || !Array.isArray(history)) { tbody.innerHTML = '<tr><td colspan="9" style="color:#b00">Could not load sales.</td></tr>'; return; }
-  tbody.innerHTML = '';
-  salesHistoryByOrder = Object.fromEntries(history.map(s => [s.order_id, s]));
-  if (history.length === 0) { tbody.innerHTML = '<tr><td colspan="9">No sales match this filter.</td></tr>'; return; }
+  const more = document.getElementById('sales-more');
+  if (more) more.style.display = res.headers.get('X-Has-More') === '1' ? 'block' : 'none';
+  if (!append) { tbody.innerHTML = ''; salesHistoryByOrder = {}; }
+  Object.assign(salesHistoryByOrder, Object.fromEntries(history.map(s => [s.order_id, s])));
+  salesOffset += history.length;
+  if (history.length === 0 && !append) { tbody.innerHTML = '<tr><td colspan="9">No sales match this filter.</td></tr>'; return; }
   history.forEach(s => {
     const refundDetails = (s.refunds || []).map(r => `<small>${escHtml(r.reference)} · ${escHtml(r.payment_method)} KSh ${Number(r.amount).toFixed(2)} · ${escHtml(r.reason)} · ${escHtml(r.created_by)}</small>`).join('<br>');
     tbody.innerHTML += `<tr><td><small>${escHtml(s.created_at)}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${Number(s.total_amount).toFixed(2)}</b></td><td>KSh ${Number(s.paid_amount).toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+Number(s.credit_amount).toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${(s.payments || []).map(p => `${escHtml(p.method)}: KSh${Number(p.amount).toFixed(2)}`).join(', ') || 'CASH'}</small></td><td>KSh ${Number(s.refunded_amount || 0).toFixed(2)}${refundDetails ? '<br>' + refundDetails : ''}</td><td style="white-space:nowrap"><button class="btn-sm btn-info" onclick="showSaleReceipt(${s.order_id})">Receipt</button> <button class="btn-sm btn-warning" onclick="refundSale(${s.order_id}, ${Number(s.refundable_amount || 0)})" ${Number(s.refundable_amount || 0) <= 0 ? 'disabled' : ''}>Refund</button></td></tr>`;

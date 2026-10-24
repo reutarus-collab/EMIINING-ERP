@@ -28,7 +28,7 @@
 </div>
 <div class="card" id="own-milling-card">
   <h4>⚙️ Mill own raw material (e.g. whole maize → broken maize)</h4>
-  <p style="font-size:.9rem;color:#555">Takes grain out of stock, adds the milled product to stock, and carries the whole cost into the milled product: grain cost + electricity. Any weight lost makes the milled kg cost more. Record your full electricity bill (lights, incubators, everything) in Expenses as KPLC / Utilities. The milling share is shown separately as "absorbed into stock", so nothing is counted twice.</p>
+  <details style="margin:8px 0"><summary style="cursor:pointer;font-weight:600;min-height:44px;display:flex;align-items:center">How this works</summary><p style="font-size:.9rem;color:#555">Takes grain out of stock, adds the milled product to stock, and carries the whole cost into the milled product: grain cost + electricity. Any weight lost makes the milled kg cost more. Record your full electricity bill (lights, incubators, everything) in Expenses as KPLC / Utilities. The milling share is shown separately as "absorbed into stock", so nothing is counted twice.</p></details>
   <div class="form-group"><label>Grain to mill (input):</label><select id="om-input"></select></div>
   <div class="form-group"><label>Milled product (output):</label><select id="om-output"></select></div>
   <div class="form-group"><label>Grain put in (kg):</label><input type="number" id="om-input-kg" min="0.01" step="0.01" oninput="previewOwnMilling()" /></div>
@@ -41,23 +41,6 @@
   <div style="overflow-x:auto"><table class="data-table">
     <thead><tr><th>Run</th><th>Grain</th><th>Milled product</th><th>In kg</th><th>Out kg</th><th>Loss kg</th><th>Loss %</th><th>Grain cost</th><th>Electricity</th><th>New cost / kg</th><th>When</th></tr></thead>
     <tbody id="om-history"><tr><td colspan="11">Loading...</td></tr></tbody>
-  </table></div>
-</div>
-<div class="card" id="customer-milling-card">
-  <h4>🌽 Customer milling (customer's own grain)</h4>
-  <p style="font-size:.9rem;color:#555">Records the weights for a customer's grain. It is not added to company stock. Charge the milling fee through a normal sale and enter its reference.</p>
-  <div class="form-group"><label>Customer name:</label><input type="text" id="mill-customer-name" maxlength="100" value="Walk-in customer" /></div>
-  <div class="form-group"><label>Phone:</label><input type="text" id="mill-customer-phone" maxlength="20" /></div>
-  <div class="form-group"><label>Grain:</label><input type="text" id="mill-grain-description" maxlength="100" value="Maize" /></div>
-  <div class="form-group"><label>Grain received (kg):</label><input type="number" id="mill-input-qty" min="0.01" step="0.01" /></div>
-  <div class="form-group"><label>Milled weight returned (kg):</label><input type="number" id="mill-output-qty" min="0" step="0.01" /></div>
-  <div class="form-group"><label>Milling sale reference:</label><input type="text" id="mill-sale-reference" maxlength="50" /></div>
-  <div class="form-group"><label>Notes:</label><input type="text" id="mill-notes" maxlength="200" /></div>
-  <button class="btn-success" type="button" onclick="recordMillingRun()">Record customer milling</button>
-  <div id="mill-message" role="status" style="margin-top:10px"></div>
-  <div style="overflow-x:auto"><table class="data-table">
-    <thead><tr><th>Job</th><th>Customer</th><th>Grain</th><th>In kg</th><th>Out kg</th><th>Loss kg</th><th>Sale ref</th><th>By</th><th>When</th></tr></thead>
-    <tbody id="mill-history"><tr><td colspan="9">Loading...</td></tr></tbody>
   </table></div>
 </div>
 <div class="card" id="formula-library">

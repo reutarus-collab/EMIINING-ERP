@@ -734,7 +734,29 @@ def get_sales_history():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return error_response(exc)
-    orders = OrderHeader.query.filter_by(location_id=location.id).order_by(OrderHeader.created_at.desc()).limit(30).all()
+    query = OrderHeader.query.filter_by(location_id=location.id)
+    period = (request.args.get('period') or '').strip()
+    if period:
+        window = _period_windows().get(period)
+        if not window:
+            return jsonify(status='error', message='Unknown period.'), 400
+        start, end = _utc_window(*window)
+        query = query.filter(OrderHeader.created_at >= start, OrderHeader.created_at < end,
+                             OrderHeader.status == 'COMPLETED')
+    if request.args.get('credit_only') in ('1', 'true', 'True'):
+        query = query.filter(OrderHeader.credit_amount > 0)
+    if request.args.get('sort') == 'credit':
+        query = query.order_by(OrderHeader.credit_amount.desc(), OrderHeader.created_at.desc())
+    else:
+        query = query.order_by(OrderHeader.created_at.desc())
+    try:
+        offset = max(0, int(request.args.get('offset', 0)))
+    except ValueError:
+        offset = 0
+    page_size = 30 if not (period or request.args.get('credit_only')) else 50
+    orders = query.offset(offset).limit(page_size + 1).all()
+    has_more = len(orders) > page_size
+    orders = orders[:page_size]
     out = []
     for o in orders:
         cust = db.session.get(Customer, o.customer_id) if o.customer_id else None
@@ -765,7 +787,9 @@ def get_sales_history():
                                SalesRefund.order_id == o.id, SalesRefundLine.order_line_id == l.id).scalar() or 0.0, 3),
                        'subtotal': l.subtotal} for l in lines]
         })
-    return jsonify(out)
+    resp = jsonify(out)
+    resp.headers['X-Has-More'] = '1' if has_more else '0'
+    return resp
 
 
 @pos_bp.route('/api/customers/<int:customer_id>', methods=['PUT', 'PATCH'])
@@ -803,6 +827,17 @@ def _utc_window(first_day, last_day):
     return start, end
 
 
+def _period_windows():
+    today = (datetime.utcnow() + LOCAL_OFFSET).date()
+    return {
+        'today': (today, today),
+        'yesterday': (today - timedelta(days=1), today - timedelta(days=1)),
+        'this_week': (today - timedelta(days=today.weekday()), today),   # Monday to today
+        'this_month': (today.replace(day=1), today),
+        'this_year': (today.replace(month=1, day=1), today),
+    }
+
+
 @pos_bp.route('/api/sales-history/summary', methods=['GET'])
 @roles_required(*SALES_FLOOR_STAFF)
 def sales_summary():
@@ -810,14 +845,7 @@ def sales_summary():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return error_response(exc)
-    today = (datetime.utcnow() + LOCAL_OFFSET).date()
-    windows = {
-        'today': (today, today),
-        'yesterday': (today - timedelta(days=1), today - timedelta(days=1)),
-        'this_week': (today - timedelta(days=today.weekday()), today),   # Monday to today
-        'this_month': (today.replace(day=1), today),
-        'this_year': (today.replace(month=1, day=1), today),
-    }
+    windows = _period_windows()
     out = {}
     for label, (first, last) in windows.items():
         start, end = _utc_window(first, last)

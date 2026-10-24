@@ -119,50 +119,7 @@ async function loadFactoryDropdowns() {
     loadProductionRuns();
     populateOwnMilling();
     loadOwnMilling();
-    loadMillingRuns();
     loadSavedFormulas();
-}
-
-async function recordMillingRun() {
-    const message = document.getElementById('mill-message');
-    const payload = {
-        location_id: window.activeLocationId || '',
-        customer_name: document.getElementById('mill-customer-name').value,
-        customer_phone: document.getElementById('mill-customer-phone').value,
-        grain_description: document.getElementById('mill-grain-description').value,
-        input_qty_kg: document.getElementById('mill-input-qty').value,
-        output_qty_kg: document.getElementById('mill-output-qty').value,
-        service_sale_reference: document.getElementById('mill-sale-reference').value,
-        notes: document.getElementById('mill-notes').value
-    };
-    try {
-        const res = await fetch('/api/factory/milling-runs', {method:'POST', credentials:'same-origin',
-            headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-        const data = await res.json();
-        if (!res.ok || data.status !== 'success') throw new Error(data.message || 'Could not record milling job.');
-        message.style.color = 'green';
-        message.textContent = `Milling job ${data.run_no} recorded. Weight difference: ${Number(data.loss_kg).toFixed(2)} kg. Customer-owned grain was not added to company stock.`;
-        ['mill-customer-phone','mill-input-qty','mill-output-qty','mill-sale-reference','mill-notes'].forEach(id => document.getElementById(id).value = '');
-        await loadMillingRuns();
-    } catch (err) {
-        message.style.color = 'red';
-        message.textContent = err.message || 'Could not record milling job.';
-    }
-}
-
-async function loadMillingRuns() {
-    const body = document.getElementById('mill-history');
-    if (!body) return;
-    try {
-        const res = await fetch('/api/factory/milling-runs?location_id=' + encodeURIComponent(window.activeLocationId || ''), {credentials:'same-origin'});
-        const rows = await res.json();
-        if (!res.ok) throw new Error('Could not load customer milling history.');
-        body.innerHTML = rows.map(run => `<tr><td>${escHtml(run.run_no)}</td><td>${escHtml(run.customer_name)}<br>${escHtml(run.customer_phone)}</td>
-          <td>${escHtml(run.grain_description)}</td><td>${Number(run.input_qty_kg).toFixed(2)}</td><td>${Number(run.output_qty_kg).toFixed(2)}</td>
-          <td>${Number(run.loss_kg).toFixed(2)}</td><td>${escHtml(run.service_sale_reference)}</td><td>${escHtml(run.created_by)}</td><td>${escHtml(run.created_at)}</td></tr>`).join('') || '<tr><td colspan="9">No customer milling jobs recorded.</td></tr>';
-    } catch (_) {
-        body.innerHTML = '<tr><td colspan="9">Could not load customer milling history.</td></tr>';
-    }
 }
 
 function addProductionInput(selectedId = null) {
