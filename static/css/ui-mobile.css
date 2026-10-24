@@ -91,3 +91,110 @@ header{background:var(--ui-green-900)!important}
 .pos-online-note summary::after,.till-panel summary::after{content:"\25BE";margin-left:auto;color:var(--ui-muted)}
 .pos-online-note[open] summary::after,.till-panel[open] summary::after{transform:rotate(180deg)}
 .till-panel[open] #till-state-mirror{display:none}   /* the same text is already inside the open panel */
+
+/* ===== Factory tab on phones =====
+   Cause of the sideways scroll: the batch card is a grid with a plain 1fr column, and 1fr cannot shrink below the widest
+   child (selects and inputs sat inline beside their labels). minmax(0,1fr) lets it shrink; fields then stack full width. */
+@media (max-width: 700px) {
+  #factory-tab, #factory-tab .card, #factory-tab .card > div { min-width: 0; max-width: 100%; box-sizing: border-box; }
+  #factory-tab [style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+  #factory-tab h3, #factory-tab h4, #factory-tab h5 { overflow-wrap: anywhere; }
+
+  /* fields: label above, control full width, big enough to tap */
+  #factory-tab .form-group { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  #factory-tab .form-group > label { font-weight: 600; font-size: .9rem; margin: 0; }
+  #factory-tab input, #factory-tab select, #factory-tab textarea {
+    width: 100% !important; max-width: 100% !important; min-width: 0; box-sizing: border-box; min-height: 48px; }
+  #factory-tab button { min-height: 48px; }
+  #factory-tab .btn-success, #factory-tab .btn-primary { width: 100%; }
+  #factory-tab .card > .btn-sm, #factory-tab .card > div > .btn-sm { margin: 4px 6px 4px 0; }
+
+  /* batch ingredient rows: ingredient on top, planned + actual side by side, remove underneath */
+  #factory-tab table:has(#prod-inputs) thead { display: none; }
+  #factory-tab table:has(#prod-inputs) { overflow: visible; }
+  #factory-tab #prod-inputs { display: block; }
+  #factory-tab #prod-inputs tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px;
+    margin-bottom: 10px; border: 1px solid var(--ui-border); border-radius: 10px; background: #fff; }
+  #factory-tab #prod-inputs td { display: block; border: 0; padding: 0; min-width: 0; }
+  #factory-tab #prod-inputs td:nth-child(1), #factory-tab #prod-inputs td:nth-child(4) { grid-column: 1 / -1; }
+
+  /* history tables: one card per row instead of 11-13 columns of sideways scrolling */
+  #factory-tab table:has(#prod-history), #factory-tab table:has(#om-history) { overflow: visible; }
+  #factory-tab table:has(#prod-history) thead, #factory-tab table:has(#om-history) thead { display: none; }
+  #factory-tab #prod-history, #factory-tab #om-history { display: block; }
+  #factory-tab #prod-history tr, #factory-tab #om-history tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px;
+    padding: 12px; margin-bottom: 10px; border: 1px solid var(--ui-border); border-radius: 10px; background: #fff; }
+  #factory-tab #prod-history td, #factory-tab #om-history td { display: block; border: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; font-size: .92rem; }
+  #factory-tab #prod-history td::before, #factory-tab #om-history td::before {
+    display: block; font-size: .72rem; color: var(--ui-muted); text-transform: uppercase; letter-spacing: .03em; }
+  #factory-tab #prod-history tr:has(td[colspan]), #factory-tab #om-history tr:has(td[colspan]) { display: block; }
+  #factory-tab #prod-history td[colspan]::before, #factory-tab #om-history td[colspan]::before { content: none; }
+
+  #factory-tab #prod-history td:nth-child(1)::before  { content: "Batch"; }
+  #factory-tab #prod-history td:nth-child(2)::before  { content: "Formula / output"; }
+  #factory-tab #prod-history td:nth-child(3)::before  { content: "Input kg"; }
+  #factory-tab #prod-history td:nth-child(4)::before  { content: "Planned output kg"; }
+  #factory-tab #prod-history td:nth-child(5)::before  { content: "Actual output kg"; }
+  #factory-tab #prod-history td:nth-child(6)::before  { content: "Output variance kg"; }
+  #factory-tab #prod-history td:nth-child(7)::before  { content: "Loss kg"; }
+  #factory-tab #prod-history td:nth-child(8)::before  { content: "Loss %"; }
+  #factory-tab #prod-history td:nth-child(9)::before  { content: "Loss cost (KSh)"; }
+  #factory-tab #prod-history td:nth-child(10)::before { content: "Reason"; }
+  #factory-tab #prod-history td:nth-child(11)::before { content: "Total input cost (KSh)"; }
+  #factory-tab #prod-history td:nth-child(12)::before { content: "When"; }
+  #factory-tab #prod-history td:nth-child(1), #factory-tab #prod-history td:nth-child(2), #factory-tab #prod-history td:nth-child(10),
+  #factory-tab #prod-history td:nth-child(12), #factory-tab #prod-history td:nth-child(13) { grid-column: 1 / -1; }
+  #factory-tab #prod-history td:nth-child(1) { font-weight: 700; }
+  #factory-tab #prod-history td:nth-child(12) { order: 9; }
+  #factory-tab #prod-history td:nth-child(10) { order: 10; }
+  #factory-tab #prod-history td:nth-child(13) { order: 11; }
+  #factory-tab #prod-history td:nth-child(10):empty { display: none; }
+
+  #factory-tab #om-history td:nth-child(1)::before  { content: "Run"; }
+  #factory-tab #om-history td:nth-child(2)::before  { content: "Grain"; }
+  #factory-tab #om-history td:nth-child(3)::before  { content: "Milled product"; }
+  #factory-tab #om-history td:nth-child(4)::before  { content: "In kg"; }
+  #factory-tab #om-history td:nth-child(5)::before  { content: "Out kg"; }
+  #factory-tab #om-history td:nth-child(6)::before  { content: "Loss kg"; }
+  #factory-tab #om-history td:nth-child(7)::before  { content: "Loss %"; }
+  #factory-tab #om-history td:nth-child(8)::before  { content: "Grain cost"; }
+  #factory-tab #om-history td:nth-child(9)::before  { content: "Electricity"; }
+  #factory-tab #om-history td:nth-child(10)::before { content: "New cost / kg"; }
+  #factory-tab #om-history td:nth-child(11)::before { content: "When"; }
+  #factory-tab #om-history td:nth-child(1), #factory-tab #om-history td:nth-child(2),
+  #factory-tab #om-history td:nth-child(3), #factory-tab #om-history td:nth-child(11) { grid-column: 1 / -1; }
+  #factory-tab #om-history td:nth-child(1) { font-weight: 700; }
+  /* formula library, viewer and editor: same card treatment */
+  #factory-tab table:has(#formula-list) thead, #factory-tab table:has(#formula-viewer-rows) thead,
+  #factory-tab table:has(#formula-rows) thead { display: none; }
+  #factory-tab table:has(#formula-list), #factory-tab table:has(#formula-viewer-rows), #factory-tab table:has(#formula-rows) { overflow: visible; }
+  #factory-tab #formula-list, #factory-tab #formula-viewer-rows, #factory-tab #formula-rows { display: block; }
+  #factory-tab #formula-list tr, #factory-tab #formula-viewer-rows tr, #factory-tab #formula-rows tr {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; padding: 12px; margin-bottom: 10px;
+    border: 1px solid var(--ui-border); border-radius: 10px; background: #fff; }
+  #factory-tab #formula-list td, #factory-tab #formula-viewer-rows td, #factory-tab #formula-rows td {
+    display: block; border: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
+  #factory-tab #formula-list td::before, #factory-tab #formula-viewer-rows td::before, #factory-tab #formula-rows td::before {
+    display: block; font-size: .72rem; color: var(--ui-muted); text-transform: uppercase; letter-spacing: .03em; }
+  #factory-tab #formula-list tr:has(td[colspan]) { display: block; }
+  #factory-tab #formula-list td[colspan]::before { content: none; }
+  /* library: name on top, three figures, then the buttons in one row */
+  #factory-tab #formula-list td:nth-child(1) { grid-column: 1 / -1; font-weight: 700; font-size: 1.05rem; }
+  #factory-tab #formula-list td:nth-child(2)::before { content: "Items"; }
+  #factory-tab #formula-list td:nth-child(3)::before { content: "Total %"; }
+  #factory-tab #formula-list td:nth-child(4)::before { content: "Cost / kg (KSh)"; }
+  #factory-tab #formula-list td:nth-child(5) { grid-column: 1 / -1; display: flex; gap: 8px; }
+  #factory-tab #formula-list td:nth-child(5) button { flex: 1 1 0; margin: 0; }
+  /* viewer: read-only lines */
+  #factory-tab #formula-viewer-rows td:nth-child(1) { grid-column: 1 / -1; font-weight: 700; }
+  #factory-tab #formula-viewer-rows td:nth-child(2)::before { content: "%"; }
+  #factory-tab #formula-viewer-rows td:nth-child(3)::before { content: "kg for batch"; }
+  #factory-tab #formula-viewer-rows td:nth-child(4)::before { content: "Cost / kg"; }
+  #factory-tab #formula-viewer-rows td:nth-child(5)::before { content: "Cost in 1 kg feed"; }
+  /* editor: ingredient, % input, costs, remove */
+  #factory-tab #formula-rows td:nth-child(1), #factory-tab #formula-rows td:nth-child(5) { grid-column: 1 / -1; }
+  #factory-tab #formula-rows td:nth-child(2) { grid-column: 1 / 2; }
+  #factory-tab #formula-rows td:nth-child(2)::before { content: "%"; }
+  #factory-tab #formula-rows td:nth-child(3)::before { content: "Cost / kg"; }
+  #factory-tab #formula-rows td:nth-child(4)::before { content: "Cost in 1 kg feed"; }
+}
