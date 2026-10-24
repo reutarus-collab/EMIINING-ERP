@@ -30,6 +30,16 @@ def create_app(config=None):
     if not app.config.get('SECRET_KEY'):
         raise RuntimeError('Set SECRET_KEY before starting the ERP.')
 
+    @app.context_processor
+    def static_versions():
+        # Version query string = file modified time, so browsers never keep a stale copy of the UI files.
+        def asset_v(rel):
+            try:
+                return int(os.path.getmtime(os.path.join(app.static_folder, rel)))
+            except OSError:
+                return 0
+        return {'asset_v': asset_v}
+
     install_ledger_guard()
     init_db(app)
     with app.app_context():
