@@ -113,88 +113,166 @@ header{background:var(--ui-green-900)!important}
   #factory-tab table:has(#prod-inputs) thead { display: none; }
   #factory-tab table:has(#prod-inputs) { overflow: visible; }
   #factory-tab #prod-inputs { display: block; }
-  #factory-tab #prod-inputs tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px;
+  #factory-tab #prod-inputs > tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px;
     margin-bottom: 10px; border: 1px solid var(--ui-border); border-radius: 10px; background: #fff; }
-  #factory-tab #prod-inputs td { display: block; border: 0; padding: 0; min-width: 0; }
-  #factory-tab #prod-inputs td:nth-child(1), #factory-tab #prod-inputs td:nth-child(4) { grid-column: 1 / -1; }
+  #factory-tab #prod-inputs > tr > td { display: block; border: 0; padding: 0; min-width: 0; }
+  #factory-tab #prod-inputs > tr > td:nth-child(1), #factory-tab #prod-inputs > tr > td:nth-child(4) { grid-column: 1 / -1; }
 
   /* history tables: one card per row instead of 11-13 columns of sideways scrolling */
   #factory-tab table:has(#prod-history), #factory-tab table:has(#om-history) { overflow: visible; }
   #factory-tab table:has(#prod-history) thead, #factory-tab table:has(#om-history) thead { display: none; }
   #factory-tab #prod-history, #factory-tab #om-history { display: block; }
-  #factory-tab #prod-history tr, #factory-tab #om-history tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px;
+  #factory-tab #prod-history > tr, #factory-tab #om-history > tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px;
     padding: 12px; margin-bottom: 10px; border: 1px solid var(--ui-border); border-radius: 10px; background: #fff; }
-  #factory-tab #prod-history td, #factory-tab #om-history td { display: block; border: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; font-size: .92rem; }
-  #factory-tab #prod-history td::before, #factory-tab #om-history td::before {
+  #factory-tab #prod-history > tr > td, #factory-tab #om-history > tr > td { display: block; border: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; font-size: .92rem; }
+  #factory-tab #prod-history > tr > td::before, #factory-tab #om-history > tr > td::before {
     display: block; font-size: .72rem; color: var(--ui-muted); text-transform: uppercase; letter-spacing: .03em; }
-  #factory-tab #prod-history tr:has(td[colspan]), #factory-tab #om-history tr:has(td[colspan]) { display: block; }
-  #factory-tab #prod-history td[colspan]::before, #factory-tab #om-history td[colspan]::before { content: none; }
+  #factory-tab #prod-history > tr:has(> td[colspan]), #factory-tab #om-history > tr:has(> td[colspan]) { display: block; }
+  #factory-tab #prod-history > tr > td[colspan]::before, #factory-tab #om-history > tr > td[colspan]::before { content: none; }
 
-  #factory-tab #prod-history td:nth-child(1)::before  { content: "Batch"; }
-  #factory-tab #prod-history td:nth-child(2)::before  { content: "Formula / output"; }
-  #factory-tab #prod-history td:nth-child(3)::before  { content: "Input kg"; }
-  #factory-tab #prod-history td:nth-child(4)::before  { content: "Planned output kg"; }
-  #factory-tab #prod-history td:nth-child(5)::before  { content: "Actual output kg"; }
-  #factory-tab #prod-history td:nth-child(6)::before  { content: "Output variance kg"; }
-  #factory-tab #prod-history td:nth-child(7)::before  { content: "Loss kg"; }
-  #factory-tab #prod-history td:nth-child(8)::before  { content: "Loss %"; }
-  #factory-tab #prod-history td:nth-child(9)::before  { content: "Loss cost (KSh)"; }
-  #factory-tab #prod-history td:nth-child(10)::before { content: "Reason"; }
-  #factory-tab #prod-history td:nth-child(11)::before { content: "Total input cost (KSh)"; }
-  #factory-tab #prod-history td:nth-child(12)::before { content: "When"; }
-  #factory-tab #prod-history td:nth-child(1), #factory-tab #prod-history td:nth-child(2), #factory-tab #prod-history td:nth-child(10),
-  #factory-tab #prod-history td:nth-child(12), #factory-tab #prod-history td:nth-child(13) { grid-column: 1 / -1; }
-  #factory-tab #prod-history td:nth-child(1) { font-weight: 700; }
-  #factory-tab #prod-history td:nth-child(12) { order: 9; }
-  #factory-tab #prod-history td:nth-child(10) { order: 10; }
-  #factory-tab #prod-history td:nth-child(13) { order: 11; }
-  #factory-tab #prod-history td:nth-child(10):empty { display: none; }
+  #factory-tab #prod-history > tr > td:nth-child(1)::before  { content: "Batch"; }
+  #factory-tab #prod-history > tr > td:nth-child(2)::before  { content: "Formula / output"; }
+  #factory-tab #prod-history > tr > td:nth-child(3)::before  { content: "Input kg"; }
+  #factory-tab #prod-history > tr > td:nth-child(4)::before  { content: "Planned output kg"; }
+  #factory-tab #prod-history > tr > td:nth-child(5)::before  { content: "Actual output kg"; }
+  #factory-tab #prod-history > tr > td:nth-child(6)::before  { content: "Output variance kg"; }
+  #factory-tab #prod-history > tr > td:nth-child(7)::before  { content: "Loss kg"; }
+  #factory-tab #prod-history > tr > td:nth-child(8)::before  { content: "Loss %"; }
+  #factory-tab #prod-history > tr > td:nth-child(9)::before  { content: "Loss cost (KSh)"; }
+  #factory-tab #prod-history > tr > td:nth-child(10)::before { content: "Reason"; }
+  #factory-tab #prod-history > tr > td:nth-child(11)::before { content: "Total input cost (KSh)"; }
+  #factory-tab #prod-history > tr > td:nth-child(12)::before { content: "When"; }
+  #factory-tab #prod-history > tr > td:nth-child(1), #factory-tab #prod-history > tr > td:nth-child(2), #factory-tab #prod-history > tr > td:nth-child(10),
+  #factory-tab #prod-history > tr > td:nth-child(12), #factory-tab #prod-history > tr > td:nth-child(13) { grid-column: 1 / -1; }
+  #factory-tab #prod-history > tr > td:nth-child(1) { font-weight: 700; }
+  #factory-tab #prod-history > tr > td:nth-child(12) { order: 9; }
+  #factory-tab #prod-history > tr > td:nth-child(10) { order: 10; }
+  #factory-tab #prod-history > tr > td:nth-child(13) { order: 11; }
+  #factory-tab #prod-history > tr > td:nth-child(10):empty { display: none; }
 
-  #factory-tab #om-history td:nth-child(1)::before  { content: "Run"; }
-  #factory-tab #om-history td:nth-child(2)::before  { content: "Grain"; }
-  #factory-tab #om-history td:nth-child(3)::before  { content: "Milled product"; }
-  #factory-tab #om-history td:nth-child(4)::before  { content: "In kg"; }
-  #factory-tab #om-history td:nth-child(5)::before  { content: "Out kg"; }
-  #factory-tab #om-history td:nth-child(6)::before  { content: "Loss kg"; }
-  #factory-tab #om-history td:nth-child(7)::before  { content: "Loss %"; }
-  #factory-tab #om-history td:nth-child(8)::before  { content: "Grain cost"; }
-  #factory-tab #om-history td:nth-child(9)::before  { content: "Electricity"; }
-  #factory-tab #om-history td:nth-child(10)::before { content: "New cost / kg"; }
-  #factory-tab #om-history td:nth-child(11)::before { content: "When"; }
-  #factory-tab #om-history td:nth-child(1), #factory-tab #om-history td:nth-child(2),
-  #factory-tab #om-history td:nth-child(3), #factory-tab #om-history td:nth-child(11) { grid-column: 1 / -1; }
-  #factory-tab #om-history td:nth-child(1) { font-weight: 700; }
+  #factory-tab #om-history > tr > td:nth-child(1)::before  { content: "Run"; }
+  #factory-tab #om-history > tr > td:nth-child(2)::before  { content: "Grain"; }
+  #factory-tab #om-history > tr > td:nth-child(3)::before  { content: "Milled product"; }
+  #factory-tab #om-history > tr > td:nth-child(4)::before  { content: "In kg"; }
+  #factory-tab #om-history > tr > td:nth-child(5)::before  { content: "Out kg"; }
+  #factory-tab #om-history > tr > td:nth-child(6)::before  { content: "Loss kg"; }
+  #factory-tab #om-history > tr > td:nth-child(7)::before  { content: "Loss %"; }
+  #factory-tab #om-history > tr > td:nth-child(8)::before  { content: "Grain cost"; }
+  #factory-tab #om-history > tr > td:nth-child(9)::before  { content: "Electricity"; }
+  #factory-tab #om-history > tr > td:nth-child(10)::before { content: "New cost / kg"; }
+  #factory-tab #om-history > tr > td:nth-child(11)::before { content: "When"; }
+  #factory-tab #om-history > tr > td:nth-child(1), #factory-tab #om-history > tr > td:nth-child(2),
+  #factory-tab #om-history > tr > td:nth-child(3), #factory-tab #om-history > tr > td:nth-child(11) { grid-column: 1 / -1; }
+  #factory-tab #om-history > tr > td:nth-child(1) { font-weight: 700; }
   /* formula library, viewer and editor: same card treatment */
   #factory-tab table:has(#formula-list) thead, #factory-tab table:has(#formula-viewer-rows) thead,
   #factory-tab table:has(#formula-rows) thead { display: none; }
   #factory-tab table:has(#formula-list), #factory-tab table:has(#formula-viewer-rows), #factory-tab table:has(#formula-rows) { overflow: visible; }
   #factory-tab #formula-list, #factory-tab #formula-viewer-rows, #factory-tab #formula-rows { display: block; }
-  #factory-tab #formula-list tr, #factory-tab #formula-viewer-rows tr, #factory-tab #formula-rows tr {
+  #factory-tab #formula-list > tr, #factory-tab #formula-viewer-rows > tr, #factory-tab #formula-rows > tr {
     display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; padding: 12px; margin-bottom: 10px;
     border: 1px solid var(--ui-border); border-radius: 10px; background: #fff; }
-  #factory-tab #formula-list td, #factory-tab #formula-viewer-rows td, #factory-tab #formula-rows td {
+  #factory-tab #formula-list > tr > td, #factory-tab #formula-viewer-rows > tr > td, #factory-tab #formula-rows > tr > td {
     display: block; border: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
-  #factory-tab #formula-list td::before, #factory-tab #formula-viewer-rows td::before, #factory-tab #formula-rows td::before {
+  #factory-tab #formula-list > tr > td::before, #factory-tab #formula-viewer-rows > tr > td::before, #factory-tab #formula-rows > tr > td::before {
     display: block; font-size: .72rem; color: var(--ui-muted); text-transform: uppercase; letter-spacing: .03em; }
-  #factory-tab #formula-list tr:has(td[colspan]) { display: block; }
-  #factory-tab #formula-list td[colspan]::before { content: none; }
+  #factory-tab #formula-list > tr:has(> td[colspan]) { display: block; }
+  #factory-tab #formula-list > tr > td[colspan]::before { content: none; }
   /* library: name on top, three figures, then the buttons in one row */
-  #factory-tab #formula-list td:nth-child(1) { grid-column: 1 / -1; font-weight: 700; font-size: 1.05rem; }
-  #factory-tab #formula-list td:nth-child(2)::before { content: "Items"; }
-  #factory-tab #formula-list td:nth-child(3)::before { content: "Total %"; }
-  #factory-tab #formula-list td:nth-child(4)::before { content: "Cost / kg (KSh)"; }
-  #factory-tab #formula-list td:nth-child(5) { grid-column: 1 / -1; display: flex; gap: 8px; }
-  #factory-tab #formula-list td:nth-child(5) button { flex: 1 1 0; margin: 0; }
+  #factory-tab #formula-list > tr > td:nth-child(1) { grid-column: 1 / -1; font-weight: 700; font-size: 1.05rem; }
+  #factory-tab #formula-list > tr > td:nth-child(2)::before { content: "Items"; }
+  #factory-tab #formula-list > tr > td:nth-child(3)::before { content: "Total %"; }
+  #factory-tab #formula-list > tr > td:nth-child(4)::before { content: "Cost / kg (KSh)"; }
+  #factory-tab #formula-list > tr > td:nth-child(5) { grid-column: 1 / -1; display: flex; gap: 8px; }
+  #factory-tab #formula-list > tr > td:nth-child(5) button { flex: 1 1 0; margin: 0; }
   /* viewer: read-only lines */
-  #factory-tab #formula-viewer-rows td:nth-child(1) { grid-column: 1 / -1; font-weight: 700; }
-  #factory-tab #formula-viewer-rows td:nth-child(2)::before { content: "%"; }
-  #factory-tab #formula-viewer-rows td:nth-child(3)::before { content: "kg for batch"; }
-  #factory-tab #formula-viewer-rows td:nth-child(4)::before { content: "Cost / kg"; }
-  #factory-tab #formula-viewer-rows td:nth-child(5)::before { content: "Cost in 1 kg feed"; }
+  #factory-tab #formula-viewer-rows > tr > td:nth-child(1) { grid-column: 1 / -1; font-weight: 700; }
+  #factory-tab #formula-viewer-rows > tr > td:nth-child(2)::before { content: "%"; }
+  #factory-tab #formula-viewer-rows > tr > td:nth-child(3)::before { content: "kg for batch"; }
+  #factory-tab #formula-viewer-rows > tr > td:nth-child(4)::before { content: "Cost / kg"; }
+  #factory-tab #formula-viewer-rows > tr > td:nth-child(5)::before { content: "Cost in 1 kg feed"; }
   /* editor: ingredient, % input, costs, remove */
-  #factory-tab #formula-rows td:nth-child(1), #factory-tab #formula-rows td:nth-child(5) { grid-column: 1 / -1; }
-  #factory-tab #formula-rows td:nth-child(2) { grid-column: 1 / 2; }
-  #factory-tab #formula-rows td:nth-child(2)::before { content: "%"; }
-  #factory-tab #formula-rows td:nth-child(3)::before { content: "Cost / kg"; }
-  #factory-tab #formula-rows td:nth-child(4)::before { content: "Cost in 1 kg feed"; }
+  #factory-tab #formula-rows > tr > td:nth-child(1), #factory-tab #formula-rows > tr > td:nth-child(5) { grid-column: 1 / -1; }
+  #factory-tab #formula-rows > tr > td:nth-child(2) { grid-column: 1 / 2; }
+  #factory-tab #formula-rows > tr > td:nth-child(2)::before { content: "%"; }
+  #factory-tab #formula-rows > tr > td:nth-child(3)::before { content: "Cost / kg"; }
+  #factory-tab #formula-rows > tr > td:nth-child(4)::before { content: "Cost in 1 kg feed"; }
+}
+
+/* ===== Whole-system phone layer (every tab except the POS, which has its own layout above) =====
+   1) Fields: full width, 44px tall, 16px text (16px also stops iOS zooming the page when a field is focused).
+   2) Tables with 5+ columns become one card per row. ui-mobile.js copies each column header onto its cells (data-label). */
+@media (max-width: 700px) {
+  .tab-content:not(#pos-tab) input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]),
+  .tab-content:not(#pos-tab) select, .tab-content:not(#pos-tab) textarea {
+    min-height: 44px; max-width: 100%; box-sizing: border-box; font-size: 16px; }
+  .tab-content:not(#pos-tab) :not(td, th, tr) > :is(input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), select, textarea) { width: 100%; }
+  .tab-content:not(#pos-tab) input[type=checkbox], .tab-content:not(#pos-tab) input[type=radio] { width: 22px; height: 22px; flex: none; }
+  .tab-content:not(#pos-tab) button, .tab-content:not(#pos-tab) .btn { min-height: 44px; }
+  .tab-content:not(#pos-tab) h2, .tab-content:not(#pos-tab) h3 { overflow-wrap: anywhere; }
+  .tab-content:not(#pos-tab) .card { overflow-x: clip; }
+  .tab-content :is(div, form)[style*="display:flex"], .tab-content :is(div, form)[style*="display: flex"] { flex-wrap: wrap; }
+
+  table.m-stack { display: block; width: 100%; max-width: 100%; overflow: visible; border: 0; }
+  table.m-stack thead { display: none; }
+  table.m-stack tbody, table.m-stack tfoot { display: block; }
+  table.m-stack tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; padding: 12px;
+    margin: 0 0 10px; border: 1px solid var(--ui-border); border-radius: 10px; background: #fff; }
+  table.m-stack tr:has(> .m-wide) { display: block; }
+  table.m-stack td { display: block; border: 0 !important; padding: 0 !important; min-width: 0; overflow-wrap: anywhere; text-align: left !important; width: auto !important; }
+  table.m-stack td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 2px;
+    font-size: .72rem; color: var(--ui-muted); text-transform: uppercase; letter-spacing: .03em; font-weight: 600; }
+  table.m-stack td.m-nolabel::before { content: none; }
+  table.m-stack tr:not(:has(> td)) { display: none; }
+  table.m-stack td:first-child { grid-column: 1 / -1; font-weight: 700; }
+  table.m-stack td:first-child:not(:has(input, select))::before { content: none; }
+  table.m-stack td.m-nolabel { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  table.m-stack td.m-nolabel > button { flex: 1 1 96px; }
+  table.m-stack td:empty:not(.m-nolabel) { display: none; }   /* blank value cells (results not computed yet) take no space */
+  table.m-stack td input:not([type=checkbox]):not([type=radio]), table.m-stack td select, table.m-stack td textarea { width: 100% !important; max-width: 100% !important; }
+  table.m-stack tr[onclick], table.m-stack tr[data-order-id] { cursor: pointer; }
+  #pos-tab .till-panel :is(input, select), #pos-tab :is(#pos-location, #till-opening-cash) { min-height: 44px; }
+
+  /* Ration Formulation: nutrient limits as compact cards (name + remove on top, On/Required, Min/Actual/Max/Unit, status) */
+  #matrix-tab .lab-wrap { overflow-x: visible; }
+  #matrix-tab #lab-con-table tr { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; }
+  #matrix-tab #lab-con-table td { grid-column: auto; font-weight: 400; }
+  #matrix-tab #lab-con-table td:nth-child(3) { grid-column: 1 / 4; order: 1; font-weight: 700; }
+  #matrix-tab #lab-con-table td:nth-child(3)::before { content: none; }
+  #matrix-tab #lab-con-table td:nth-child(10) { grid-column: 4; order: 2; justify-self: end; display: block; }
+  #matrix-tab #lab-con-table td:nth-child(10) > button { flex: none; min-width: 44px; padding: 0 12px; }
+  #matrix-tab #lab-con-table td:nth-child(1), #matrix-tab #lab-con-table td:nth-child(2) { display: flex; align-items: center; gap: 8px; order: 3; }
+  #matrix-tab #lab-con-table td:nth-child(1) { grid-column: 1 / 3; }
+  #matrix-tab #lab-con-table td:nth-child(2) { grid-column: 3 / 5; }
+  #matrix-tab #lab-con-table td:nth-child(1)::before, #matrix-tab #lab-con-table td:nth-child(2)::before { display: inline; margin: 0; order: 2; text-transform: none; font-size: .85rem; }
+  #matrix-tab #lab-con-table td:nth-child(4) { order: 5; }
+  #matrix-tab #lab-con-table td:nth-child(5) { order: 6; }
+  #matrix-tab #lab-con-table td:nth-child(6) { order: 7; }
+  #matrix-tab #lab-con-table td:nth-child(7) { order: 8; }
+  #matrix-tab #lab-con-table td:nth-child(8) { grid-column: 1 / 3; order: 9; }
+  #matrix-tab #lab-con-table td:nth-child(9) { grid-column: 3 / 5; order: 10; }
+  #matrix-tab #lab-con-table td:nth-child(8):empty, #matrix-tab #lab-con-table td:nth-child(9):empty { display: none; }
+
+  /* Money tab forced every table to 560px wide, which made the narrow ones scroll sideways for no reason */
+  #money-tab .money-table-wrap .data-table, #money-tab .data-table.m-stack { min-width: 0; }
+
+  /* Ration Formulation tables are dense: three columns per card, small remove button */
+  #matrix-tab table.m-stack tr { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #matrix-tab table.m-stack td.m-nolabel > button { flex: 0 0 auto; min-width: 44px; padding: 0 14px; }
+  #matrix-tab #lab-con-table tr { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  /* fields that ignored box-sizing stuck out of their card (POS search was 22px too wide); inline max-width:320px on the stock filter */
+  #pos-tab input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]), #pos-tab select, #pos-tab textarea { box-sizing: border-box; max-width: 100%; }
+  .tab-content:not(#pos-tab) input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]),
+  .tab-content:not(#pos-tab) select, .tab-content:not(#pos-tab) textarea { max-width: 100% !important; }
+  /* secondary buttons were plain blue, so the red Delete label (#b00) was red on blue and unreadable */
+  .tab-content .btn-secondary { background: #fff; color: #343a40; border: 1px solid #ced4da; }
+
+  /* Purchase order modals: item row and GRN header were four/three fields squeezed on one line (flex:1 never wraps) */
+  #po-tab #po-item-select, #po-tab #grn-delivery-note, #po-tab #grn-vehicle-reg, #po-tab #grn-payment-method { flex: 1 1 100% !important; }
+  #po-tab #po-qty, #po-tab #po-cost { flex: 1 1 calc(50% - 6px) !important; min-width: 0; }
+  #po-tab #po-cost + button { flex: 1 1 100%; }
+  /* modals: keep the last buttons clear of the phone's home bar, and use the real visible height */
+  #create-po-modal, #create-item-modal, #receive-grn-modal, #view-po-modal, #create-supplier-modal {
+    max-height: calc(100dvh - 12px); overscroll-behavior: contain; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important; }
 }

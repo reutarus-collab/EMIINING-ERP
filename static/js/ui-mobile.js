@@ -118,3 +118,46 @@
     if (window.currentRole || ++tries > 50) { clearInterval(t); build(); }
   }, 100);
 })();
+
+/* ---- Wide tables on phones: label every cell from its column header so CSS can show each row as a card.
+        Display only. Never touches values, ids, handlers or row order. Re-runs when JS renders new rows. ---- */
+(function () {
+  var MIN_COLS = 5;                       // tables with fewer columns already fit; leave them alone
+  var queued = false;
+  function headerLabels(table) {
+    var row = table.querySelector('thead tr') || table.querySelector('tr');
+    if (!row) return [];
+    var labels = [];
+    Array.prototype.forEach.call(row.children, function (th) {
+      var span = parseInt(th.getAttribute('colspan') || '1', 10) || 1;
+      var text = (th.textContent || '').replace(/\s+/g, ' ').trim();
+      for (var i = 0; i < span; i++) labels.push(text);
+    });
+    return labels;
+  }
+  function run() {
+    queued = false;
+    var tables = document.querySelectorAll('.tab-content table:not([data-no-stack]), .modal table:not([data-no-stack])');
+    Array.prototype.forEach.call(tables, function (table) {
+      if (table.closest('.cart-table, #cart-body')) return;            // POS cart has its own mobile layout
+      var labels = headerLabels(table);
+      if (labels.length < MIN_COLS) { table.classList.remove('m-stack'); return; }
+      table.classList.add('m-stack');
+      Array.prototype.forEach.call(table.querySelectorAll('tbody tr, tfoot tr'), function (tr) {
+        var col = 0;
+        Array.prototype.forEach.call(tr.children, function (td) {
+          var span = parseInt(td.getAttribute('colspan') || '1', 10) || 1;
+          if (span > 1) { td.classList.add('m-wide'); col += span; return; }
+          var label = labels[col] || '';
+          if (td.getAttribute('data-label') !== label) td.setAttribute('data-label', label);
+          if (!label) td.classList.add('m-nolabel');
+          col++;
+        });
+      });
+    });
+  }
+  function queue() { if (!queued) { queued = true; (window.requestAnimationFrame || setTimeout)(run); } }
+  if (!window.MutationObserver) return;
+  new MutationObserver(queue).observe(document.body, {childList: true, subtree: true});   // childList only, so our own attribute writes cannot loop
+  queue();
+})();
