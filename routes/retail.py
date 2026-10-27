@@ -16,7 +16,7 @@ def stock():
     except ValueError as exc:
         return error_response(exc)
     rows = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service'),
-                                       FeedIngredient.is_active.isnot(False)).order_by(FeedIngredient.name).all()
+                                       FeedIngredient.is_active.isnot(False)).order_by(db.func.lower(FeedIngredient.name)).all()
     show_cost = g.user.role in ('admin', 'accountant', 'warehouse')
     result = []
     for i in rows:
@@ -47,7 +47,7 @@ def _max_outlet_unit_cost(ingredient_id, fallback=0.0):
 @roles_required('admin')
 def prices_list():
     out = []
-    for i in FeedIngredient.query.order_by(FeedIngredient.name).all():
+    for i in FeedIngredient.query.order_by(db.func.lower(FeedIngredient.name)).all():
         cost = _max_outlet_unit_cost(i.id, i.cost_per_kg or 0)
         price = i.retail_price_per_kg or 0
         margin = round((price - cost) / price * 100, 1) if price > 0 else None
@@ -109,6 +109,9 @@ def daily_report():
         TillSession.closed_at >= start,
         TillSession.closed_at < end,
         TillSession.status == 'CLOSED').order_by(TillSession.closed_at.desc()).all()
+    auto_closed = TillSession.query.filter(
+        TillSession.location_id == location.id, TillSession.status == 'AUTO_CLOSED',
+        TillSession.closed_at >= start, TillSession.closed_at < end).order_by(TillSession.closed_at.desc()).all()
     expenses = OperatingExpense.query.filter(OperatingExpense.location_id == location.id,
                                              OperatingExpense.created_at >= start,
                                              OperatingExpense.created_at < end).all()
@@ -134,6 +137,10 @@ def daily_report():
                         'counted_cash': round(t.counted_cash or 0, 2),
                         'variance': round(t.cash_variance or 0, 2),
                         'closed_at': t.closed_at.strftime('%H:%M') if t.closed_at else ''} for t in tills],
+        auto_closed_tills=[{'cashier': t.cashier_name, 'opening_cash': round(t.opening_cash or 0, 2),
+                            'expected_cash': round(t.expected_cash or 0, 2),
+                            'opened_at': t.opened_at.strftime('%H:%M') if t.opened_at else '',
+                            'closed_at': t.closed_at.strftime('%Y-%m-%d %H:%M') if t.closed_at else ''} for t in auto_closed],
         credit_sales=round(sum(o.credit_amount or 0 for o in orders), 2),
         expenses_total=round(sum(e.amount or 0 for e in expenses), 2),
         expenses_by_category=expense_categories,
@@ -227,7 +234,7 @@ def packs_list():
     for r in ItemPrice.query.all():
         by_item.setdefault(r.ingredient_id, {})[int(round(r.pack_kg))] = r.price
     out = []
-    for i in FeedIngredient.query.order_by(FeedIngredient.name).all():
+    for i in FeedIngredient.query.order_by(db.func.lower(FeedIngredient.name)).all():
         prices = by_item.get(i.id, {})
         out.append({'id': i.id, 'name': i.name,
                     'cost_per_kg': _max_outlet_unit_cost(i.id, i.cost_per_kg or 0),

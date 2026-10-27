@@ -42,3 +42,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
     }
 });
+
+// Reload every on-screen item list after something changed stock or the item list
+// (new PO, goods received, production, milling, transfer, adjustment, new item).
+window.refreshItemViews = async function () {
+    const jobs = [];
+    const call = (name) => { if (typeof window[name] === 'function') jobs.push(Promise.resolve().then(() => window[name]()).catch(e => console.error(name, e))); };
+    call('po_loadInventory'); call('po_loadHistory'); call('loadStock'); call('searchProducts'); call('loadFactoryDropdowns');
+    await Promise.all(jobs);
+};

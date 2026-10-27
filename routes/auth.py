@@ -30,7 +30,7 @@ ROLE_ALLOW = {
                 '/api/factory', '/api/formulate', '/api/nutrition', '/api/stock', '/api/customers',
                 '/api/pos/checkout', '/api/till/current', '/api/till/open',
                 '/api/till/close', '/api/till/cash-movements', '/api/reports/daily',
-                '/api/sales-history', '/api/price-list.pdf'),
+                '/api/sales-history', '/api/expenses', '/api/customers', '/api/price-list.pdf'),
 }
 
 LOGIN_HTML = """<!doctype html>
@@ -191,6 +191,9 @@ def init_auth(app):
                 return jsonify(error='auth_required'), 401
             return redirect(url_for('auth.login', next=request.path))
         g.user = u
+        from services import business_hours
+        if business_hours.enforced() and (request.path.startswith('/api/') or request.path == '/'):
+            business_hours.sweep_stale_tills()      # tills left open past closing time are closed by the system
         if not _allowed(u.role, request.path):
             if request.path.startswith('/api/'):
                 return jsonify(error='forbidden'), 403

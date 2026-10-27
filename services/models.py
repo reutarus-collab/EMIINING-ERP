@@ -416,7 +416,13 @@ class PurchaseOrderLine(db.Model):
     qty_ordered = db.Column(db.Float, default=0.0)
     unit_cost = db.Column(db.Float, default=0.0)
     subtotal = db.Column(db.Float, default=0.0)
-    
+    # Snapshot of the item's purchase rule when the PO was written. qty_ordered and unit_cost are in
+    # purchase_uom (BAG/KG/TON); one UOM unit = conversion_factor kg when conversion_type is FIXED.
+    # Later edits to the item master never change what an open PO means.
+    purchase_uom = db.Column(db.String(20))
+    conversion_type = db.Column(db.String(20))
+    conversion_factor = db.Column(db.Float)
+
     # --- NEW: GRN TRACKING COLUMNS ---
     qty_received = db.Column(db.Float, default=0.0)
     qty_rejected = db.Column(db.Float, default=0.0)
@@ -432,6 +438,14 @@ class GoodsReceiptNote(db.Model):
     vehicle_reg = db.Column(db.String(20))
     status = db.Column(db.String(20), default='POSTED')
     location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    # Transport is its own cost with its own payee. It is never added to the supplier's goods invoice.
+    goods_value = db.Column(db.Float, default=0.0)
+    transport_amount = db.Column(db.Float, default=0.0)
+    transport_payee = db.Column(db.String(100))
+    transport_method = db.Column(db.String(20))          # CASH / MPESA / BANK / ON_ACCOUNT
+    transport_supplier_id = db.Column(db.Integer)        # transporter's payable account when ON_ACCOUNT
+    transport_allocation = db.Column(db.String(10))      # WEIGHT or VALUE
+    transport_reference = db.Column(db.String(100))
 
 class GoodsReceiptLine(db.Model):
     __tablename__ = 'goods_receipt_lines'
@@ -445,7 +459,9 @@ class GoodsReceiptLine(db.Model):
     qty_rejected_po_uom = db.Column(db.Float, default=0.0)
     batch_number = db.Column(db.String(50))
     expiry_date = db.Column(db.DateTime)
-    unit_cost = db.Column(db.Float, default=0.0) # Captured at time of receipt
+    unit_cost = db.Column(db.Float, default=0.0) # Captured at time of receipt (price per PO UOM)
+    landed_cost_per_kg = db.Column(db.Float)     # (goods value + allocated transport) / accepted kg
+    transport_allocated = db.Column(db.Float, default=0.0)
     
 class GeneralLedgerEntry(db.Model):
     __tablename__ = 'general_ledger_entries'

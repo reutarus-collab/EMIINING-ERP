@@ -15,6 +15,7 @@ from services.models import LocationStock, FeedIngredient, Customer, CustomerPay
 from services.pos_service import process_full_pos_checkout
 from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
 from routes.auth import roles_required, ALL_STAFF, SALES_FLOOR_STAFF
+from services import business_hours
 
 pos_bp = Blueprint('pos_bp', __name__)
 
@@ -52,7 +53,7 @@ def search_products():
     for word in query.split():
         like = f"%{word}%"
         items_query = items_query.filter(db.or_(FeedIngredient.name.ilike(like), FeedIngredient.category.ilike(like)))
-    items = items_query.order_by(FeedIngredient.name).all()
+    items = items_query.order_by(db.func.lower(FeedIngredient.name)).all()
     packs_by_item = {}
     for pr in ItemPrice.query.order_by(ItemPrice.pack_kg).all():
         if (pr.price or 0) > 0:
@@ -75,7 +76,7 @@ def get_inventory():
     except ValueError as exc:
         return error_response(exc)
     out = []
-    for i in FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).all():
+    for i in FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).order_by(db.func.lower(FeedIngredient.name)).all():
         row = {'id': i.id, 'name': i.name, 'category': i.category,
                'stock_quantity_kg': stock_quantity(location.id, i.id),
                'is_active': i.is_active is not False,
@@ -131,7 +132,7 @@ def manage_customers():
     return jsonify([{'id': c.id, 'name': c.name, 'phone': c.phone or '', 'location': c.location or 'Unknown',
                      'type': c.customer_type, 'balance': float(c.current_balance or 0.0), 'credit_limit': float(c.credit_limit or 0.0),
                      'outlet_id': c.location_id, 'outlet_name': outlet_names.get(c.location_id, 'Unassigned')}
-                    for c in q.order_by(Customer.name).all()])
+                    for c in q.order_by(db.func.lower(Customer.name)).all()])
 
 @pos_bp.route('/api/customers/<int:customer_id>/add-debt', methods=['POST'])
 @roles_required(*ALL_STAFF)
@@ -171,6 +172,32 @@ def add_customer_debt(customer_id):
         return error_response(e)
 
 
+@pos_bp.route('/api/customers/<int:customer_id>/debt', methods=['GET'])
+@roles_required(*ALL_STAFF)
+def customer_debt_statement(customer_id):
+    """What this customer owes and why: old-balance entries, credit sales, repayments, newest first."""
+    cust = db.session.get(Customer, customer_id)
+    if not cust:
+        return jsonify(status='error', message='Customer not found.'), 404
+    if g.user.role not in ('admin', 'accountant') and cust.location_id != getattr(g.user, 'location_id', None):
+        return jsonify(status='error', message='This customer belongs to another outlet.'), 403
+    events = []
+    for e in CustomerDebtEntry.query.filter_by(customer_id=cust.id).all():
+        events.append(dict(date=e.created_at, kind='OLD DEBT', ref=e.reference, amount=e.amount, note=e.note, by=e.created_by))
+    for o in OrderHeader.query.filter(OrderHeader.customer_id == cust.id, OrderHeader.credit_amount > 0).all():
+        events.append(dict(date=o.created_at, kind='CREDIT SALE', ref=o.sale_id, amount=o.credit_amount, note='', by=''))
+    for pmt in CustomerPayment.query.filter_by(customer_id=cust.id).all():
+        events.append(dict(date=pmt.created_at, kind='REPAYMENT', ref=pmt.reference, amount=-pmt.amount, note=pmt.payment_method, by=pmt.created_by))
+    events.sort(key=lambda x: x['date'] or datetime.min, reverse=True)
+    limit, bal = float(cust.credit_limit or 0.0), float(cust.current_balance or 0.0)
+    last_pay = next((x['date'] for x in events if x['kind'] == 'REPAYMENT'), None)
+    return jsonify(status='success', id=cust.id, name=cust.name, phone=cust.phone or '', balance=round(bal, 2),
+                   credit_limit=round(limit, 2), available_credit=round(limit - bal, 2),
+                   last_payment=last_pay.strftime('%Y-%m-%d') if last_pay else '',
+                   entries=[dict(date=x['date'].strftime('%Y-%m-%d %H:%M') if x['date'] else '', kind=x['kind'], ref=x['ref'],
+                                 amount=round(x['amount'], 2), note=x['note'], by=x['by']) for x in events[:300]])
+
+
 @pos_bp.route('/api/customers/debt-entries', methods=['GET'])
 @roles_required('admin', 'accountant')
 def list_customer_debt_entries():
@@ -194,6 +221,7 @@ def repay_customer_debt(customer_id):
         method = str(data.get('payment_method') or '').strip().upper()
         if method not in ('CASH', 'MPESA', 'BANK'):
             return jsonify({'status': 'error', 'message': 'Choose CASH, MPESA, or BANK.'}), 400
+        business_hours.require_open_for(g.user)
         location = resolve_location(data.get('location_id'))
         cust = db.session.get(Customer, customer_id)
         if not cust:
@@ -243,6 +271,8 @@ def checkout():
     try:
         location = resolve_location(data.get('location_id'))
         existing = IdempotencyKey.query.filter_by(key=key).first()
+        if not existing:
+            business_hours.require_open_for(g.user)       # a replay of an already-posted sale is always allowed
         if existing:
             if existing.created_by != g.user.username or existing.location_id != location.id:
                 return jsonify(status='error', message='This checkout key belongs to a different cashier or outlet.'), 409
@@ -276,16 +306,25 @@ def till_current():
     except ValueError as exc:
         return error_response(exc)
     till = active_till(location.id, g.user.username)
+    auto = (TillSession.query.filter_by(location_id=location.id, cashier_name=g.user.username, status='AUTO_CLOSED')
+            .order_by(TillSession.id.desc()).first()) if not till else None
     return jsonify(location_id=location.id, location_name=location.name,
                    session={'id': till.id, 'opening_cash': till.opening_cash,
                             'expected_cash': till.expected_cash, 'opened_at': till.opened_at.isoformat()}
-                   if till else None)
+                   if till else None,
+                   trading_hours={'open_hour': business_hours.open_hour(), 'close_hour': business_hours.close_hour(),
+                                  'text': business_hours.window_text(),
+                                  'enforced': business_hours.enforced() and g.user.role not in business_hours.OWNER_ROLES,
+                                  'open_now': business_hours.is_open_now()},
+                   auto_closed={'id': auto.id, 'expected_cash': round(auto.expected_cash or 0.0, 2),
+                                'closed_at': auto.closed_at.isoformat() if auto.closed_at else ''} if auto else None)
 
 @pos_bp.route('/api/till/open', methods=['POST'])
 @roles_required(*ALL_STAFF)
 def till_open():
     data = request.get_json(silent=True) or {}
     try:
+        business_hours.require_open_for(g.user)
         location = resolve_location(data.get('location_id'))
         opening = float(data.get('opening_cash', 0))
         if not math.isfinite(opening) or opening < 0:
@@ -356,6 +395,7 @@ def till_cash_movements():
                                   for m in rows])
     data = request.get_json(silent=True) or {}
     try:
+        business_hours.require_open_for(g.user)
         location = resolve_location(data.get('location_id'))
         movement_type = str(data.get('movement_type') or '').strip().upper()
         amount = round(float(data.get('amount')), 2)
@@ -674,7 +714,7 @@ EXPENSE_CATEGORIES = {
 }
 
 @pos_bp.route('/api/expenses', methods=['GET', 'POST'])
-@roles_required('admin', 'accountant', 'sales', 'warehouse')
+@roles_required(*ALL_STAFF)
 @idempotent('expense')
 def operating_expenses():
     if request.method == 'GET':
@@ -692,6 +732,7 @@ def operating_expenses():
                                  for e in records])
     data = request.get_json(silent=True) or {}
     try:
+        business_hours.require_open_for(g.user)
         location = resolve_location(data.get('location_id'))
         category = str(data.get('category') or '').strip().upper()
         method = str(data.get('payment_method') or '').strip().upper()
@@ -757,6 +798,12 @@ def get_sales_history():
     except ValueError:
         offset = 0
     page_size = 30 if not (period or request.args.get('credit_only')) else 50
+    try:
+        asked = int(request.args.get('limit', 0))
+    except ValueError:
+        asked = 0
+    if asked > 0:
+        page_size = min(asked, 200)
     orders = query.offset(offset).limit(page_size + 1).all()
     has_more = len(orders) > page_size
     orders = orders[:page_size]

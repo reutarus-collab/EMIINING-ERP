@@ -43,8 +43,14 @@ def _migrate_location_schema():
             'created_by': 'VARCHAR(50)', 'location_id': 'INTEGER',
             'created_at': 'DATETIME',
         },
-        'goods_receipt_lines': {'qty_rejected_po_uom': 'FLOAT'},
-        'goods_receipt_notes': {'location_id': 'INTEGER'},
+        'goods_receipt_lines': {'qty_rejected_po_uom': 'FLOAT', 'landed_cost_per_kg': 'FLOAT',
+                                'transport_allocated': 'FLOAT DEFAULT 0'},
+        'goods_receipt_notes': {'location_id': 'INTEGER', 'goods_value': 'FLOAT DEFAULT 0',
+                                'transport_amount': 'FLOAT DEFAULT 0', 'transport_payee': 'VARCHAR(100)',
+                                'transport_method': 'VARCHAR(20)', 'transport_supplier_id': 'INTEGER',
+                                'transport_allocation': 'VARCHAR(10)', 'transport_reference': 'VARCHAR(100)'},
+        'purchase_order_lines': {'purchase_uom': 'VARCHAR(20)', 'conversion_type': 'VARCHAR(20)',
+                                 'conversion_factor': 'FLOAT'},
         'location_stocks': {'reserved_quantity_kg': 'FLOAT DEFAULT 0', 'unit_cost_per_kg': 'FLOAT NOT NULL DEFAULT 0'},
         # Existing transfers already changed both outlet balances, so preserve
         # them as completed while new dispatches start in transit.
@@ -133,6 +139,7 @@ def _migrate_location_schema():
                     grn.location_id = int(po.location_id)
                 except (TypeError, ValueError):
                     grn.location_id = migration_location.id
+    _backfill_po_line_uom()
     locations = Location.query.all()
     for user in User.query.filter(User.role.notin_(('admin', 'accountant'))).all():
         if db.session.get(Location, user.location_id):
@@ -196,6 +203,20 @@ def _migrate_location_schema():
         if not Account.query.filter_by(account_code=code).first():
             db.session.add(Account(account_code=code, name=name, category=category))
     db.session.commit()
+def _backfill_po_line_uom():
+    """Old PO lines predate the UOM snapshot. Give them their item's rule as it stands now so GRN has
+    one source of truth. This is a best guess for lines written before the snapshot existed."""
+    from services.models import PurchaseOrderLine, FeedIngredient
+    for line in PurchaseOrderLine.query.filter(PurchaseOrderLine.purchase_uom.is_(None)).all():
+        ing = db.session.get(FeedIngredient, line.ingredient_id)
+        if not ing:
+            continue
+        line.purchase_uom = (ing.purchase_uom or 'KG').upper()
+        line.conversion_type = (ing.conversion_type or 'FIXED').upper()
+        line.conversion_factor = ing.conversion_factor if line.conversion_type == 'FIXED' else None
+    db.session.commit()
+
+
 def seed_data():
     from services.models import Account, Location, Supplier, FeedIngredient
     

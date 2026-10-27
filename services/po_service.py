@@ -3,13 +3,21 @@ import math
 from services.db import db
 from services.models import PurchaseOrderHeader, PurchaseOrderLine, FeedIngredient, Supplier
 from services.inventory import resolve_location
+from services.uom import rule_for_item, price_per_kg, check_price
 
 def create_purchase_order(data):
-    """Stage 1: Commitment (No Stock or GL Impact)"""
+    """Stage 1: Commitment (No Stock or GL Impact).
+
+    qty is a count of the item's purchase unit (BAG/KG/TON) and unit_cost is the price of ONE such unit.
+    The unit and its kg conversion are read from the item master on the server and written onto each PO
+    line, so nothing the browser sends can change what 10 BAG means."""
     if not isinstance(data, dict):
         raise ValueError('Invalid purchase order.')
     location = resolve_location(data.get('location_id'))
-    supplier_id = int(data.get('supplier_id'))
+    try:
+        supplier_id = int(data.get('supplier_id'))
+    except (TypeError, ValueError):
+        raise ValueError('Choose a valid supplier.')
     if not db.session.get(Supplier, supplier_id):
         raise ValueError('Choose a valid supplier.')
     items = data.get('items')
@@ -26,25 +34,34 @@ def create_purchase_order(data):
     db.session.flush()
 
     total = 0.0
+    seen = set()
     for item in items:
-        qty, unit_cost = float(item['qty']), float(item['unit_cost'])
-        ingredient_id = int(item['ingredient_id'])
+        try:
+            qty, unit_cost = float(item['qty']), float(item['unit_cost'])
+            ingredient_id = int(item['ingredient_id'])
+        except (KeyError, TypeError, ValueError):
+            raise ValueError('Every PO line needs an item, a quantity and a unit cost.')
         if not math.isfinite(qty) or not math.isfinite(unit_cost) or qty <= 0 or unit_cost < 0:
             raise ValueError('PO quantities must be above zero and costs must be zero or more.')
-        if not db.session.get(FeedIngredient, ingredient_id):
+        ing = db.session.get(FeedIngredient, ingredient_id)
+        if not ing:
             raise ValueError('A purchase order item no longer exists.')
-        subtotal = qty * unit_cost
+        if ingredient_id in seen:
+            raise ValueError(f'{ing.name} is on this order twice. Combine it into one line.')
+        seen.add(ingredient_id)
+        uom, ctype, factor = rule_for_item(ing)
+        sent = str(item.get('uom') or '').strip().upper()
+        if sent and sent != uom:
+            raise ValueError(f'{ing.name} is now bought per {uom}, but this screen had {sent}. Reload the page and re-enter the line.')
+        if not item.get('price_confirmed'):
+            check_price(ing.name, price_per_kg(factor, unit_cost), ing.cost_per_kg, uom, factor)
+        subtotal = round(qty * unit_cost, 2)
         total += subtotal
-        line = PurchaseOrderLine(
-            po_header_id=po.id,
-            ingredient_id=ingredient_id,
-            qty_ordered=qty,
-            unit_cost=unit_cost,
-            subtotal=subtotal
-        )
-        db.session.add(line)
-    
-    po.total_amount = total
+        db.session.add(PurchaseOrderLine(
+            po_header_id=po.id, ingredient_id=ingredient_id, qty_ordered=qty, unit_cost=unit_cost,
+            subtotal=subtotal, purchase_uom=uom, conversion_type=ctype, conversion_factor=factor))
+
+    po.total_amount = round(total, 2)
     db.session.commit()
     return po.po_number
 

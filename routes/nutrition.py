@@ -24,7 +24,7 @@ def _err(message, status=400, **extra):
 
 
 def _raw_ingredients():
-    return FeedIngredient.query.filter(FeedIngredient.category.ilike('Raw%')).order_by(FeedIngredient.name).all()
+    return FeedIngredient.query.filter(FeedIngredient.category.ilike('Raw%')).order_by(db.func.lower(FeedIngredient.name)).all()
 
 
 def _costs(ids):
@@ -147,6 +147,22 @@ def set_values():
     _apply_values(parsed)
     db.session.commit()
     return jsonify(status='success', saved=len(parsed))
+
+
+# Highest value the Item Master columns accept (matches set_item_nutrients in routes/po.py).
+LEGACY_CAPS = {'CP': 100.0, 'ME': 10.0, 'CF': 100.0, 'CA': 100.0, 'AVP': 100.0, 'LYS_TOT': 100.0, 'MET_TOT': 100.0}
+
+
+def _mirror_to_item_master(writes):
+    """An import writes the nutrient matrix. The Item Master list shows the seven older columns on the item
+    itself, so copy those seven across, or an imported value would exist but never appear there."""
+    for iid, code, value, _src in writes:
+        col = fe.LEGACY.get(code)
+        if not col or value is None or not (0 <= value <= LEGACY_CAPS[code]):
+            continue
+        item = db.session.get(FeedIngredient, iid)
+        if item is not None:
+            setattr(item, col, float(value))
 
 
 def _apply_values(parsed, default_source='entered by hand'):
@@ -497,6 +513,7 @@ def import_ingredients():
             writes += [(iid, c['code'], c['value'], src) for c in cells]
     if commit:
         _apply_values(writes)
+        _mirror_to_item_master(writes)
         db.session.commit()
     return jsonify(status='success', committed=commit, written=len(writes), transposed=flipped, rows=out_rows,
                    columns=[nutrients[c].name for c in colmap.values()], unknown_columns=hints, ignored_columns=ignored,

@@ -183,7 +183,7 @@ class MoneyAndStockReplayTests(Base):
         self.assertEqual(Customer.query.filter_by(name='Fresh Farmer').count(), 1)
         first, second = self.twice('admin', '/api/po', {
             'location_id': self.factory.id, 'supplier_id': self.supplier.id,
-            'items': [{'ingredient_id': self.raw.id, 'qty': 10, 'unit_cost': 2000}]})
+            'items': [{'ingredient_id': self.raw.id, 'qty': 10, 'unit_cost': 40}]})   # KG item, KSh 40 per kg
         self.assertReplayed(first, second)
         self.assertEqual(PurchaseOrderHeader.query.count(), 1)
 

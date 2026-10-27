@@ -82,13 +82,13 @@ input, select, textarea {
 <div class="nav-tabs">
   <button class="tab-btn active" onclick="showTab('pos-tab')">🛒 Point of Sale (POS)</button>
   <button class="tab-btn" onclick="showTab('stock-tab'); loadStock();">📦 Stock</button>
-  <button class="tab-btn" data-roles="admin,accountant,sales,warehouse" onclick="showTab('expenses-tab'); loadExpenses(); if (typeof loadTillMovementHistory === 'function') loadTillMovementHistory();">💸 Expenses</button>
+  <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('expenses-tab'); loadExpenses(); if (typeof loadTillMovementHistory === 'function') loadTillMovementHistory();">💸 Expenses</button>
   <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('report-tab'); loadDailyReport();">📊 Daily Report</button>
   <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('money-tab'); initMoneyReports();">💵 Money & leaks</button>
   <button class="tab-btn" data-roles="admin" onclick="showTab('pricing-tab'); loadPrices();">💰 Retail Pricing</button>
   <button class="tab-btn" data-roles="admin" onclick="showTab('bags-tab'); loadBagPrices();">Bag Prices</button>
   <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('payables-tab'); loadPayables();">Supplier Payables</button>
-  <button class="tab-btn" data-roles="admin" onclick="showTab('customers-tab'); loadCustAdmin();">👥 Customers</button>
+  <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('customers-tab'); loadCustAdmin();">👥 Customers</button>
   <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">📥 Purchase Orders</button>
   <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('sales-tab')">📄 Sales Ledger</button>
   <button class="tab-btn" data-roles="admin,accountant,factory" onclick="showTab('matrix-tab'); labInit();">🧮 Ration Formulation</button>
@@ -106,9 +106,9 @@ input, select, textarea {
 {% include "tabs/payables_tab.html" %}
 
 <!-- ==================== SCRIPTS ==================== -->
-<script src="/static/js/main.js?v=11"></script>
-<script src="/static/js/pos.js?v=20"></script>
-<script src="/static/js/factory.js?v=17"></script>
+<script src="/static/js/main.js?v=12"></script>
+<script src="/static/js/pos.js?v=21"></script>
+<script src="/static/js/factory.js?v=18"></script>
 <script src="/static/js/nutrition.js?v=2"></script>
 <script src="/static/js/reports.js?v=4"></script>
 {% endblock %}

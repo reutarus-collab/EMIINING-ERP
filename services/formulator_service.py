@@ -3,6 +3,7 @@ import math
 import numpy as np
 from scipy.optimize import linprog
 
+from services.db import db
 from services.models import AnimalRequirement, FeedIngredient, LocationStock
 
 
@@ -60,7 +61,7 @@ def solve_feed_formulation(species_stage, target_batch_kg=1000.0,
     query = FeedIngredient.query.filter(FeedIngredient.category.ilike('Raw%'))
     if ingredient_ids:
         query = query.filter(FeedIngredient.id.in_(ingredient_ids))
-    ingredients = query.order_by(FeedIngredient.name).all()
+    ingredients = query.order_by(db.func.lower(FeedIngredient.name)).all()
     if not ingredients:
         return {"status": "error", "message": "No raw ingredients match this formulation."}
 

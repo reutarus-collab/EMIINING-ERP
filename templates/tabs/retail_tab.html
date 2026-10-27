@@ -210,7 +210,7 @@ async function adjustStock() {
     delta_kg:document.getElementById('stock-adjust-qty').value, reason:document.getElementById('stock-adjust-reason').value};
   const r = await fetch('/api/inventory/adjust',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d = await r.json(); if (!r.ok) return alert(d.message || 'Adjustment failed.');
-  document.getElementById('stock-adjust-qty').value=''; document.getElementById('stock-adjust-reason').value=''; await loadStock();
+  document.getElementById('stock-adjust-qty').value=''; document.getElementById('stock-adjust-reason').value=''; await refreshItemViews();
 }
 async function transferStock() {
   const body = {from_location_id:activeLocationId, to_location_id:document.getElementById('transfer-to').value,
@@ -218,7 +218,7 @@ async function transferStock() {
     reason:document.getElementById('transfer-reason').value};
   const r = await fetch('/api/inventory/transfers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d = await r.json(); if (!r.ok) return alert(d.message || 'Transfer failed.');
-  alert(`Transfer ${d.transfer_no} dispatched. The receiving outlet must confirm the goods before its stock increases.`); document.getElementById('transfer-qty').value=''; document.getElementById('transfer-reason').value=''; await loadStock();
+  alert(`Transfer ${d.transfer_no} dispatched. The receiving outlet must confirm the goods before its stock increases.`); document.getElementById('transfer-qty').value=''; document.getElementById('transfer-reason').value=''; await refreshItemViews();
 }
 async function loadExpenses() {
   const body = document.getElementById('expense-body');
@@ -252,15 +252,30 @@ async function createLocation() {
   document.getElementById('new-location-name').value=''; document.getElementById('new-location-code').value='';
   alert('Outlet created. Assign user accounts to its location code before staff can work there.');
 }
+function stockGroup(cat) {
+  const c = String(cat || '').toLowerCase();
+  if (c.includes('additive')) return [3, 'Additives'];
+  if (c.includes('mineral') || c.includes('salt')) return [2, 'Mineral salts'];
+  if (c.includes('finished')) return [0, 'Finished products'];
+  if (c.includes('raw')) return [1, 'Raw materials'];
+  if (c.includes('packag')) return [4, 'Packaging'];
+  return [5, 'Other'];
+}
 function renderStock() {
-  const q = (document.getElementById('stock-filter').value || '').toLowerCase();
-  const rows = stockRows.filter(i => (i.name || '').toLowerCase().includes(q));
+  const words = (document.getElementById('stock-filter').value || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = stockRows.filter(i => words.every(w => ((i.name || '') + ' ' + (i.category || '')).toLowerCase().includes(w)))
+    .map(i => Object.assign({g: stockGroup(i.category)}, i))
+    .sort((a, b) => a.g[0] - b.g[0] || String(a.name).localeCompare(String(b.name), undefined, {sensitivity: 'base'}));
   const showCost = ['admin','accountant','warehouse'].includes(window.currentRole);
   document.querySelectorAll('.stock-cost-col').forEach(el => el.style.display = showCost ? '' : 'none');
-  document.getElementById('stock-body').innerHTML = rows.map(i =>
-    `<tr><td>${retailEsc(i.name)}</td><td>${retailEsc(i.category)}</td><td>${i.stock_kg}</td><td>${i.bag_size_kg}</td><td>${
-      i.priced ? Number(i.retail_price_per_kg).toFixed(2) : '<span style="color:#b00;font-weight:bold">NO PRICE</span>'}</td>${showCost ? `<td>${Number(i.unit_cost_per_kg || 0).toFixed(4)}</td><td>${Number(i.stock_value || 0).toFixed(2)}</td>` : ''}</tr>`
-  ).join('') || `<tr><td colspan="${showCost ? 7 : 5}">No items.</td></tr>`;
+  const cols = showCost ? 7 : 5;
+  let html = '', last = null;
+  rows.forEach(i => {
+    if (i.g[0] !== last) { last = i.g[0]; html += `<tr><td colspan="${cols}" style="background:#eef2f7;font-weight:700">${i.g[1]}</td></tr>`; }
+    html += `<tr><td>${retailEsc(i.name)}</td><td>${retailEsc(i.category)}</td><td>${i.stock_kg}</td><td>${i.bag_size_kg}</td><td>${
+      i.priced ? Number(i.retail_price_per_kg).toFixed(2) : '<span style="color:#b00;font-weight:bold">NO PRICE</span>'}</td>${showCost ? `<td>${Number(i.unit_cost_per_kg || 0).toFixed(4)}</td><td>${Number(i.stock_value || 0).toFixed(2)}</td>` : ''}</tr>`;
+  });
+  document.getElementById('stock-body').innerHTML = html || `<tr><td colspan="${cols}">No items.</td></tr>`;
 }
 async function loadDailyReport() {
   const box = document.getElementById('rep-body');
@@ -277,6 +292,7 @@ async function loadDailyReport() {
     <table class="data-table"><thead><tr><th>Expense category</th><th>KSh</th></tr></thead><tbody>${expenseBreakdown || '<tr><td colspan="2">No expenses today.</td></tr>'}</tbody></table>
     <table class="data-table"><thead><tr><th>Payment method</th><th>KSh</th></tr></thead>
     <tbody>${methods || '<tr><td colspan="2">No payments today.</td></tr>'}</tbody></table>
+    ${(d.auto_closed_tills || []).length ? `<div style="background:#fff3cd;border:1px solid #ffe08a;padding:8px;border-radius:6px;margin:8px 0"><b>Tills closed by the system at closing time (cash never counted):</b><br>${d.auto_closed_tills.map(t => retailEsc(t.cashier) + ' - opened ' + t.opened_at + ', system expected KSh ' + t.expected_cash.toFixed(2)).join('<br>')}</div>` : ''}
     <h4>Till close reconciliation</h4><table class="data-table"><thead><tr><th>Cashier</th><th>Closed</th><th>Opening cash</th><th>Expected</th><th>Counted</th><th>Variance</th></tr></thead>
     <tbody>${tills || '<tr><td colspan="6">No closed tills today.</td></tr>'}</tbody></table>`;
 }
@@ -310,10 +326,15 @@ async function savePrice(id) {
 
 <div id="customers-tab" class="tab-content">
   <div class="card">
-    <h3>Customers and Credit Limits (admin only)</h3>
+    <h3>Customers, Credit Limits and Debt</h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <input type="search" id="cust-search" placeholder="Search customers (name, phone, outlet)..." oninput="renderCustAdmin()" style="flex:1 1 220px;min-width:0" aria-label="Search customers">
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="cust-debt-only" onchange="renderCustAdmin()"> Owing only</label>
+    </div>
+    <div id="cust-debt-total" style="font-weight:600;margin-bottom:6px"></div>
     <p style="font-size:.9rem;color:#666">Customers created at the till start at a limit of 0. Set a limit here to allow credit sales. <b>Delete</b> only works for a customer with no history. For a duplicate with sales or debt, use <b>Merge</b>.</p>
     <table class="data-table">
-      <thead><tr><th>Customer</th><th>Outlet</th><th>Phone</th><th>Debt</th><th>Credit limit</th><th></th></tr></thead>
+      <thead><tr><th>Customer</th><th>Outlet</th><th>Phone</th><th>Debt owed</th><th>Credit limit</th><th></th></tr></thead>
       <tbody id="cust-body"><tr><td colspan="6">Loading...</td></tr></tbody>
     </table>
     <div id="cust-msg" style="margin-top:10px"></div>
@@ -327,21 +348,54 @@ async function loadCustAdmin() {
     const r = await fetch('/api/customers?all=1', {credentials: 'same-origin'});
     const rows = await r.json();
     if (!r.ok || !Array.isArray(rows)) throw new Error((rows && rows.message) || ('HTTP ' + r.status));
-    window.custAdminRows = rows;
-    const inp = 'style="width:100%;padding:6px"';
-    body.innerHTML = rows.map(c =>
-      `<tr><td><input id="cn-${c.id}" value="${retailEsc(c.name)}" ${inp}></td>
-       <td>${retailEsc(c.outlet_name)}</td>
-       <td><input id="cp-${c.id}" value="${retailEsc(c.phone || '')}" ${inp}></td>
-       <td>${Number(c.balance || 0).toFixed(2)}</td>
-       <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px"></td>
-       <td style="white-space:nowrap"><button class="btn-sm btn-primary" onclick="saveCustomer(${c.id})">Save</button>
-         <button class="btn-sm btn-info" onclick="startMergeCustomer(${c.id})">Merge</button>
-         <button class="btn-sm btn-danger" onclick="deleteCustomer(${c.id})">Delete</button></td></tr>`
-    ).join('') || '<tr><td colspan="6">No customers.</td></tr>';
+    window.custAdminRows = rows.slice().sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, {sensitivity: 'base'}));
+    renderCustAdmin();
   } catch (e) {
     body.innerHTML = '<tr><td colspan="6" style="color:#b00">Cannot load customers: ' + retailEsc(e.message) + ' <button class="btn-sm btn-info" onclick="loadCustAdmin()">Retry</button></td></tr>';
   }
+}
+function renderCustAdmin() {
+  const body = document.getElementById('cust-body');
+  const words = (document.getElementById('cust-search').value || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const owingOnly = document.getElementById('cust-debt-only').checked;
+  const all = window.custAdminRows || [];
+  const rows = all.filter(c => (!owingOnly || Number(c.balance || 0) > 0) &&
+    words.every(w => (c.name + ' ' + (c.phone || '') + ' ' + (c.outlet_name || '')).toLowerCase().includes(w)));
+  const owed = all.reduce((t, c) => t + Math.max(0, Number(c.balance || 0)), 0);
+  document.getElementById('cust-debt-total').textContent = 'Total owed by customers: KSh ' + owed.toLocaleString('en-KE', {minimumFractionDigits: 2}) +
+    ' (' + all.filter(c => Number(c.balance || 0) > 0).length + ' customers)';
+  const inp = 'style="width:100%;padding:6px"';
+  const isAdmin = window.currentRole === 'admin';
+  body.innerHTML = rows.map(c =>
+    `<tr><td><input id="cn-${c.id}" value="${retailEsc(c.name)}" ${inp}></td>
+       <td>${retailEsc(c.outlet_name)}</td>
+       <td><input id="cp-${c.id}" value="${retailEsc(c.phone || '')}" ${inp}></td>
+       <td style="${Number(c.balance) > 0 ? 'color:#b00;font-weight:700' : ''}">${Number(c.balance || 0).toFixed(2)}
+         <br><button class="btn-sm btn-info" onclick="showCustDebt(${c.id})">Debt details</button></td>
+       <td><input type="number" min="0" step="0.01" id="cl-${c.id}" value="${Number(c.credit_limit || 0)}" style="width:120px;padding:6px" ${isAdmin ? '' : 'disabled'}></td>
+       <td style="white-space:nowrap"><button class="btn-sm btn-primary" onclick="saveCustomer(${c.id})">Save</button>
+         ${isAdmin ? `<button class="btn-sm btn-info" onclick="startMergeCustomer(${c.id})">Merge</button>
+         <button class="btn-sm btn-danger" onclick="deleteCustomer(${c.id})">Delete</button>` : ''}</td></tr>`
+  ).join('') || '<tr><td colspan="6">No customers match.</td></tr>';
+}
+async function showCustDebt(id) {
+  const r = await fetch('/api/customers/' + id + '/debt', {credentials: 'same-origin'});
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(d.message || 'Could not load debt details.');
+  let ov = document.getElementById('cust-debt-overlay'); if (ov) ov.remove();
+  ov = document.createElement('div'); ov.id = 'cust-debt-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center;padding:8px';
+  const rows = d.entries.map(e => `<tr><td><small>${retailEsc(e.date)}</small></td><td>${retailEsc(e.kind)}</td><td>${retailEsc(e.ref)}</td>
+    <td style="text-align:right;color:${e.amount < 0 ? 'green' : '#b00'}">${e.amount.toFixed(2)}</td><td><small>${retailEsc(e.note)}</small></td></tr>`).join('');
+  ov.innerHTML = `<div style="background:#fff;border-radius:8px;max-width:640px;width:100%;max-height:92vh;overflow:auto;padding:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">${retailEsc(d.name)}</h3><button id="cdo-x" style="min-height:40px">Close</button></div>
+    <p>Owes <b>KSh ${d.balance.toFixed(2)}</b> &middot; limit KSh ${d.credit_limit.toFixed(2)} &middot; available KSh ${d.available_credit.toFixed(2)}${d.last_payment ? ' &middot; last payment ' + retailEsc(d.last_payment) : ' &middot; no repayment yet'}${d.phone ? '<br>Phone ' + retailEsc(d.phone) : ''}</p>
+    <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Ref</th><th>KSh</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No debt history.</td></tr>'}</tbody></table></div>
+    <div style="text-align:right;margin-top:8px"><button id="cdo-x2" style="min-height:40px">Close</button></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  document.getElementById('cdo-x').onclick = close; document.getElementById('cdo-x2').onclick = close;
+  ov.addEventListener('click', e => { if (e.target === ov) close(); });
 }
 async function saveCustomer(id) {
   const msg = document.getElementById('cust-msg');

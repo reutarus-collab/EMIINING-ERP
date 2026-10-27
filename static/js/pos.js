@@ -54,6 +54,12 @@ async function refreshTill() {
   document.getElementById('till-state').textContent = currentTill
     ? `${d.location_name} · Open till #${currentTill.id} · Expected cash KSh ${Number(currentTill.expected_cash).toFixed(2)}`
     : `${d.location_name || 'Outlet'} · Till closed`;
+  const th = d.trading_hours;
+  if (th && th.enforced) {
+    const stateEl = document.getElementById('till-state');
+    stateEl.textContent += ` · Trading hours ${th.text}${th.open_now ? '' : ' (closed now, reopens ' + String(th.open_hour).padStart(2, '0') + ':00)'}`;
+    if (d.auto_closed && !currentTill) stateEl.textContent += ` · Your last till (#${d.auto_closed.id}) was closed by the system at closing time. Expected cash was KSh ${Number(d.auto_closed.expected_cash).toFixed(2)}; report any difference to the owner.`;
+  }
   document.getElementById('till-open-btn').style.display = currentTill ? 'none' : '';
   document.getElementById('till-close-btn').style.display = currentTill ? '' : 'none';
   await loadTillMovementHistory();
@@ -589,6 +595,7 @@ async function recordOldDebt() {
 let salesHistoryByOrder = {};
 let salesFilter = {period: '', creditOnly: false, sort: 'date'};
 let salesOffset = 0;
+let salesLoadTicket = 0;
 const SALES_PERIOD_LABELS = {today:'Today', yesterday:'Yesterday', this_week:'This week', this_month:'This month', this_year:'This year'};
 function setSalesPeriod(k) { salesFilter.period = (salesFilter.period === k) ? '' : k; loadSalesHistory(); }
 function clearSalesPeriod() { salesFilter.period = ''; salesFilter.creditOnly = false; salesFilter.sort = 'date';
@@ -613,15 +620,17 @@ async function loadSalesSummary() {
 async function loadSalesHistory(append) {
   append = append === true;
   if (!append) { salesOffset = 0; loadSalesSummary(); }
-  const q = new URLSearchParams({location_id: activeLocationId});
+  const q = new URLSearchParams({location_id: activeLocationId, limit: '200'});
   if (salesOffset > 0) q.set('offset', salesOffset);
+  const ticket = append ? salesLoadTicket : ++salesLoadTicket;   // a newer filter click cancels an older, slower load
   if (salesFilter.period) q.set('period', salesFilter.period);
   if (salesFilter.creditOnly) q.set('credit_only', '1');
   if (salesFilter.sort === 'credit') q.set('sort', 'credit');
   const label = document.getElementById('sales-filter-label');
-  if (label) label.textContent = 'Showing: ' + (salesFilter.period ? SALES_PERIOD_LABELS[salesFilter.period] : 'latest 30 sales') + (salesFilter.creditOnly ? ' · credit only' : '');
+  if (label) label.textContent = 'Showing: ' + (salesFilter.period ? SALES_PERIOD_LABELS[salesFilter.period] : 'all sales, newest first') + (salesFilter.creditOnly ? ' · credit only' : '');
   const res = await fetch('/api/sales-history?' + q.toString());
   const history = await res.json();
+  if (ticket !== salesLoadTicket) return;
   const tbody = document.getElementById('sales-table-body');
   if(!tbody) return;
   if (!res.ok || !Array.isArray(history)) { tbody.innerHTML = '<tr><td colspan="9" style="color:#b00">Could not load sales.</td></tr>'; return; }
@@ -631,10 +640,12 @@ async function loadSalesHistory(append) {
   Object.assign(salesHistoryByOrder, Object.fromEntries(history.map(s => [s.order_id, s])));
   salesOffset += history.length;
   if (history.length === 0 && !append) { tbody.innerHTML = '<tr><td colspan="9">No sales match this filter.</td></tr>'; return; }
-  history.forEach(s => {
+  const rowsHtml = history.map(s => {
     const refundDetails = (s.refunds || []).map(r => `<small>${escHtml(r.reference)} · ${escHtml(r.payment_method)} KSh ${Number(r.amount).toFixed(2)} · ${escHtml(r.reason)} · ${escHtml(r.created_by)}</small>`).join('<br>');
-    tbody.innerHTML += `<tr><td><small>${escHtml(s.created_at)}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${Number(s.total_amount).toFixed(2)}</b></td><td>KSh ${Number(s.paid_amount).toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+Number(s.credit_amount).toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${(s.payments || []).map(p => `${escHtml(p.method)}: KSh${Number(p.amount).toFixed(2)}`).join(', ') || 'CASH'}</small></td><td>KSh ${Number(s.refunded_amount || 0).toFixed(2)}${refundDetails ? '<br>' + refundDetails : ''}</td><td style="white-space:nowrap"><button class="btn-sm btn-info" onclick="showSaleReceipt(${s.order_id})">Receipt</button> <button class="btn-sm btn-warning" onclick="refundSale(${s.order_id}, ${Number(s.refundable_amount || 0)})" ${Number(s.refundable_amount || 0) <= 0 ? 'disabled' : ''}>Refund</button></td></tr>`;
+    return `<tr><td><small>${escHtml(s.created_at)}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${Number(s.total_amount).toFixed(2)}</b></td><td>KSh ${Number(s.paid_amount).toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+Number(s.credit_amount).toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${(s.payments || []).map(p => `${escHtml(p.method)}: KSh${Number(p.amount).toFixed(2)}`).join(', ') || 'CASH'}</small></td><td>KSh ${Number(s.refunded_amount || 0).toFixed(2)}${refundDetails ? '<br>' + refundDetails : ''}</td><td style="white-space:nowrap"><button class="btn-sm btn-info" onclick="showSaleReceipt(${s.order_id})">Receipt</button> <button class="btn-sm btn-warning" onclick="refundSale(${s.order_id}, ${Number(s.refundable_amount || 0)})" ${Number(s.refundable_amount || 0) <= 0 ? 'disabled' : ''}>Refund</button></td></tr>`;
   });
+  tbody.insertAdjacentHTML('beforeend', rowsHtml.join(''));
+  if (res.headers.get('X-Has-More') === '1' && salesOffset < 20000) return loadSalesHistory(true);
 }
 function saleReceiptHtml(s) {
   const lines = (s.items || []).map(i => `<div class="r-row"><span>${escHtml(i.qty_entered)} ${escHtml(i.unit || '')} x ${escHtml(i.name)}</span><span>KSh ${Number(i.subtotal || 0).toFixed(2)}</span></div>`).join('');

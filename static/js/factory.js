@@ -228,7 +228,7 @@ async function submitProductionBatch() {
             row.querySelector('.prod-actual-input').value = '';
         });
         calculateProductionLoss();
-        await loadFactoryDropdowns();
+        await refreshItemViews();
     } catch (err) {
         message.style.color = 'red';
         message.textContent = err.message || 'System error recording batch.';
@@ -835,7 +835,7 @@ async function recordOwnMilling() {
         msg.textContent = `Milling ${d.run_no} recorded. Loss ${d.loss_kg} kg (${d.loss_pct}%). Electricity KSh ${Number(d.electricity_cost).toFixed(2)}. New cost KSh ${Number(d.output_cost_per_kg).toFixed(2)} per kg.`;
         ['om-input-kg', 'om-output-kg', 'om-notes'].forEach(id => document.getElementById(id).value = '');
         previewOwnMilling();
-        await loadFactoryDropdowns();
+        await refreshItemViews();
     } catch (err) {
         msg.style.color = 'red';
         msg.textContent = err.message || 'Could not record milling.';

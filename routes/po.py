@@ -12,6 +12,9 @@ from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, Fe
 from services.po_service import create_purchase_order, item_usage, purge_empty_stock_rows
 from routes.auth import roles_required, PURCHASING_STAFF
 from services.inventory import resolve_location, location_stock, stock_quantity, change_stock, receive_stock
+from services.uom import (rule_for_item, rule_for_line, normalise_rule, price_per_kg, check_price,
+                          PriceCheckError, VALID_UOMS)
+from services.item_groups import group_for, GROUP_LABEL, GROUP_RANK, CATEGORY_CHOICES, name_order
 
 po_bp = Blueprint('po_bp', __name__)
 
@@ -41,29 +44,88 @@ def create_po():
         data = request.get_json()
         po_number = create_purchase_order(data)
         return jsonify({'status': 'success', 'po_number': po_number})
+    except PriceCheckError as e:
+        db.session.rollback()
+        return jsonify({'status': 'error', 'code': 'PRICE_CHECK', 'message': str(e)}), 400
     except Exception as e:
+        db.session.rollback()
         return error_response(e)
+
+CLOSED_PO_STATUSES = ('FULLY_RECEIVED', 'CLOSED', 'CANCELLED')
+
 
 @po_bp.route('/api/po', methods=['GET'])
 @roles_required(*PURCHASING_STAFF)
 def list_pos():
+    """Expected deliveries only: orders that still have goods to come. Pass history=1 for everything."""
     try:
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return error_response(exc)
-    pos = PurchaseOrderHeader.query.filter_by(location_id=str(location.id)).order_by(PurchaseOrderHeader.order_date.desc()).limit(50).all()
+    query = PurchaseOrderHeader.query.filter_by(location_id=str(location.id))
+    if request.args.get('history') not in ('1', 'true', 'True'):
+        query = query.filter(PurchaseOrderHeader.status.notin_(CLOSED_PO_STATUSES))
+    pos = query.order_by(PurchaseOrderHeader.order_date.desc()).limit(200).all()
+    suppliers = {s.id: s for s in Supplier.query.filter(Supplier.id.in_({p.supplier_id for p in pos} or {0})).all()}
     result = []
     for po in pos:
-        supplier = db.session.get(Supplier, po.supplier_id)
+        supplier = suppliers.get(po.supplier_id)
         result.append({
             'id': po.id,
             'po_number': po.po_number,
+            'supplier_id': po.supplier_id,
             'supplier_name': supplier.name if supplier else 'Unknown',
+            'supplier_phone': (supplier.phone or '') if supplier else '',
             'total_amount': po.total_amount,
             'status': po.status,
             'created_at': po.order_date.strftime('%Y-%m-%d') if po.order_date else ''
         })
     return jsonify(result)
+
+
+def _kenya_phone(raw):
+    """0712 345 678 / +254712345678 / 254712345678 -> 254712345678. Returns '' when it is not a usable number."""
+    digits = ''.join(ch for ch in str(raw or '') if ch.isdigit())
+    if digits.startswith('254') and len(digits) == 12:
+        return digits
+    if digits.startswith('0') and len(digits) == 10:
+        return '254' + digits[1:]
+    if len(digits) == 9 and digits[0] in '17':
+        return '254' + digits
+    return digits if 10 <= len(digits) <= 15 and str(raw or '').strip().startswith('+') else ''
+
+
+@po_bp.route('/api/po/<int:po_id>/message', methods=['GET'])
+@roles_required(*PURCHASING_STAFF)
+def po_message(po_id):
+    """Order text for the supplier, plus ready-made WhatsApp and SMS links."""
+    from urllib.parse import quote
+    try:
+        location = resolve_location(request.args.get('location_id'))
+        po = db.session.get(PurchaseOrderHeader, po_id)
+        if not po or str(po.location_id) != str(location.id):
+            return jsonify(status='error', message='Purchase order not found at this outlet.'), 404
+        supplier = db.session.get(Supplier, po.supplier_id)
+        rows = []
+        for l in PurchaseOrderLine.query.filter_by(po_header_id=po.id).order_by(PurchaseOrderLine.id).all():
+            ing = db.session.get(FeedIngredient, l.ingredient_id)
+            uom = (l.purchase_uom or (ing.purchase_uom if ing else 'KG') or 'KG').upper()
+            outstanding = (l.qty_ordered or 0) - (l.qty_received or 0) - (l.qty_rejected or 0)
+            if outstanding <= 0.0001:
+                continue
+            rows.append(f"- {ing.name if ing else 'Item'}: {outstanding:g} {uom} @ KSh {l.unit_cost:,.2f}/{uom}")
+        lines = [f"Hello {supplier.name if supplier else ''}, purchase order {po.po_number} from Emining Feeds ({location.name}):"]
+        lines += rows or ['(nothing outstanding)']
+        lines.append(f"Total: KSh {po.total_amount:,.2f}")
+        lines.append('Please confirm availability and delivery date. Thank you.')
+        text = '\n'.join(lines)
+        phone = _kenya_phone(supplier.phone if supplier else '')
+        return jsonify(status='success', text=text, phone=phone, supplier=supplier.name if supplier else '',
+                       whatsapp_url=(f"https://wa.me/{phone}?text={quote(text)}" if phone else f"https://wa.me/?text={quote(text)}"),
+                       sms_url=f"sms:{('+' + phone) if phone else ''}?body={quote(text)}")
+    except Exception as e:
+        return error_response(e)
+
 
 @po_bp.route('/api/po/<int:po_id>/lines', methods=['GET'])
 @roles_required(*PURCHASING_STAFF)
@@ -73,27 +135,26 @@ def get_po_lines_by_id(po_id):
         po = db.session.get(PurchaseOrderHeader, po_id)
         if not po or str(po.location_id) != str(location.id):
             return jsonify(status='error', message='Purchase order not found at this outlet.'), 404
-        lines = PurchaseOrderLine.query.filter_by(po_header_id=po_id).all()
+        lines = PurchaseOrderLine.query.filter_by(po_header_id=po_id).order_by(PurchaseOrderLine.id).all()
         out = []
         for l in lines:
-            # Ensure correct import
-            from services.models import FeedIngredient 
             ing = db.session.get(FeedIngredient, l.ingredient_id)
-            
-            received = getattr(l, 'qty_received', 0.0)
-            rejected = getattr(l, 'qty_rejected', 0.0)
-            
+            try:
+                uom, ctype, factor = rule_for_line(l, ing) if ing else ('KG', 'FIXED', 1.0)
+            except ValueError:
+                # a damaged rule must not hide the PO; posting a receipt re-checks it and says what to fix
+                uom, ctype, factor = (l.purchase_uom or 'KG'), (l.conversion_type or 'FIXED'), l.conversion_factor
             out.append({
                 'id': l.id,
                 'item_name': ing.name if ing else 'Unknown',
                 'qty_ordered': l.qty_ordered,
-                'qty_received_so_far': received,
-                'qty_rejected_so_far': rejected,
-                
-                # Send the UOM rules to the GRN screen
-                'purchase_uom': getattr(ing, 'purchase_uom', 'KG') if ing else 'KG',
-                'conversion_type': getattr(ing, 'conversion_type', 'FIXED') if ing else 'FIXED',
-                'conversion_factor': getattr(ing, 'conversion_factor', 1.0) if ing else 1.0
+                'qty_received_so_far': l.qty_received or 0.0,
+                'qty_rejected_so_far': l.qty_rejected or 0.0,
+                'unit_cost': l.unit_cost,                  # price of ONE purchase_uom
+                'purchase_uom': uom,
+                'conversion_type': ctype,
+                'conversion_factor': factor if factor is not None else 1.0,
+                'price_basis': f'KSh per {uom}',
             })
         return jsonify({'id': po_id, 'lines': out})
     except Exception as e:
@@ -107,17 +168,29 @@ def get_po_inventory():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return error_response(exc)
-    items = FeedIngredient.query.all()
+    items = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')
+                                        ).order_by(name_order()).all()
     result = []
     for i in items:
+        group = group_for(i.category)
+        try:
+            _uom, _ctype, _factor = rule_for_item(i)
+            unit_problem = ''
+        except ValueError as exc:
+            _uom, _ctype, _factor, unit_problem = (i.purchase_uom or 'KG'), (i.conversion_type or 'FIXED'), i.conversion_factor, str(exc)
         result.append({
             'id': i.id,
             'name': i.name,
-            'category': getattr(i, 'category', 'Raw Material'),
+            'category': i.category or '',
+            'group': group,
+            'group_label': GROUP_LABEL[group],
             'stock_quantity_kg': stock_quantity(location.id, i.id),
-            'cost_per_kg': getattr(i, 'cost_per_kg', 0.0),
-            'bag_size_kg': getattr(i, 'bag_size_kg', 50.0),
-            'purchase_uom': getattr(i, 'purchase_uom', 'KG'), # NEW: Send UOM to frontend
+            'cost_per_kg': i.cost_per_kg or 0.0,
+            'bag_size_kg': i.bag_size_kg or 50.0,
+            'purchase_uom': _uom,
+            'conversion_type': _ctype,
+            'conversion_factor': _factor if _factor is not None else 0.0,
+            'unit_problem': unit_problem,
             'is_active': i.is_active is not False,
             'crude_protein_pct': i.crude_protein_pct or 0.0,
             'metabolizable_energy_mcal': i.metabolizable_energy_mcal or 0.0,
@@ -126,7 +199,47 @@ def get_po_inventory():
             'lysine_pct': i.lysine_pct or 0.0, 'methionine_pct': i.methionine_pct or 0.0,
             'max_inclusion_pct': 100.0 if i.max_inclusion_pct is None else i.max_inclusion_pct
         })
+    result.sort(key=lambda r: (GROUP_RANK[r['group']], r['name'].lower()))
     return jsonify(result)
+
+
+@po_bp.route('/api/po/inventory/<int:item_id>/uom', methods=['POST'])
+@roles_required('admin', 'accountant', 'factory')
+def set_item_uom(item_id):
+    """Change how an item is bought. Open POs keep the rule they were written with."""
+    data = request.get_json(silent=True) or {}
+    item = db.session.get(FeedIngredient, item_id)
+    if not item:
+        return jsonify(status='error', message='Item not found.'), 404
+    try:
+        uom, ctype, factor = normalise_rule(data.get('purchase_uom'), data.get('conversion_type'),
+                                            data.get('conversion_factor'), item.name)
+        bag = data.get('bag_size_kg')
+        if bag not in (None, ''):
+            bag = float(bag)
+            if not math.isfinite(bag) or bag <= 0 or bag > 1000:
+                raise ValueError('Bag size must be between 0 and 1000 kg.')
+            item.bag_size_kg = bag
+    except (TypeError, ValueError) as exc:
+        return error_response(exc)
+    item.purchase_uom, item.conversion_type, item.conversion_factor = uom, ctype, factor
+    db.session.commit()
+    return jsonify(status='success', purchase_uom=uom, conversion_type=ctype, conversion_factor=factor)
+
+
+@po_bp.route('/api/po/inventory/<int:item_id>/category', methods=['POST'])
+@roles_required('admin', 'accountant', 'factory')
+def set_item_category(item_id):
+    data = request.get_json(silent=True) or {}
+    category = str(data.get('category') or '').strip()
+    if category not in CATEGORY_CHOICES:
+        return jsonify(status='error', message='Choose one of: ' + ', '.join(CATEGORY_CHOICES)), 400
+    item = db.session.get(FeedIngredient, item_id)
+    if not item:
+        return jsonify(status='error', message='Item not found.'), 404
+    item.category = category
+    db.session.commit()
+    return jsonify(status='success', category=category, group=group_for(category))
 
 
 @po_bp.route('/api/po/inventory/<int:item_id>/nutrients', methods=['POST'])
@@ -195,15 +308,17 @@ def add_new_item():
         if existing:
             # safe retry: repeated save returns the same item, no duplicate
             return jsonify({'status': 'success', 'item_id': existing.id, 'duplicate': True})
+        uom, ctype, factor = normalise_rule(data.get('purchase_uom'), data.get('conversion_type'),
+                                            data.get('conversion_factor'), clean_name)
         new_item = FeedIngredient(
             name=clean_name,
             category=clean_cat,
             bag_size_kg=float(data.get('bag_size_kg', 50)),
             cost_per_kg=float(data.get('cost_per_kg', 0.0)),
-            purchase_uom=data.get('purchase_uom', 'KG'),
-            stock_uom=data.get('stock_uom', 'KG'),
-            conversion_type=data.get('conversion_type', 'FIXED'),
-            conversion_factor=float(data.get('conversion_factor', 1.0)) if data.get('conversion_type') == 'FIXED' else None
+            purchase_uom=uom,
+            stock_uom='KG',
+            conversion_type=ctype,
+            conversion_factor=factor
         )
 
         db.session.add(new_item)
@@ -267,6 +382,61 @@ def _grpo_replay(key, request_hash):
         return jsonify(status='error', message='This receipt was already posted with different details. Check the PO history before posting again.'), 409
     return jsonify(dict(existing.response_json or {'status': 'success'}, already_processed=True))
 
+def _parse_transport(data, po):
+    """Optional transport block. Returns None, or a cleaned dict. Transport is never part of the supplier invoice."""
+    t = data.get('transport')
+    if t in (None, '', {}):
+        return None
+    if not isinstance(t, dict):
+        raise ValueError('Invalid transport details.')
+    try:
+        amount = round(float(t.get('amount') or 0), 2)
+    except (TypeError, ValueError):
+        raise ValueError('Enter the transport amount as a number.')
+    if not math.isfinite(amount) or amount < 0:
+        raise ValueError('Transport amount must be zero or more.')
+    if amount == 0:
+        return None
+    payee = str(t.get('payee') or '').strip()
+    reference = str(t.get('reference') or '').strip()
+    if not payee or len(payee) > 100 or len(reference) > 100 or any(ch in payee + reference for ch in '<>'):
+        raise ValueError('Enter who was paid for transport (the driver or transport company).')
+    method = str(t.get('payment_method') or '').strip().upper()
+    if method not in ('CASH', 'MPESA', 'BANK', 'ON_ACCOUNT'):
+        raise ValueError('Choose how transport was paid, or Owed if it is still unpaid.')
+    allocation = str(t.get('allocation') or 'WEIGHT').strip().upper()
+    if allocation not in ('WEIGHT', 'VALUE'):
+        raise ValueError('Spread transport by weight or by value.')
+    transporter_id = None
+    if method == 'ON_ACCOUNT':
+        try:
+            transporter_id = int(t.get('supplier_id'))
+        except (TypeError, ValueError):
+            raise ValueError('Unpaid transport needs the transporter picked from the supplier list, so it can be paid later.')
+        if not db.session.get(Supplier, transporter_id):
+            raise ValueError('Pick a valid transporter.')
+        if transporter_id == po.supplier_id:
+            raise ValueError('Transport must be owed to the transporter, not to the goods supplier. Add the transporter as its own supplier.')
+    return dict(amount=amount, payee=payee, reference=reference, method=method,
+                allocation=allocation, supplier_id=transporter_id)
+
+
+def _allocate_transport(amount, entries, mode):
+    """Spread transport over the accepted lines in cents. Last line takes the rounding remainder."""
+    if not entries:
+        return []
+    basis = [(e['kg'] if mode == 'WEIGHT' else e['subtotal']) for e in entries]
+    total_basis = sum(basis)
+    if total_basis <= 0:
+        basis, total_basis = [1.0] * len(entries), float(len(entries))
+    shares, running = [], 0.0
+    for i, b in enumerate(basis):
+        share = round(amount - running, 2) if i == len(entries) - 1 else round(amount * b / total_basis, 2)
+        shares.append(share)
+        running = round(running + share, 2)
+    return shares
+
+
 @po_bp.route('/api/po/<int:po_id>/grpo', methods=['POST'])
 @roles_required(*PURCHASING_STAFF)
 def receive_grpo_partial(po_id):
@@ -298,91 +468,115 @@ def receive_grpo_partial(po_id):
         # How it was paid only matters when something is accepted. Rejecting a whole delivery needs no payment method.
         if payment_method and payment_method not in ('CASH', 'MPESA', 'BANK', 'ON_ACCOUNT'):
             raise ValueError('Choose how this purchase was paid.')
-            
-        grpo_total_value = 0.0
-        grpo_ref = f"GRPO-{uuid.uuid4().hex[:6].upper()}"
-        grn = GoodsReceiptNote(grn_number=grpo_ref, po_header_id=po.id,
-                               supplier_id=po.supplier_id,
-                               location_id=location.id,
-                               delivery_note=str(data.get('delivery_note') or '')[:100],
-                               vehicle_reg=str(data.get('vehicle_reg') or '')[:20])
-        db.session.add(grn)
-        db.session.flush()
-        all_lines_fully_received = True
+        transport = _parse_transport(data, po)
 
+        # ---- pass 1: check every line against the PO's own unit rule. Nothing is written yet.
+        entries, claimed = [], {}
         for recv_item in data.get('received_items', []):
-            line = db.session.get(PurchaseOrderLine, int(recv_item['line_id']))
+            try:
+                line = db.session.get(PurchaseOrderLine, int(recv_item['line_id']))
+            except (KeyError, TypeError, ValueError):
+                raise ValueError('A receipt line is missing its PO line.')
             if not line or line.po_header_id != po_id:
                 raise ValueError('A receipt line does not belong to this purchase order.')
-                
-            # SEPARATING UOM: How many Bags arrived, vs how many KGs go to stock
-            incoming_po_qty = float(recv_item.get('qty_po_uom', 0.0))
-            rejected_po_qty = float(recv_item.get('qty_rejected_po_uom', 0.0))
-            incoming_kg = float(recv_item.get('qty_kg_accepted', 0.0))
+            try:
+                incoming_po_qty = float(recv_item.get('qty_po_uom', 0.0))
+                rejected_po_qty = float(recv_item.get('qty_rejected_po_uom', 0.0))
+                incoming_kg = float(recv_item.get('qty_kg_accepted', 0.0))
+            except (TypeError, ValueError):
+                raise ValueError('Quantities must be numbers.')
             if not all(math.isfinite(v) and v >= 0 for v in (incoming_po_qty, rejected_po_qty, incoming_kg)):
                 raise ValueError('Quantities must be zero or more.')
             if incoming_po_qty > 0 and incoming_kg <= 0:
                 raise ValueError('Enter the weight in kg for the goods received.')
             if incoming_po_qty <= 0 and incoming_kg > 0:
                 raise ValueError('Accepted stock weight requires an accepted purchase quantity.')
-
-            if incoming_po_qty <= 0 and rejected_po_qty <= 0: 
+            if incoming_po_qty <= 0 and rejected_po_qty <= 0:
                 continue
 
             ing = db.session.get(FeedIngredient, line.ingredient_id)
             if not ing:
                 raise ValueError('The received inventory item no longer exists.')
-            if incoming_po_qty > 0 and (ing.conversion_type or 'FIXED') == 'FIXED':
-                expected_kg = incoming_po_qty * (ing.conversion_factor or 1.0)
-                if abs(incoming_kg - expected_kg) > max(0.05, expected_kg * 0.01):
-                    raise ValueError(f'Entered kg for {ing.name} does not match its fixed UOM conversion ({expected_kg:.2f} kg expected).')
-            ordered = getattr(line, 'qty_ordered', 0.0) or 0.0
-            received = getattr(line, 'qty_received', 0.0) or 0.0
-            rejected = getattr(line, 'qty_rejected', 0.0) or 0.0
-            
-            # Ensure they don't receive more than ordered (including rejects)
-            if (received + rejected + incoming_po_qty + rejected_po_qty) > ordered: 
+            uom, ctype, factor = rule_for_line(line, ing)          # the rule the PO was written with
+            if incoming_po_qty > 0 and ctype == 'FIXED':
+                expected = incoming_po_qty * factor
+                if abs(incoming_kg - expected) > max(0.05, expected * 0.01):
+                    raise ValueError(f'Entered kg for {ing.name} does not match {incoming_po_qty:g} {uom} '
+                                     f'x {factor:g} kg ({expected:.2f} kg expected).')
+            ordered = line.qty_ordered or 0.0
+            claimed[line.id] = claimed.get(line.id, 0.0) + incoming_po_qty + rejected_po_qty
+            if (line.qty_received or 0.0) + (line.qty_rejected or 0.0) + claimed[line.id] > ordered + 1e-6:
                 raise ValueError(f"Exceeds PO limit for {ing.name}")
-
-            new_subtotal = incoming_po_qty * line.unit_cost
-            # A line can be a rejection only (nothing accepted, e.g. wet or mouldy maize turned away). It has no
-            # kilograms to price or stock, so only an accepted quantity creates stock and a cost per kg.
-            if incoming_kg > 0 and incoming_po_qty > 0:
-                stock_row = location_stock(location.id, ing.id, lock=True)
-                implied = new_subtotal / incoming_kg
-                known = stock_row.unit_cost_per_kg or 0.0
+            subtotal = round(incoming_po_qty * line.unit_cost, 2)
+            if incoming_kg > 0:
+                implied = subtotal / incoming_kg                    # goods only, per kg: catches wrong units
+                known = location_stock(location.id, ing.id, lock=True).unit_cost_per_kg or 0.0
                 if known > 0 and not (known / 3.0 <= implied <= known * 3.0):
-                    raise ValueError(f"Cost per kg works out to {implied:.2f} for {ing.name}, far from its current {known:.2f}. Check the quantity received and the unit cost on the PO.")
-                receive_stock(location.id, ing, incoming_kg, implied, 'GRPO_RECEIPT', grpo_ref)
-            
-            # Write back the PO units
-            line.qty_received = received + incoming_po_qty
-            line.qty_rejected = rejected + rejected_po_qty
-            grpo_total_value += new_subtotal
-            
-            # Write the exact KG to the ledger
-            db.session.add(GoodsReceiptLine(grn_id=grn.id, po_line_id=line.id,
-                                            ingredient_id=ing.id, qty_received=incoming_kg,
-                                            qty_accepted=incoming_kg,
-                                            qty_rejected=0.0,
-                                            qty_rejected_po_uom=rejected_po_qty,
-                                            batch_number=str(recv_item.get('batch_number') or '')[:50],
-                                            unit_cost=line.unit_cost))
-            
-            if (line.qty_received + line.qty_rejected) < ordered: 
-                all_lines_fully_received = False
+                    raise ValueError(f"Cost per kg works out to {implied:.2f} for {ing.name}, far from its current {known:.2f}. "
+                                     f"Check the quantity received and the unit cost on the PO.")
+            entries.append(dict(line=line, ing=ing, po_qty=incoming_po_qty, rej=rejected_po_qty, kg=incoming_kg,
+                                subtotal=subtotal, batch=str(recv_item.get('batch_number') or '')[:50]))
+
+        # ---- landed cost: goods value plus its share of transport, per accepted kg
+        accepted = [e for e in entries if e['kg'] > 0]
+        shares = _allocate_transport(transport['amount'], accepted, transport['allocation']) if transport and accepted else []
+        for e, share in zip(accepted, shares):
+            e['transport'] = share
+        for e in entries:
+            e.setdefault('transport', 0.0)
+            e['landed'] = round((e['subtotal'] + e['transport']) / e['kg'], 6) if e['kg'] > 0 else None
+
+        # ---- pass 2: write
+        grpo_ref = f"GRPO-{uuid.uuid4().hex[:6].upper()}"
+        goods_value = round(sum(e['subtotal'] for e in entries), 2)
+        grn = GoodsReceiptNote(grn_number=grpo_ref, po_header_id=po.id, supplier_id=po.supplier_id,
+                               location_id=location.id,
+                               delivery_note=str(data.get('delivery_note') or '')[:100],
+                               vehicle_reg=str(data.get('vehicle_reg') or '')[:20],
+                               goods_value=goods_value)
+        if transport:
+            grn.transport_amount, grn.transport_payee = transport['amount'], transport['payee']
+            grn.transport_method, grn.transport_supplier_id = transport['method'], transport['supplier_id']
+            grn.transport_allocation, grn.transport_reference = transport['allocation'], transport['reference']
+        db.session.add(grn)
+        db.session.flush()
+        for e in entries:
+            line, ing = e['line'], e['ing']
+            if e['kg'] > 0:
+                receive_stock(location.id, ing, e['kg'], e['landed'], 'GRPO_RECEIPT', grpo_ref)
+            line.qty_received = (line.qty_received or 0.0) + e['po_qty']
+            line.qty_rejected = (line.qty_rejected or 0.0) + e['rej']
+            db.session.add(GoodsReceiptLine(grn_id=grn.id, po_line_id=line.id, ingredient_id=ing.id,
+                                            qty_received=e['kg'], qty_accepted=e['kg'], qty_rejected=0.0,
+                                            qty_rejected_po_uom=e['rej'], batch_number=e['batch'],
+                                            unit_cost=line.unit_cost, landed_cost_per_kg=e['landed'],
+                                            transport_allocated=e['transport']))
 
         db.session.flush()
         all_po_lines = PurchaseOrderLine.query.filter_by(po_header_id=po.id).all()
         all_lines_fully_received = all(((l.qty_received or 0.0) + (l.qty_rejected or 0.0)) >= (l.qty_ordered or 0.0) - 0.0001 for l in all_po_lines)
         po.status = 'FULLY_RECEIVED' if all_lines_fully_received else 'PARTIAL_RECEIVED'
-        if grpo_total_value > 0 and payment_method not in ('CASH', 'MPESA', 'BANK', 'ON_ACCOUNT'):
+        if goods_value > 0 and payment_method not in ('CASH', 'MPESA', 'BANK', 'ON_ACCOUNT'):
             raise ValueError('Choose how this purchase was paid.')
-        if grpo_total_value > 0:
+        if goods_value > 0:
             from routes.payables import record_purchase
-            record_purchase(po.supplier_id, po.id, grpo_ref, grpo_total_value, payment_method, g.user.username)
+            record_purchase(po.supplier_id, po.id, grpo_ref, goods_value, payment_method, g.user.username)
+        if transport:
+            from services.ledger_service import post_gl_transaction
+            from services.models import SupplierTxn
+            debit = '1200' if accepted else '5300'                  # no accepted stock to carry it: expense it
+            credit = {'CASH': '1000', 'MPESA': '1010', 'BANK': '1020', 'ON_ACCOUNT': '2000'}[transport['method']]
+            post_gl_transaction(grpo_ref + '-TRN', [(debit, transport['amount'], 0.0), (credit, 0.0, transport['amount'])],
+                                'TRANSPORT', po.id)
+            if transport['method'] == 'ON_ACCOUNT':
+                db.session.add(SupplierTxn(supplier_id=transport['supplier_id'], po_id=po.id, ref=grpo_ref + '-TRN',
+                                           kind='PURCHASE', amount=transport['amount'], method='ON_ACCOUNT',
+                                           note=f"Transport for {po.po_number} ({transport['payee']})"[:200],
+                                           created_by=g.user.username))
 
-        result = {'status': 'success', 'grpo_no': grpo_ref, 'po_status': po.status}
+        result = {'status': 'success', 'grpo_no': grpo_ref, 'po_status': po.status,
+                  'goods_value': goods_value, 'transport': transport['amount'] if transport else 0.0,
+                  'landed_total': round(goods_value + (transport['amount'] if transport else 0.0), 2)}
         # Same transaction as the receipt, stock and GL rows: all commit together or none do.
         db.session.add(IdempotencyKey(key=key, request_hash=request_hash, response_json=result,
                                       created_by=g.user.username, location_id=location.id))
