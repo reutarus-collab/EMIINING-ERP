@@ -12,7 +12,7 @@ from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, Fe
 from services.po_service import create_purchase_order, item_usage, purge_empty_stock_rows
 from routes.auth import roles_required, PURCHASING_STAFF
 from services.inventory import resolve_location, location_stock, stock_quantity, change_stock, receive_stock
-from services.uom import (rule_for_item, rule_for_line, normalise_rule, price_per_kg, check_price,
+from services.uom import (rule_for_item, rule_for_line, receiving_rule, normalise_rule, price_per_kg, check_price,
                           PriceCheckError, VALID_UOMS)
 from services.item_groups import group_for, GROUP_LABEL, GROUP_RANK, CATEGORY_CHOICES, name_order
 
@@ -139,11 +139,8 @@ def get_po_lines_by_id(po_id):
         out = []
         for l in lines:
             ing = db.session.get(FeedIngredient, l.ingredient_id)
-            try:
-                uom, ctype, factor = rule_for_line(l, ing) if ing else ('KG', 'FIXED', 1.0)
-            except ValueError:
-                # a damaged rule must not hide the PO; posting a receipt re-checks it and says what to fix
-                uom, ctype, factor = (l.purchase_uom or 'KG'), (l.conversion_type or 'FIXED'), l.conversion_factor
+            # a damaged rule must not hide or trap the PO: that line is received by weighing the delivery
+            uom, ctype, factor, damaged = receiving_rule(l, ing) if ing else ('KG', 'FIXED', 1.0, False)
             out.append({
                 'id': l.id,
                 'item_name': ing.name if ing else 'Unknown',
@@ -155,6 +152,7 @@ def get_po_lines_by_id(po_id):
                 'conversion_type': ctype,
                 'conversion_factor': factor if factor is not None else 1.0,
                 'price_basis': f'KSh per {uom}',
+                'rule_damaged': damaged,
             })
         return jsonify({'id': po_id, 'lines': out})
     except Exception as e:
@@ -497,7 +495,7 @@ def receive_grpo_partial(po_id):
             ing = db.session.get(FeedIngredient, line.ingredient_id)
             if not ing:
                 raise ValueError('The received inventory item no longer exists.')
-            uom, ctype, factor = rule_for_line(line, ing)          # the rule the PO was written with
+            uom, ctype, factor, _damaged = receiving_rule(line, ing)   # the rule the PO was written with
             if incoming_po_qty > 0 and ctype == 'FIXED':
                 expected = incoming_po_qty * factor
                 if abs(incoming_kg - expected) > max(0.05, expected * 0.01):
@@ -510,10 +508,16 @@ def receive_grpo_partial(po_id):
             subtotal = round(incoming_po_qty * line.unit_cost, 2)
             if incoming_kg > 0:
                 implied = subtotal / incoming_kg                    # goods only, per kg: catches wrong units
-                known = location_stock(location.id, ing.id, lock=True).unit_cost_per_kg or 0.0
-                if known > 0 and not (known / 3.0 <= implied <= known * 3.0):
-                    raise ValueError(f"Cost per kg works out to {implied:.2f} for {ing.name}, far from its current {known:.2f}. "
-                                     f"Check the quantity received and the unit cost on the PO.")
+                stock_row = location_stock(location.id, ing.id, lock=True)
+                known = stock_row.unit_cost_per_kg or 0.0
+                on_hand = stock_row.quantity_kg or 0.0
+                # Only compare against a cost that real stock backs; empty or test stock carries a stale price.
+                if known > 0 and on_hand > 0 and not data.get('accept_cost_change') and not (known / 3.0 <= implied <= known * 3.0):
+                    db.session.rollback()
+                    return jsonify(status='error', code='COST_JUMP',
+                                   message=(f"{ing.name}: this delivery works out to KSh {implied:.2f} per kg "
+                                            f"({subtotal:,.2f} for {incoming_kg:g} kg), far from the KSh {known:.2f} per kg already in stock. "
+                                            f"Check the quantity, the kg and the PO price.")), 409
             entries.append(dict(line=line, ing=ing, po_qty=incoming_po_qty, rej=rejected_po_qty, kg=incoming_kg,
                                 subtotal=subtotal, batch=str(recv_item.get('batch_number') or '')[:50]))
 

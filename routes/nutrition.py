@@ -402,10 +402,12 @@ def _read_rows(file_storage, text):
 
 
 def _num(s):
-    s = str(s).strip().replace('%', '').replace(' ', '')
-    if s == '':
+    s = str(s).strip().replace('%', '').replace(' ', '').replace('\u00a0', '')
+    if s == '' or s.lower() in ('-', '--', '\u2014', 'n/a', 'na', '#n/a', 'nd', 'n.d.', 'null'):
         return None, None
-    if re.fullmatch(r'-?\d+,\d+', s):
+    if re.fullmatch(r'-?\d{1,3}(,\d{3})+(\.\d+)?', s):      # 3,350 or 1,100.5 = thousands separator (Excel display)
+        s = s.replace(',', '')
+    elif re.fullmatch(r'-?\d+,\d+', s):                        # 0,45 = decimal comma
         s = s.replace(',', '.')
     try:
         v = float(s)
@@ -414,6 +416,37 @@ def _num(s):
     if not math.isfinite(v):
         return None, f'"{s}" is not a number'
     return v, None
+
+
+# Column headings used by WUFFDA-style ingredient sheets that the generic name matcher cannot read.
+# Amino acids are read as TOTAL; name a column "SID Lys" to import a SID value instead.
+WUFFDA_HEADERS = {
+    'm e': 'ME_AUTO', 'e e': 'FAT', 'c f': 'CF', 'c18 2': 'LA', 'protein': 'CP', 'dry matter': 'DM',
+    'total phos': 'TP', 'avail phos': 'AVP',
+    'arg': 'ARG_TOT', 'gly': 'GLY_TOT', 'ser': 'SER_TOT', 'gly ser': 'GLYSER_TOT', 'his': 'HIS_TOT', 'ile': 'ILE_TOT',
+    'leu': 'LEU_TOT', 'lys': 'LYS_TOT', 'met': 'MET_TOT', 'cys': 'CYS_TOT', 'tsaa': 'TSAA_TOT', 'phe': 'PHE_TOT',
+    'tyr': 'TYR_TOT', 'taaa': 'TAAA_TOT', 'thr': 'THR_TOT', 'trp': 'TRP_TOT', 'val': 'VAL_TOT',
+}
+SKIP_HEADERS = {'ca p': 'Ca:P is calculated by the Lab, not stored', 'weight': 'Weight', 'min': 'Min', 'max': 'Max'}
+
+
+def _importable_ingredients():
+    """Everything that can go in a formula: raw materials, minerals and additives. Not finished feed, services, packaging."""
+    skip = ('finished', 'service', 'milling', 'packaging')
+    return [i for i in FeedIngredient.query.order_by(FeedIngredient.name).all()
+            if not any((i.category or '').lower().startswith(k) for k in skip)]
+
+
+def _name_column(rows, hdr_i):
+    """Column holding ingredient names: normally 0, but sheets with a number/blank first column keep names in column 1."""
+    body = [r for r in rows[hdr_i + 1:] if r and any(str(c).strip() for c in r)][:25]
+    if not body:
+        return 0
+    def numeric(c):
+        return _num(c)[0] is not None
+    c0 = sum(1 for r in body if r and numeric(r[0]))
+    c1 = sum(1 for r in body if len(r) > 1 and str(r[1]).strip() and not numeric(r[1]))
+    return 1 if (c0 * 2 > len(body) and c1 * 2 > len(body)) else 0
 
 
 def _match_ingredient(label, by_norm, aliases, raw_ids):
@@ -451,19 +484,35 @@ def import_ingredients():
     nutrients = fe.load_nutrients()
     amap = fe.alias_map(nutrients)
     rows, flipped = _transposed_if_needed(rows, amap)
-    hdr_i = next((i for i, r in enumerate(rows[:10]) if sum(1 for c in r[1:] if fe.norm(c) in amap) >= 1), None)
+    for k, code in WUFFDA_HEADERS.items():
+        if code == 'ME_AUTO' or code in nutrients:
+            amap.setdefault(k, code)
+    amap.setdefault('ca p', 'RATIO')
+    hdr_i = next((i for i, r in enumerate(rows[:10]) if sum(1 for c in r[1:] if fe.norm(c) in amap or fe.norm(c) in SKIP_HEADERS) >= 2), None)
     if hdr_i is None:
         return _err('Could not find a header row. Row 1 should have the ingredient column first, then nutrient names such as CP, Ca, SID Lys.')
     header = rows[hdr_i]
-    colmap, unknown, ignored, source_col = {}, [], [], None
+    name_col = _name_column(rows, hdr_i)
+    create_missing = str(form.get('create_missing', '')).lower() in ('1', 'true', 'yes')
+    apply_max = str(form.get('apply_max', '')).lower() in ('1', 'true', 'yes')
+    new_category = str(form.get('new_category') or 'Raw - Other').strip()[:50] or 'Raw - Other'
+    if '<' in new_category or '>' in new_category:
+        return _err('Invalid category.')
+    colmap, unknown, ignored, source_col, max_col, cost_col = {}, [], [], None, None, None
     for j, h in enumerate(header):
-        if j == 0 or not h:
+        if j == name_col or not h:
             continue
         n = fe.norm(h)
         if n in ('source', 'reference', 'notes', 'note'):
             source_col = j if n in ('source', 'reference') else source_col
-        elif n in ('price', 'cost', 'unit', 'units', 'kes', 'ksh'):
+        elif n == 'max':
+            max_col = j
+        elif n in ('cost', 'price'):
+            cost_col = j
+        elif n in ('unit', 'units', 'kes', 'ksh', 'min', 'weight'):
             ignored.append(h)
+        elif n in amap and amap[n] == 'RATIO':
+            ignored.append(h + ' (calculated)')
         elif n in amap:
             colmap[j] = amap[n]
         else:
@@ -472,7 +521,7 @@ def import_ingredients():
              f'A bare amino acid name is never assumed to be SID.' if fe.norm(u) in ('lysine', 'lys', 'methionine', 'met', 'threonine', 'thr',
                                                                                     'tryptophan', 'trp', 'cysteine', 'cystine', 'arginine', 'valine', 'isoleucine')
              else f'"{u}": not matched to a nutrient. Add it under Nutrients first, or rename the column.' for u in unknown]
-    raw_ings = _raw_ingredients()
+    raw_ings = _importable_ingredients()
     by_norm, raw_ids = {fe.norm(i.name): i.id for i in raw_ings}, {i.id for i in raw_ings}
     names = {i.id: i.name for i in raw_ings}
     aliases = {fe.norm(a.alias): a.ingredient_id for a in FormulaAlias.query.all()}
@@ -486,10 +535,12 @@ def import_ingredients():
     out_rows, writes, errors = [], [], 0
     today = datetime.utcnow().strftime('%Y-%m-%d')
     label = (f.filename if f is not None and f.filename else 'pasted from Excel')
+    created = max_updated = 0
     for ridx, r in enumerate(rows[hdr_i + 1:], start=hdr_i + 2):
-        if not r or not str(r[0]).strip():
+        if not r or name_col >= len(r) or not str(r[name_col]).strip():
             continue
-        iid, fuzzy = _match_ingredient(r[0], by_norm, aliases, raw_ids)
+        label_name = str(r[name_col]).strip()
+        iid, fuzzy = _match_ingredient(label_name, by_norm, aliases, raw_ids)
         ov = overrides.get(str(ridx))
         if ov is not None and int(ov) in raw_ids:
             iid, fuzzy = int(ov), False
@@ -497,17 +548,47 @@ def import_ingredients():
         for j, code in colmap.items():
             v, e = _num(r[j]) if j < len(r) else (None, None)
             if e:
-                row_err.append(f'{nutrients[code].name}: {e}')
-            elif v is not None:
-                if v < 0 or v > 1e6:
-                    row_err.append(f'{nutrients[code].name}: {v} is out of range')
-                else:
-                    cells.append(dict(code=code, value=v))
+                row_err.append(f'{nutrients.get(code).name if code in nutrients else code}: {e}')
+                continue
+            if v is None:
+                continue
+            if code == 'ME_AUTO':                          # WUFFDA M.E. is kcal/kg for poultry/pigs; small numbers are Mcal
+                code = 'ME_KCAL' if v > 20 else 'ME'
+                if code not in nutrients:
+                    continue
+            if v < 0 or v > 1e6:
+                row_err.append(f'{nutrients[code].name}: {v} is out of range')
+            else:
+                cells.append(dict(code=code, value=v))
         errors += len(row_err)
-        status = 'ok' if iid and not fuzzy else ('confirm' if iid else 'no_match')
-        out_rows.append(dict(row=ridx, name=r[0], ingredient_id=iid, ingredient=names.get(iid), status=status,
-                             errors=row_err, cells=cells, suggested=fuzzy))
-        if commit and iid and not fuzzy:
+        max_pct = cost = None
+        if max_col is not None and max_col < len(r):
+            mv, _e = _num(r[max_col])
+            if mv is not None and 0 < mv <= 100:
+                max_pct = mv
+        if cost_col is not None and cost_col < len(r):
+            cv, _e = _num(r[cost_col])
+            if cv is not None and cv > 0:
+                cost = cv
+        status = 'ok' if iid and not fuzzy else ('confirm' if iid else ('new' if create_missing else 'no_match'))
+        out_rows.append(dict(row=ridx, name=label_name, ingredient_id=iid, ingredient=names.get(iid), status=status,
+                             errors=row_err, cells=cells, suggested=fuzzy, max_pct=max_pct, cost=cost))
+        if commit and (status in ('ok', 'new')):
+            if status == 'new':
+                item = FeedIngredient(name=label_name[:100], category=new_category, cost_per_kg=cost or 0.0,
+                                      purchase_uom='KG', stock_uom='KG', conversion_type='FIXED', conversion_factor=1.0)
+                db.session.add(item)
+                db.session.flush()
+                iid = item.id
+                names[iid] = item.name
+                by_norm[fe.norm(item.name)] = iid
+                raw_ids.add(iid)
+                created += 1
+            if apply_max and max_pct is not None:
+                ing = db.session.get(FeedIngredient, iid)
+                if ing is not None:
+                    ing.max_inclusion_pct = max_pct
+                    max_updated += 1
             src = (str(r[source_col]).strip() if source_col is not None and source_col < len(r) and str(r[source_col]).strip()
                    else f'import {label} {today}')
             writes += [(iid, c['code'], c['value'], src) for c in cells]
@@ -516,8 +597,10 @@ def import_ingredients():
         _mirror_to_item_master(writes)
         db.session.commit()
     return jsonify(status='success', committed=commit, written=len(writes), transposed=flipped, rows=out_rows,
-                   columns=[nutrients[c].name for c in colmap.values()], unknown_columns=hints, ignored_columns=ignored,
-                   skipped_rows=[r['row'] for r in out_rows if r['status'] != 'ok'], error_count=errors,
+                   created=created, max_updated=max_updated,
+                   columns=sorted({nutrients[c].name if c in nutrients else ('ME' if c == 'ME_AUTO' else c) for c in colmap.values()}),
+                   unknown_columns=hints, ignored_columns=ignored,
+                   skipped_rows=[r['row'] for r in out_rows if r['status'] not in ('ok', 'new')], error_count=errors,
                    note='Blank cells are left alone: they never overwrite a value and are never treated as zero.')
 
 

@@ -28,6 +28,7 @@
 
     <!-- Expected deliveries: orders that still have goods to come. Received/closed orders are not listed. -->
     <div class="card">
+        <label style="display:inline-block; margin-bottom:10px; cursor:pointer;"><input type="checkbox" id="po-show-history" onchange="po_loadHistory()"> Show PO history (received &amp; cancelled orders)</label>
         <table class="data-table">
             <thead>
                 <tr>
@@ -56,10 +57,18 @@
     <div class="card">
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
             <input type="search" id="item-master-search" placeholder="Search items..." oninput="po_renderItemMaster()" style="flex:1 1 220px; min-width:0;" aria-label="Search items">
+            <button type="button" class="btn-sm" onclick="po_imExpandAll(true)">Expand all</button>
+            <button type="button" class="btn-sm" onclick="po_imExpandAll(false)">Collapse all</button>
             <button type="button" class="btn-sm" data-roles="admin,factory" onclick="po_toggleImportPanel()">Import nutrients from Excel</button>
         </div>
         <div id="nutrient-import-panel" data-roles="admin,factory" style="display:none; background:#f8f9fa; padding:12px; border-radius:6px; margin-bottom:12px;">
             <p class="po-hint" style="margin-top:0">Excel (.xlsx), CSV, or pasted cells. Row 1: ingredient name first, then nutrient names such as CP, ME, CF, Ca, Lys. Blank cells never overwrite a saved value and are never treated as zero.</p>
+            <p class="po-hint">WUFFDA sheets are read as they are: Cost, Min., Max., Weight, Dry Matter, M.E., Protein, E.E., C18:2, C.F, Calcium, Total/Avail. Phos., amino acids (read as <b>total</b>), Choline, Folate, Biotin, or NEL, RDP, RUP, NDF, ADF for dairy. M.E. above 20 is kcal/kg. Blank, "-" and "#N/A" cells are skipped.</p>
+            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+                <label><input type="checkbox" id="nut-import-create" checked> Create ingredients not in the system</label>
+                <label>as <select id="nut-import-cat"><option>Raw - Energy</option><option>Raw - Protein</option><option>Raw - Mineral</option><option>Raw - Additive</option><option selected>Raw - Other</option></select></label>
+                <label><input type="checkbox" id="nut-import-max" checked> Use Max. column as max inclusion %</label>
+            </div>
             <input type="file" id="nut-import-file" accept=".xlsx,.csv,.tsv,.txt">
             <textarea id="nut-import-text" placeholder="...or paste cells copied from Excel" style="width:100%; height:70px; margin-top:8px;"></textarea>
             <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
@@ -492,6 +501,10 @@
         b.setAttribute('aria-expanded', String(po_itemMasterOpen));
     }
 
+    let po_imOpen = new Set();      // groups the person has opened; everything starts collapsed
+    function po_imToggle(g) { if (po_imOpen.has(g)) po_imOpen.delete(g); else po_imOpen.add(g); po_renderItemMaster(); }
+    function po_imExpandAll(open) { po_imOpen = open ? new Set(po_inventoryList.map(i => i.group)) : new Set(); po_renderItemMaster(); }
+
     function po_renderItemMaster() {
         const tbody = po_el('item-master-body');
         if (!tbody) return;
@@ -506,10 +519,12 @@
         const cats = ['Finished Feed', 'Raw - Energy', 'Raw - Protein', 'Raw - Mineral', 'Raw - Additive', 'Packaging'];
         let html = '', lastGroup = null;
         rows.forEach(i => {
+            const open = words.length > 0 || po_imOpen.has(i.group);     // a search opens every group that has a match
             if (i.group !== lastGroup) {
                 lastGroup = i.group;
-                html += `<tr class="po-group-row"><td colspan="9">${escHtml(i.group_label)} (${rows.filter(r => r.group === i.group).length})</td></tr>`;
+                html += `<tr class="po-group-row" style="cursor:pointer" data-g="${escHtml(i.group)}" onclick="po_imToggle(this.dataset.g)"><td colspan="9">${open ? '&#9660;' : '&#9654;'} ${escHtml(i.group_label)} (${rows.filter(r => r.group === i.group).length})</td></tr>`;
             }
+            if (!open) return;
             const stockColor = i.stock_quantity_kg > 0 ? 'green' : 'red';
             const isRaw = (i.category || '').toLowerCase().includes('raw');
             const catOptions = (cats.includes(i.category) ? cats : [i.category || '(none)'].concat(cats));
@@ -580,7 +595,8 @@
     async function po_loadHistory() {
         const seq = ++po_histSeq;
         try {
-            const res = await fetch('/api/po?location_id=' + encodeURIComponent(po_locId()));
+            const showHist = !!po_el('po-show-history')?.checked;
+            const res = await fetch('/api/po?location_id=' + encodeURIComponent(po_locId()) + (showHist ? '&history=1' : ''));
             if (res.status === 401) return;   // session-expired banner is shown globally
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
@@ -589,13 +605,14 @@
             const tbody = po_el('po-list-body');
             if (!tbody) return;
             if (!po_orderHistory.length) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No deliveries expected. Create a purchase order to start one.</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">' + (showHist ? 'No purchase orders yet.' : 'No deliveries expected. Create a purchase order, or tick "Show PO history" to see received orders.') + '</td></tr>';
                 return;
             }
-            const labels = {APPROVED: 'Awaiting delivery', DRAFT: 'Draft', PARTIAL_RECEIVED: 'Part delivered', PARTIALLY_RECEIVED: 'Part delivered', ISSUED: 'Awaiting delivery'};
+            const labels = {APPROVED: 'Awaiting delivery', DRAFT: 'Draft', PARTIAL_RECEIVED: 'Part delivered', PARTIALLY_RECEIVED: 'Part delivered', ISSUED: 'Awaiting delivery', FULLY_RECEIVED: 'Received', CLOSED: 'Closed', CANCELLED: 'Cancelled'};
             tbody.innerHTML = po_orderHistory.map(po => {
                 const st = (po.status || 'ISSUED').toUpperCase();
-                const color = st.startsWith('PARTIAL') ? 'orange' : 'blue';
+                const color = st.startsWith('PARTIAL') ? 'orange' : (['FULLY_RECEIVED', 'CLOSED'].includes(st) ? 'green' : (st === 'CANCELLED' ? 'gray' : 'blue'));
+                const open = !['FULLY_RECEIVED', 'CLOSED', 'CANCELLED'].includes(st);
                 return `<tr>
                     <td><b>${escHtml(po.po_number)}</b></td>
                     <td>${escHtml(po.created_at)}</td>
@@ -604,8 +621,8 @@
                     <td><span style="font-weight:bold; color:${color};">${escHtml(labels[st] || st)}</span></td>
                     <td style="white-space:nowrap">
                         <button type="button" class="btn-sm btn-info" onclick="viewPO(${po.id})">View</button>
-                        <button type="button" class="btn-sm btn-primary" onclick="po_openSend(${po.id})">Send</button>
-                        <button type="button" class="btn-sm btn-success" onclick="openReceiveGRN(${po.id})">Receive GRN</button>
+                        ${open ? `<button type="button" class="btn-sm btn-primary" onclick="po_openSend(${po.id})">Send</button>
+                        <button type="button" class="btn-sm btn-success" onclick="openReceiveGRN(${po.id})">Receive GRN</button>` : ''}
                     </td></tr>`;
             }).join('');
         } catch (e) {
@@ -678,6 +695,7 @@
             if (!res.ok) throw new Error(poData.message || 'load failed');
             po_activeReceiving = Object.assign({supplier_id: po.supplier_id}, poData);
             po_grnKey = po_newKey();
+            po_grnAcceptCost = false;
             po_el('grn-po-number').innerText = po.po_number;
             const tbody = po_el('grn-lines-body');
             tbody.innerHTML = '';
@@ -686,7 +704,7 @@
                 if (remaining <= 0) return;
                 const uom = escHtml(line.purchase_uom), variable = line.conversion_type === 'VARIABLE';
                 const kgInputHtml = variable
-                    ? `<input type="number" class="grn-stock-kg" min="0" step="any" placeholder="Weighbridge KG" oninput="po_updateGrnTotals()" style="width:110px; border:2px solid orange; padding:5px;">`
+                    ? `<input type="number" class="grn-stock-kg" min="0" step="any" placeholder="Total kg" oninput="po_updateGrnTotals()" style="width:110px; border:2px solid orange; padding:5px;"><br><small style="color:#a60;">Total kg on the scale for ALL accepted ${uom}s${line.rule_damaged ? '. This order line has no kg per ' + uom + ' saved, so it is received by weight.' : ''}</small>`
                     : `<input type="number" class="grn-stock-kg" placeholder="Auto KG" style="width:110px; background:#e9ecef; padding:5px;" readonly>`;
                 tbody.insertAdjacentHTML('beforeend', `
                     <tr data-polineid="${line.id}" data-ordered="${remaining}" data-ctype="${escHtml(line.conversion_type)}" data-cfact="${line.conversion_factor}" data-unitcost="${line.unit_cost}">
@@ -836,6 +854,7 @@
         });
     }
 
+    let po_grnAcceptCost = false;     // set only after the person confirms an unusual cost per kg
     async function submitGRN() {
         const rows = po_el('grn-lines-body').children;
         let receiptLines = [];
@@ -854,7 +873,7 @@
             }
         }
         if (!receiptLines.length) return alert("Please enter a receive quantity.");
-        const body = {received_items: receiptLines, payment_method: po_el('grn-payment-method').value,
+        const body = {received_items: receiptLines, accept_cost_change: po_grnAcceptCost, payment_method: po_el('grn-payment-method').value,
                       delivery_note: po_el('grn-delivery-note').value, vehicle_reg: po_el('grn-vehicle-reg').value};
         const trAmount = parseFloat(po_el('grn-tr-amount').value) || 0;
         if (trAmount > 0) {
@@ -874,7 +893,15 @@
             });
             if (res.status === 401) return alert("Your session expired, so this GRN was NOT posted. Log in again, open the PO, and post it again.");
             const data = await res.json().catch(() => ({}));
+            if (data.code === 'COST_JUMP') {
+                if (confirm(data.message + "\n\nPost it anyway? Press OK only if the quantity, the kg and the price are all correct.")) {
+                    po_grnAcceptCost = true; po_grnPosting = false;
+                    return submitGRN();
+                }
+                return;
+            }
             if (!res.ok || data.status === 'error') throw new Error(data.message || `HTTP ${res.status}`);
+            po_grnAcceptCost = false;
             alert(data.already_processed ? `GRN was already posted - nothing was added twice.` : `GRN posted. Goods ${po_money(data.goods_value)}${data.transport ? ' + transport ' + po_money(data.transport) : ''}.`);
             po_grnKey = null;
             po_el('receive-grn-modal').style.display = 'none';
@@ -932,9 +959,10 @@
         if (file) {
             const fd = new FormData();
             fd.append('file', file); fd.append('commit', commit ? 'true' : 'false'); fd.append('overrides', JSON.stringify(po_impOverrides));
+            fd.append('create_missing', po_el('nut-import-create').checked ? 'true' : 'false'); fd.append('apply_max', po_el('nut-import-max').checked ? 'true' : 'false'); fd.append('new_category', po_el('nut-import-cat').value);
             init = {method: 'POST', body: fd, credentials: 'same-origin'};
         } else {
-            init = {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: text, commit: commit, overrides: po_impOverrides})};
+            init = {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: text, commit: commit, overrides: po_impOverrides, create_missing: po_el('nut-import-create').checked ? 'true' : 'false', apply_max: po_el('nut-import-max').checked ? 'true' : 'false', new_category: po_el('nut-import-cat').value})};
         }
         out.textContent = commit ? 'Importing...' : 'Reading...';
         try {
@@ -943,16 +971,16 @@
             if (!res.ok) { out.innerHTML = `<span class="po-warn">${escHtml(d.message || (res.status === 403 ? 'Only admin or factory users can import nutrients.' : 'Import failed.'))}</span>`; return; }
             const opts = po_inventoryList.filter(i => (i.category || '').toLowerCase().includes('raw')).map(i => `<option value="${i.id}">${escHtml(i.name)}</option>`).join('');
             const rows = d.rows.map(x => {
-                let who = x.ingredient ? escHtml(x.ingredient) : '<span class="po-warn">no match</span>';
-                if (x.status !== 'ok') who += ` <select onchange="po_impOverrides['${x.row}']=this.value"><option value="">pick...</option>${opts}</select>`;
+                let who = x.ingredient ? escHtml(x.ingredient) : (x.status === 'new' ? '<b>will be created</b>' : '<span class="po-warn">no match</span>');
+                if (x.status !== 'ok' && x.status !== 'new') who += ` <select onchange="po_impOverrides['${x.row}']=this.value"><option value="">pick...</option>${opts}</select>`;
                 return `<tr><td>${escHtml(x.name)}</td><td>${who}</td><td>${x.cells.length} value(s)</td><td class="po-warn">${escHtml(x.errors.join('; '))}</td></tr>`;
             }).join('');
             const skipped = d.skipped_rows.length;
-            out.innerHTML = (commit ? `<div style="color:green;font-weight:600">Imported ${d.written} value(s).${skipped ? ' ' + skipped + ' row(s) were skipped: pick the ingredient in the list and import again.' : ''}</div>` : '') +
+            out.innerHTML = (commit ? `<div style="color:green;font-weight:600">Imported ${d.written} value(s).${d.created ? ' Created ' + d.created + ' new ingredient(s).' : ''}${d.max_updated ? ' Set max inclusion on ' + d.max_updated + '.' : ''}${skipped ? ' ' + skipped + ' row(s) were skipped: pick the ingredient in the list and import again.' : ''}</div>` : '') +
                 `<div class="po-hint">Columns read: ${escHtml(d.columns.join(', ') || 'none')}${d.ignored_columns.length ? ' · Ignored: ' + escHtml(d.ignored_columns.join(', ')) : ''}</div>` +
                 (d.unknown_columns || []).map(u => `<div class="po-warn">${escHtml(u)}</div>`).join('') +
                 `<div style="overflow-x:auto"><table class="data-table"><tr><th>Sheet row</th><th>Ingredient</th><th>Values</th><th>Problems</th></tr>${rows}</table></div><div class="po-hint">${escHtml(d.note)}</div>`;
-            po_el('nut-import-commit').disabled = commit || !d.rows.some(r => r.status === 'ok' || po_impOverrides[r.row]);
+            po_el('nut-import-commit').disabled = commit || !d.rows.some(r => r.status === 'ok' || r.status === 'new' || po_impOverrides[r.row]);
             if (commit) { po_impOverrides = {}; po_el('nut-import-commit').disabled = true; await refreshItemViews(); }
         } catch (e) { out.innerHTML = '<span class="po-warn">No connection. Try again.</span>'; }
     }

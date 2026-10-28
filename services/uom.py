@@ -66,3 +66,15 @@ def check_price(item_name, per_kg, known, uom, factor):
             f'{item_name}: KSh {per_kg:.2f} per kg is far from its current cost of KSh {known:.2f} per kg. '
             f'The price must be per {uom}' + (f' ({factor:g} kg)' if factor and uom != 'KG' else '') +
             ', and the quantity a count of ' + uom + 's. Check both before continuing.')
+
+
+def receiving_rule(line, ing):
+    """Rule used when goods ARRIVE. A line saved with a broken rule (a BAG with no kg per bag) cannot be repaired
+    by fixing the item, because the PO line keeps its own copy. Rather than leave the order stuck, such a line is
+    received by weighing the delivery. Returns (uom, ctype, factor, damaged)."""
+    try:
+        uom, ctype, factor = rule_for_line(line, ing)
+        return uom, ctype, factor, False
+    except ValueError:
+        uom = str((line.purchase_uom or (ing.purchase_uom if ing else 'KG')) or 'KG').strip().upper() or 'KG'
+        return uom, 'VARIABLE', None, True

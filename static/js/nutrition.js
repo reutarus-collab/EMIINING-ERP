@@ -438,15 +438,15 @@ function labImportBody(textId, fileId, commit, extra) {
 async function labImport(commit) {
   const out = $l('lab-imp-out');
   if (!$l('lab-imp-file').files[0] && !$l('lab-imp-text').value.trim()) { out.innerHTML = '<span class="lab-fail">Paste cells from Excel or choose a file first.</span>'; return; }
-  const r = await labApi('/api/nutrition/import/ingredients', labImportBody('lab-imp-text', 'lab-imp-file', commit, { overrides: LAB.overrides }));
+  const r = await labApi('/api/nutrition/import/ingredients', labImportBody('lab-imp-text', 'lab-imp-file', commit, { overrides: LAB.overrides, create_missing: $l('lab-imp-create').checked ? 'true' : 'false', apply_max: $l('lab-imp-max').checked ? 'true' : 'false', new_category: $l('lab-imp-cat').value }));
   if (!r.ok) { out.innerHTML = `<span class="lab-fail">${labEsc(r.d.message || 'Import failed.')}</span>`; return; }
   const d = r.d; const opts = LAB.ings.map(i => `<option value="${i.id}">${labEsc(i.name)}</option>`).join('');
   const rows = d.rows.map(x => {
-    let who = x.ingredient ? labEsc(x.ingredient) : '<span class="lab-fail">no match</span>';
-    if (x.status !== 'ok') who += ` <select onchange="LAB.overrides['${x.row}']=this.value"><option value="">pick...</option>${opts}</select>`;
+    let who = x.ingredient ? labEsc(x.ingredient) : (x.status === 'new' ? '<b>will be created</b>' : '<span class="lab-fail">no match</span>');
+    if (x.status !== 'ok' && x.status !== 'new') who += ` <select onchange="LAB.overrides['${x.row}']=this.value"><option value="">pick...</option>${opts}</select>`;
     return `<tr><td>${labEsc(x.name)}</td><td>${who}</td><td>${x.cells.length} value(s)</td><td class="lab-fail">${labEsc(x.errors.join('; '))}</td></tr>`;
   }).join('');
-  out.innerHTML = (commit ? `<div class="lab-banner pass">Imported ${d.written} value(s).${d.skipped_rows.length ? ' ' + d.skipped_rows.length + ' row(s) skipped: pick the ingredient in the list and import again.' : ''}</div>` : '') +
+  out.innerHTML = (commit ? `<div class="lab-banner pass">Imported ${d.written} value(s).${d.created ? ' Created ' + d.created + ' new ingredient(s).' : ''}${d.max_updated ? ' Set max inclusion on ' + d.max_updated + '.' : ''}${d.skipped_rows.length ? ' ' + d.skipped_rows.length + ' row(s) skipped: pick the ingredient in the list and import again.' : ''}</div>` : '') +
     (d.transposed ? '<div class="lab-small">Your sheet had nutrients down the side, so it was flipped.</div>' : '') +
     `<div class="lab-small">Columns read: ${labEsc(d.columns.join(', ') || 'none')}${d.ignored_columns.length ? ' &nbsp; Ignored: ' + labEsc(d.ignored_columns.join(', ')) : ''}</div>` +
     labList(d.unknown_columns, 'lab-warn') +
