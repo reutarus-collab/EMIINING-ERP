@@ -112,6 +112,12 @@
       <p class="lab-small">First column = ingredient name, other columns = nutrient names (CP, Ca, SID Lys...). Sheets with nutrients down the side are flipped automatically. A bare "Lysine" column is <b>never</b> assumed to be SID.</p>
       <textarea class="lab-paste" id="lab-imp-text" placeholder="Paste here"></textarea>
       <div style="margin:6px 0">or file: <input type="file" id="lab-imp-file" accept=".xlsx,.csv,.tsv,.txt"></div>
+      <p class="lab-small">WUFFDA sheets (Cost, Min., Max., Weight, Dry Matter, M.E., Protein, E.E., C18:2, C.F, Calcium, Total/Avail. Phos., amino acids ARG...VAL, Biotin; or NEL, RDP, RUP, NDF, ADF for dairy) are read as they are. Amino acids are read as <b>total</b>. M.E. above 20 is taken as kcal/kg. Blank, "-" and "#N/A" cells are skipped.</p>
+      <div style="margin:6px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+        <label><input type="checkbox" id="lab-imp-create" checked> Create ingredients that are not in the system</label>
+        <label>as <select id="lab-imp-cat"><option value="Raw - Energy">Raw - Energy</option><option value="Raw - Protein">Raw - Protein</option><option value="Raw - Mineral" >Raw - Mineral/Additive</option><option value="Raw - Other" selected>Raw - Other</option></select></label>
+        <label><input type="checkbox" id="lab-imp-max" checked> Use Max. column as max inclusion %</label>
+      </div>
       <button class="btn-sm btn-primary" onclick="labImport(false)">Preview</button>
       <button class="btn-sm btn-success" onclick="labImport(true)">Import</button>
       <div id="lab-imp-out" style="margin-top:8px"></div>
