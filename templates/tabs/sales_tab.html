@@ -4,7 +4,23 @@
       <h3 style="margin:0;">📄 Historical Sales Ledger</h3>
       <button class="btn-primary" onclick="loadSalesHistory()" style="padding: 6px 12px;">Refresh List</button>
     </div>
+    <details style="margin:10px 0"><summary style="cursor:pointer;font-weight:600;min-height:40px">Verify a receipt a customer shows you</summary>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <input id="verify-ref" placeholder="Receipt no. e.g. RET01-000123" style="flex:2 1 200px;min-height:44px" autocapitalize="characters">
+        <input id="verify-code" placeholder="Check code" maxlength="6" style="flex:1 1 100px;min-height:44px" autocapitalize="characters">
+        <button type="button" class="btn-primary" style="min-height:44px" onclick="verifyReceipt()">Verify</button>
+      </div><div id="verify-out" style="margin-top:8px"></div></details>
     <div id="sales-summary" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0"></div>
+    <div style="margin:6px 0 14px;border:1px solid #dee2e6;border-radius:8px;padding:10px">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between">
+        <b>Top products</b>
+        <select id="top-period" onchange="loadTopProducts()" aria-label="Top products period" style="min-height:40px">
+          <option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_week">This week</option>
+          <option value="this_month" selected>This month</option><option value="this_year">This year</option>
+        </select>
+      </div>
+      <div id="top-products" style="overflow-x:auto;margin-top:8px">Loading...</div>
+    </div>
     <div id="sales-filter-bar" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px">
       <span id="sales-filter-label" style="font-weight:600">Showing: latest 30 sales</span>
       <select id="sales-sort" onchange="setSalesSort(this.value)" aria-label="Sort sales" style="min-height:40px">

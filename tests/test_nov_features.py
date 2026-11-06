@@ -150,6 +150,8 @@ class TradingHoursTests(Base):
     def test_open_staff_till_is_closed_by_the_system_after_9pm_without_inventing_a_count(self):
         self.at(15)
         self.assertEqual(self.client.post('/api/till/open', json={'location_id': self.factory.id, 'opening_cash': 500}).status_code, 200)
+        TillSession.query.update({'opened_at': datetime(2026, 10, 26, 15, 0) - timedelta(hours=3)})   # opened 15:00 Nairobi
+        db.session.commit()
         self.at(21, 30)
         r = self.client.get(f'/api/till/current?location_id={self.factory.id}')
         self.assertIsNone(r.json['session'])

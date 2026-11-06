@@ -68,6 +68,7 @@ async function labLoadProfile(id) {
   const r = await labApi('/api/nutrition/profiles/' + id);
   if (!r.ok) { alert(r.d.message || 'Could not load that profile.'); LAB.lines = []; return; }
   LAB.profileMeta = r.d;
+  LAB.profileMeta.bounds = r.d.bounds || [];
   LAB.lines = r.d.lines.map(l => Object.assign({}, l));
   labProfileNote();
 }
@@ -81,12 +82,18 @@ function labLineLabel(l) {
   const n = LAB.nut[l.code] || { name: l.code, basis: 'asfed' }; const d = LAB.nut[l.per];
   if (l.per === 'asfed') return n.name;
   if (l.per === 'dm') return n.basis === 'dm' ? n.name : n.name + ' (per kg DM)';
+  if (labIsGPerMcal(l, n, d)) return n.name + ' (g/Mcal ' + (d ? d.name : l.per) + ')';
   return Number(l.scale) === 100 ? n.name + ' as % of ' + (d ? d.name : l.per) : n.name + ' : ' + (d ? d.name : l.per);
+}
+function labIsGPerMcal(l, n = LAB.nut[l.code], d = LAB.nut[l.per]) {
+  if (!n || !d || !String(l.code).startsWith('SID_') || n.unit !== '%') return false;
+  return (d.unit === 'Mcal/kg' && Number(l.scale) === 10) || (d.unit === 'kcal/kg' && Number(l.scale) === 10000);
 }
 function labLineUnit(l) {
   const n = LAB.nut[l.code] || { unit: '', basis: 'asfed' }; const d = LAB.nut[l.per];
   if (l.per === 'asfed') return n.unit;
   if (l.per === 'dm') return n.basis === 'dm' ? n.unit : n.unit + ' of DM';
+  if (labIsGPerMcal(l, n, d)) return 'g/Mcal';
   return Number(l.scale) === 100 ? '% of ' + (d ? d.name : l.per) : 'ratio';
 }
 
@@ -103,7 +110,32 @@ function labSetMode(m) {
   labRenderAll();
   if (m !== 'optimize' && LAB.rows.some(r => labNum(r.pct) > 0)) labVerifySoon(0);
 }
-function labRenderAll() { labRenderRows(); labRenderConstraints(); labRenderActions(); labRenderResult(); labProfileNote(); }
+function labRenderAll() { labRenderRows(); labRenderConstraints(); labRenderBounds(); labRenderActions(); labRenderResult(); labProfileNote(); }
+
+function labRenderBounds() {
+  const t = $l('lab-profile-bounds'); if (!t) return;
+  const bounds = (LAB.profileMeta && LAB.profileMeta.bounds) || [];
+  const options = LAB.ings.map(i => `<option value="${i.id}">${labEsc(i.name)}</option>`).join('');
+  t.innerHTML = '<tr><th>Ingredient</th><th>Min %</th><th>Max %</th><th>Source</th><th></th></tr>' +
+    bounds.map((b, i) => `<tr><td><select onchange="labBoundEdit(${i},'ingredient_id',this.value)">${options.replace(`value="${b.ingredient_id}"`, `value="${b.ingredient_id}" selected`)}</select></td>` +
+      `<td><input class="lab-n" type="number" min="0" max="100" step="any" value="${b.min ?? 0}" onchange="labBoundEdit(${i},'min',this.value)"></td>` +
+      `<td><input class="lab-n" type="number" min="0" max="100" step="any" value="${b.max ?? 100}" onchange="labBoundEdit(${i},'max',this.value)"></td>` +
+      `<td><input value="${labEsc(b.source || '')}" placeholder="Source for cap" onchange="labBoundEdit(${i},'source',this.value)"></td>` +
+      `<td><button class="btn-sm btn-danger" onclick="labRemoveBound(${i})">x</button></td></tr>`).join('');
+}
+function labAddBound() {
+  if (!LAB.profileId || !LAB.profileMeta) { alert('Choose a saved profile before adding caps.'); return; }
+  const available = LAB.ings.find(i => !(LAB.profileMeta.bounds || []).some(b => Number(b.ingredient_id) === i.id));
+  if (!available) return;
+  LAB.profileMeta.bounds.push({ ingredient_id: available.id, min: 0, max: 100, source: '' });
+  LAB.dirty = true; labRenderBounds(); labProfileNote();
+}
+function labBoundEdit(i, key, value) {
+  if (!LAB.profileMeta) return;
+  const b = LAB.profileMeta.bounds[i]; b[key] = key === 'source' ? value : Number(value);
+  LAB.dirty = true; labProfileNote();
+}
+function labRemoveBound(i) { LAB.profileMeta.bounds.splice(i, 1); LAB.dirty = true; labRenderBounds(); labProfileNote(); }
 
 /* ---------------------------------------------------------------- ingredient rows */
 function labAddIngredient(id) {
@@ -205,10 +237,13 @@ function labAddLine() {
 function labAddRatio() {
   const a = $l('lab-ratio-a').value, b = $l('lab-ratio-b').value;
   if (a === b) { alert('Pick two different nutrients.'); return; }
-  LAB.lines.push({ code: a, per: b, scale: 1, min: null, max: null, tolerance: 0, required: true, enabled: true });
+  const top = LAB.nut[a], bottom = LAB.nut[b];
+  const scale = String(a).startsWith('SID_') && top?.unit === '%' && bottom?.unit === 'Mcal/kg' ? 10
+    : (String(a).startsWith('SID_') && top?.unit === '%' && bottom?.unit === 'kcal/kg' ? 10000 : 1);
+  LAB.lines.push({ code: a, per: b, scale, min: null, max: null, tolerance: 0, required: true, enabled: true });
   LAB.dirty = true; labRenderConstraints(); labProfileNote();
 }
-const LAB_SID = ['SID_LYS', 'SID_MET', 'SID_MC', 'SID_THR', 'SID_TRP', 'SID_ARG', 'SID_ILE', 'SID_VAL'];
+const LAB_SID = ['SID_LYS', 'SID_MET', 'SID_MC', 'SID_THR', 'SID_TRP', 'SID_ARG', 'SID_ILE', 'SID_VAL', 'SID_LEU', 'SID_HIS', 'SID_PHE', 'SID_GLY', 'SID_SER', 'SID_GLYSER', 'SID_CYS', 'SID_TYR', 'SID_TAAA'];
 function labAddSidSet() {
   const have = new Set(LAB.lines.map(l => l.code + '|' + l.per));
   let added = 0;
@@ -219,7 +254,7 @@ function labAddSidSet() {
   LAB_SID.forEach(c => push(c, 'asfed', 1));
   LAB_SID.filter(c => c !== 'SID_LYS').forEach(c => push(c, 'SID_LYS', 100));       // each amino acid as % of SID lysine
   LAB.dirty = true; labRenderConstraints(); labProfileNote(); labVerifySoon(0);
-  $l('lab-sid-note').textContent = added ? `Added ${added} SID amino acid line(s) with no limits. Type the minimums from your breeder specification, then Save profile.` : 'The SID amino acid lines are already in this profile.';
+  $l('lab-sid-note').textContent = added ? `Added ${added} SID amino acid lines, including each amino acid as a percentage of SID lysine (Lys = 100%). Enter target limits from your breeder specification, then Save profile.` : 'The SID amino acid profile lines are already in this profile.';
 }
 
 const LAB_STATUS = { pass: ['lab-pass', 'OK'], fail: ['lab-fail', 'FAIL'], warn: ['lab-warn', 'advisory'], missing: ['lab-miss', 'no data'], info: ['lab-info', '-'], off: ['lab-off', 'off'] };
@@ -258,7 +293,7 @@ async function labVerify(live) {
   const recipe = labRecipe();
   if (!recipe.length) { LAB.res = null; labRenderResult(); labFillConstraintResults(); return; }
   const seq = ++LAB.seq;
-  const r = await labPost('/api/nutrition/verify', { recipe, lines: labPayloadLines() });
+  const r = await labPost('/api/nutrition/verify', { recipe, lines: labPayloadLines(), profile_id: LAB.profileId || null });
   if (seq !== LAB.seq) return;                       // a newer request is already on its way
   if (!r.ok) { LAB.res = { kind: 'error', d: r.d }; labRenderResult(); return; }
   LAB.res = { kind: 'verify', d: r.d, live };
@@ -274,7 +309,7 @@ async function labOptimize(excludeMissing) {
     if (labNum(r.ov) > 0) prices[r.id] = labNum(r.ov);
   });
   $l('lab-messages').innerHTML = '<span class="lab-small">Optimising...</span>';
-  const r = await labPost('/api/nutrition/optimize', { ingredient_ids: use.map(x => x.id), lines: labPayloadLines(), bounds, prices,
+  const r = await labPost('/api/nutrition/optimize', { ingredient_ids: use.map(x => x.id), lines: labPayloadLines(), bounds, prices, profile_id: LAB.profileId || null,
     batch_kg: labNum($l('lab-batch').value) || 1000, precision_kg: labNum($l('lab-precision').value) || 0.1, exclude_missing: !!excludeMissing });
   if (!r.ok) { LAB.res = { kind: 'error', d: r.d }; labRenderResult(); return; }
   LAB.res = { kind: 'optimize', d: r.d, bounds };
@@ -333,7 +368,7 @@ async function labSaveProfile(asNew) {
   if (asNew || !LAB.profileMeta) { name = prompt('Profile name (e.g. "Layer - production"):', asNew && name ? name + ' (copy)' : name); if (!name) return; }
   let source = LAB.profileMeta ? LAB.profileMeta.source : '';
   if (asNew || !source) { const s = prompt('Where do these limits come from? (standard, nutritionist, table...)', source || ''); if (s === null) return; source = s; }
-  const body = { id: asNew ? '' : LAB.profileId, name, species: LAB.profileMeta ? LAB.profileMeta.species : 'other', stage: LAB.profileMeta ? LAB.profileMeta.stage : '', source, notes: LAB.profileMeta ? LAB.profileMeta.notes : '', lines: labPayloadLines() };
+  const body = { id: asNew ? '' : LAB.profileId, name, species: LAB.profileMeta ? LAB.profileMeta.species : 'other', stage: LAB.profileMeta ? LAB.profileMeta.stage : '', source, notes: LAB.profileMeta ? LAB.profileMeta.notes : '', lines: labPayloadLines(), bounds: LAB.profileMeta ? (LAB.profileMeta.bounds || []) : [] };
   const r = await labPost('/api/nutrition/profiles', body);
   if (!r.ok) { alert(r.d.message || 'Could not save the profile.'); return; }
   LAB.dirty = false; await labInit(); $l('lab-profile').value = r.d.id; await labLoadProfile(r.d.id); labRenderAll();
@@ -357,11 +392,15 @@ async function labSaveFormula() {
 async function labUseInProduction() {
   const out = $l('lab-save-out'); const name = $l('lab-formula-name').value.trim();
   if (!LAB.savedOk || LAB.savedName !== name) { out.innerHTML = '<span class="lab-fail">Save the formula first. Production only accepts a formula that passes its saved profile.</span>'; return; }
-  const batch = labNum($l('lab-batch').value) || 0; const recipe = labRecipe();
-  window.lastFormulation = { species_stage: name, target_batch_kg: batch, recipe: recipe.map(x => ({ ingredient_id: x.ingredient_id, ingredient_name: (LAB.ing[x.ingredient_id] || {}).name, kg_required: x.pct * batch / 100 })) };
-  if (typeof useFormulaInProduction === 'function') useFormulaInProduction();
+  await labLoadSavedList();
+  const formula = LAB.saved.find(f => f.name === name && f.releasable);
+  if (!formula) { out.innerHTML = '<span class="lab-fail">Could not find the released saved formula. Refresh the saved formula list and try again.</span>'; return; }
+  const picker = document.getElementById('saved-formula-select');
+  if (picker) picker.value = formula.id;
+  const batch = labNum($l('lab-batch').value) || 0;
+  const batchField = document.getElementById('saved-formula-batch'); if (batchField) batchField.value = batch;
+  if (typeof loadSavedFormula === 'function') await loadSavedFormula();
 }
-
 async function labLoadSavedList() {
   const r = await labApi('/api/factory/formulas');
   if (!r.ok || !Array.isArray(r.d)) return;
@@ -379,6 +418,48 @@ function labLoadSaved() {
 
 /* ---------------------------------------------------------------- panels */
 function labTogglePanel(id) { const p = $l(id); p.style.display = p.style.display === 'block' ? 'none' : 'block'; }
+async function labLoadAudit() {
+  const panel = $l('lab-audit-panel'); panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+  if (panel.style.display !== 'block') return;
+  const r = await labApi('/api/nutrition/audit');
+  if (!r.ok) { $l('lab-audit-table').innerHTML = `<tr><td>${labEsc(r.d.message)}</td></tr>`; return; }
+  $l('lab-audit-table').innerHTML = '<tr><th>Ingredient</th><th>Price/kg</th><th>Price flag</th><th>Missing required nutrient values by profile</th><th>Imported values and source</th></tr>' + r.d.rows.map(row =>
+    `<tr><td>${labEsc(row.ingredient)}</td><td>${labFmt(row.price_per_kg,2)}</td><td>${row.missing_price ? 'Missing price' : row.possible_price_outlier ? 'Possible outlier (' + labEsc(row.outlier_method) + ')' : '—'}</td>` +
+    `<td>${row.missing_required_nutrients.map(x => labEsc(x.code) + ': ' + x.profiles.map(labEsc).join(', ')).join('<br>') || '—'}</td>` +
+    `<td>${row.imported_values.map(x => labEsc(x.code) + ' ' + labFmt(x.value,4) + ' · ' + labEsc(x.source) + ' · ' + labEsc(x.date || '')).join('<br>') || '—'}</td></tr>`).join('');
+}
+let LAB_PRESETS = [];
+async function labLoadPresets() {
+  const panel = $l('lab-preset-panel'); panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+  if (panel.style.display !== 'block') return;
+  const r = await labApi('/api/nutrition/presets');
+  if (!r.ok) { $l('lab-preset-message').textContent = r.d.message || 'Could not load presets.'; return; }
+  LAB_PRESETS = r.d; const opts = '<option value="">New preset</option>' + LAB_PRESETS.map(p => `<option value="${p.id}">${labEsc(p.name)} · ${labEsc(p.source)}</option>`).join('');
+  $l('lab-preset-select').innerHTML = opts; $l('lab-generate-preset').innerHTML = LAB_PRESETS.map(p => `<option value="${p.id}">${labEsc(p.name)}</option>`).join('');
+}
+function labPresetPick() {
+  const p = LAB_PRESETS.find(x => String(x.id) === $l('lab-preset-select').value);
+  const fields = { 'lab-preset-name':p?.name, 'lab-preset-genotype':p?.genotype, 'lab-preset-stage':p?.stage,
+    'lab-preset-age-min':p?.age_min_days, 'lab-preset-age-max':p?.age_max_days, 'lab-preset-lys':p?.sid_lys_g_mcal,
+    'lab-preset-me-min':p?.me_min_mcal, 'lab-preset-me-max':p?.me_max_mcal, 'lab-preset-source':p?.source };
+  Object.entries(fields).forEach(([id,v]) => $l(id).value = v ?? ''); $l('lab-preset-aa').value = p ? JSON.stringify(p.ideal_aa, null, 2) : '{}';
+}
+async function labSavePreset() {
+  let ideal_aa; try { ideal_aa = JSON.parse($l('lab-preset-aa').value || '{}'); } catch (e) { alert('Amino-acid ratio JSON is invalid.'); return; }
+  const selected = LAB_PRESETS.find(x => String(x.id) === $l('lab-preset-select').value);
+  const body = { id:selected?.id, name:$l('lab-preset-name').value, genotype:$l('lab-preset-genotype').value, stage:$l('lab-preset-stage').value,
+    age_min_days:$l('lab-preset-age-min').value, age_max_days:$l('lab-preset-age-max').value, sid_lys_g_mcal:$l('lab-preset-lys').value,
+    me_min_mcal:$l('lab-preset-me-min').value, me_max_mcal:$l('lab-preset-me-max').value, source:$l('lab-preset-source').value, ideal_aa };
+  const r = await labPost('/api/nutrition/presets', body); $l('lab-preset-message').textContent = r.ok ? 'Preset saved.' : (r.d.message || 'Could not save.');
+  if (r.ok) { $l('lab-preset-panel').style.display = 'none'; await labLoadPresets(); $l('lab-preset-select').value = r.d.id; labPresetPick(); }
+}
+async function labGenerateProfile() {
+  const r = await labPost('/api/nutrition/profiles/generate', { preset_id:$l('lab-generate-preset').value,
+    target_me_mcal:$l('lab-generate-me').value, age_days:$l('lab-generate-age').value, name:$l('lab-generate-name').value });
+  if (!r.ok) { $l('lab-preset-message').textContent = r.d.message || 'Could not generate profile.'; return; }
+  $l('lab-preset-message').textContent = `Created editable profile. SID Lys minimum: ${labFmt(r.d.sid_lys_pct,4)}%. Not released.`;
+  await labInit(); $l('lab-profile').value = r.d.id; await labLoadProfile(r.d.id); labRenderAll();
+}
 function labShowData() {
   $l('lab-formulate').style.display = 'none'; $l('lab-data').style.display = 'block';
   if (!LAB.cols) { LAB.cols = new Set(['DM', 'CP']); }
@@ -405,16 +486,26 @@ function labShowSidCols() { LAB_SID.forEach(c => LAB.cols.add(c)); LAB.cols.add(
 function labToggleCol(code, on) { if (on) LAB.cols.add(code); else LAB.cols.delete(code); labRenderMatrix(); }
 function labRenderMatrix() {
   const cols = LAB.nutrients.filter(n => LAB.cols.has(n.code)); const need = labNeeded();
-  const head = '<tr><th>Ingredient</th>' + cols.map(n => `<th title="${labEsc(n.name)} (${labEsc(n.unit)}${n.basis !== 'asfed' ? ', ' + n.basis : ''})">${labEsc(n.code)}<br><span class="lab-small">${labEsc(n.unit)}</span></th>`).join('') + '</tr>';
+  const canClear = window.currentRole === 'admin';
+  const head = '<tr><th>Ingredient</th>' + cols.map(n => `<th title="${labEsc(n.name)} (${labEsc(n.unit)}${n.basis !== 'asfed' ? ', ' + n.basis : ''})">${labEsc(n.code)}<br><span class="lab-small">${labEsc(n.unit)}</span></th>`).join('') + (canClear ? '<th>Actions</th>' : '') + '</tr>';
   const body = LAB.ings.map(i => '<tr><td>' + labEsc(i.name) + '</td>' + cols.map(n => {
     const v = i.values[n.code]; const key = i.id + '|' + n.code; const ch = LAB.changed[key];
     const val = ch !== undefined ? ch : (v ? v.value : '');
     const gap = (val === '' || val === null) && need.has(n.code);
     return `<td><input class="lab-n ${gap ? 'lab-gap' : ''}" type="number" step="any" min="0" value="${labEsc(val)}" title="${labEsc(v ? v.source : (gap ? 'needed but unknown' : 'unknown'))}" oninput="labCellEdit(${i.id},'${n.code}',this)"></td>`;
-  }).join('') + '</tr>').join('');
+  }).join('') + (canClear ? `<td><button type="button" class="btn-sm btn-danger" onclick="labClearIngredient(${i.id})">Clear values</button></td>` : '') + '</tr>').join('');
   $l('lab-matrix').innerHTML = head + body;
 }
 function labCellEdit(id, code, el) { LAB.changed[id + '|' + code] = el.value; el.style.outline = '2px solid #fd7e14'; }
+async function labClearIngredient(id) {
+  const ingredient = LAB.ings.find(i => Number(i.id) === Number(id));
+  if (!ingredient || !confirm(`Clear all nutrient values for ${ingredient.name}? The ingredient, stock, and sales history will be kept.`)) return;
+  const r = await labApi('/api/nutrition/ingredients/' + id + '/values', { method: 'DELETE' });
+  if (!r.ok) { alert(r.d.message || 'Could not clear nutrient values.'); return; }
+  Object.keys(LAB.changed).forEach(k => { if (k.startsWith(id + '|')) delete LAB.changed[k]; });
+  $l('lab-cell-msg').textContent = `Cleared ${r.d.cleared || 0} saved nutrient value(s) for ${ingredient.name}.`;
+  await labInit(); LAB.res = null; labRenderMatrix();
+}
 async function labSaveCells() {
   const cells = Object.keys(LAB.changed).map(k => { const [id, code] = k.split('|'); return { ingredient_id: Number(id), code, value: LAB.changed[k] === '' ? null : Number(LAB.changed[k]), source: $l('lab-cell-source').value.trim() }; });
   if (!cells.length) { $l('lab-cell-msg').textContent = 'Nothing changed.'; return; }
@@ -457,7 +548,7 @@ async function labImport(commit) {
 async function labReqImport(commit) {
   const out = $l('lab-req-out');
   if (!$l('lab-req-file').files[0] && !$l('lab-req-text').value.trim()) { out.innerHTML = '<span class="lab-fail">Paste cells from Excel or choose a file first.</span>'; return; }
-  const r = await labApi('/api/nutrition/import/requirements', labImportBody('lab-req-text', 'lab-req-file', commit, { profile_name: $l('lab-req-name').value.trim() }));
+  const r = await labApi('/api/nutrition/import/requirements', labImportBody('lab-req-text', 'lab-req-file', commit, { profile_name: $l('lab-req-name').value.trim(), wuffda_spec: $l('lab-req-spec')?.value || 'current' }));
   if (!r.ok) { out.innerHTML = `<span class="lab-fail">${labEsc(r.d.message || 'Import failed.')}</span>${labList(r.d.problems || [], 'lab-warn')}`; return; }
   const d = r.d;
   if (commit) {
@@ -465,6 +556,11 @@ async function labReqImport(commit) {
     await labInit(); $l('lab-profile').value = d.id; await labLoadProfile(d.id); labRenderAll(); return;
   }
   const rows = d.lines.map(l => `<tr><td>${labEsc(l.label)}</td><td>${labEsc(l.code)}${l.per !== 'asfed' ? ' / ' + labEsc(l.per) : ''}</td><td>${l.min === null ? '-' : l.min}</td><td>${l.max === null ? '-' : l.max}</td><td class="lab-small">${labEsc(l.notes.join('; '))}</td></tr>`).join('');
+  const specWrap = $l('lab-req-spec-wrap');
+  if (d.wuffda_specs?.length) {
+    $l('lab-req-spec').innerHTML = d.wuffda_specs.map(s => `<option value="${labEsc(s.key)}" ${s.key === d.selected_wuffda_spec ? 'selected' : ''}>${labEsc(s.name)}</option>`).join('');
+    specWrap.style.display = 'block';
+  } else specWrap.style.display = 'none';
   out.innerHTML = `<div class="lab-wrap"><table class="lab"><tr><th>Row</th><th>Read as</th><th>Min</th><th>Max</th><th>Notes</th></tr>${rows}</table></div>${labList(d.problems, 'lab-warn')}<div class="lab-small">Name the profile and press "Import as profile" to keep these.</div>`;
 }
 

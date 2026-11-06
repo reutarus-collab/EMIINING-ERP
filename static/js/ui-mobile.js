@@ -1,6 +1,81 @@
 /* Read-only UI helpers for the POS tab. Never calls checkout, sync or stock code. */
 (function () {
   var $ = function (id) { return document.getElementById(id); };
+  // POS stage navigation only changes which existing panels are shown. It never submits a sale.
+  var pos = $('pos-tab'), stageButtons = document.querySelectorAll('.pos-view-tabs [data-pos-stage]');
+  var stageNames = ['products', 'cart', 'payment', 'receipt'];
+  function stageActionLabel(stage) {
+    return {products:'View cart', cart:'Continue to payment', payment:'Review payment', receipt:'New sale'}[stage] || 'View cart';
+  }
+  window.setPosStage = function (stage) {
+    if (!pos || stageNames.indexOf(stage) < 0) return;
+    pos.dataset.posStage = stage;
+    document.body.classList.toggle('pos-checkout-focus', stage === 'cart' || stage === 'payment' || stage === 'receipt');
+    Array.prototype.forEach.call(stageButtons, function (button) {
+      var active = button.dataset.posStage === stage;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-current', active ? 'step' : 'false');
+      if (button.dataset.posStage === 'receipt') button.hidden = stage !== 'receipt';
+    });
+    var go = $('sticky-go'); if (go) go.textContent = stageActionLabel(stage);
+  };
+  if (pos) window.setPosStage('products');
+
+  var stageGo = $('sticky-go');
+  if (stageGo) stageGo.addEventListener('click', function () {
+    var stage = pos && pos.dataset.posStage || 'products';
+    if (stage === 'products') window.setPosStage('cart');
+    else if (stage === 'cart') window.setPosStage('payment');
+    else if (stage === 'payment') {
+      var submit = $('complete-sale-button');
+      if (submit) { submit.scrollIntoView({behavior:'smooth', block:'center'}); submit.focus({preventScroll:true}); }
+    } else window.setPosStage('products');
+  });
+
+  var shortcutToggle = $('pos-shortcuts-toggle'), shortcutPanel = $('pos-shortcuts-panel');
+  if (shortcutToggle && shortcutPanel) shortcutToggle.addEventListener('click', function () {
+    var open = shortcutPanel.hidden;
+    shortcutPanel.hidden = !open; shortcutToggle.setAttribute('aria-expanded', String(open));
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') {
+      if (shortcutPanel && !shortcutPanel.hidden) { shortcutPanel.hidden = true; if (shortcutToggle) shortcutToggle.setAttribute('aria-expanded', 'false'); }
+      return;
+    }
+    if (event.key === 'F2') { event.preventDefault(); window.setPosStage('products'); var search = $('search-input'); if (search) search.focus(); }
+    if (event.key === 'F4') { event.preventDefault(); window.setPosStage('cart'); var customer = $('customer-search'); if (customer) customer.focus(); }
+    if (event.key === 'F6') { event.preventDefault(); window.setPosStage('cart'); var cartCard = $('pos-cart-card'); if (cartCard) cartCard.scrollIntoView({behavior:'smooth', block:'start'}); }
+    if (event.key === 'F8') { event.preventDefault(); window.setPosStage('payment'); var payment = $('checkout-card'); if (payment) payment.scrollIntoView({behavior:'smooth', block:'start'}); }
+  });
+  var searchInput = $('search-input');
+  if (searchInput) searchInput.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' || event.key === 'ArrowDown') {
+      var first = document.querySelector('#search-results .pack-btn');
+      if (first) { event.preventDefault(); first.focus(); }
+    }
+  });
+  document.addEventListener('keydown', function (event) {
+    if (!event.target || !event.target.matches || !event.target.matches('#search-results .pack-btn')) return;
+    if (!['ArrowRight','ArrowLeft','ArrowDown','ArrowUp'].includes(event.key)) return;
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('#search-results .pack-btn'));
+    var current = buttons.indexOf(event.target), cols = window.matchMedia('(max-width:700px)').matches ? 2 : Math.max(1, Math.floor(document.getElementById('search-results').clientWidth / 230));
+    var delta = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowDown' ? cols : -cols;
+    if (buttons[current + delta]) { event.preventDefault(); buttons[current + delta].focus(); }
+  });
+
+  // Mirror the session context in the desktop sidebar without duplicating API calls.
+  function syncSidebar() {
+    var user = $('app-sidebar-user'), location = $('app-sidebar-location'), tillMirror = $('till-state-mirror');
+    if (user && window.currentUsername) user.textContent = window.currentUsername;
+    var select = $('pos-location');
+    if (location && select && select.selectedOptions[0]) location.textContent = select.selectedOptions[0].textContent;
+    var till = $('till-state'); if (tillMirror && till) tillMirror.textContent = till.textContent;
+    var tillLocation = $('till-location-label'); if (tillLocation && select && select.selectedOptions[0]) tillLocation.textContent = select.selectedOptions[0].textContent;
+  }
+  var tillNode = $('till-state');
+  if (tillNode && window.MutationObserver) new MutationObserver(syncSidebar).observe(tillNode, {childList:true, characterData:true, subtree:true});
+  var outletSelect = $('pos-location'); if (outletSelect) outletSelect.addEventListener('change', syncSidebar);
+  window.addEventListener('load', syncSidebar); setInterval(syncSidebar, 1500);
   // Till panel: open on desktop, collapsed on phones; mirror live till state into the summary.
   var panel = $('till-panel');
   if (panel && window.matchMedia && window.matchMedia('(min-width:701px)').matches) panel.open = true;
@@ -17,11 +92,6 @@
     new MutationObserver(syncTotal).observe(total, {childList: true, characterData: true, subtree: true});
     syncTotal();
   }
-  var go = $('sticky-go');
-  if (go) go.addEventListener('click', function () {
-    var c = $('checkout-card');
-    if (c) c.scrollIntoView({behavior: 'smooth', block: 'start'});
-  });
 })();
 
 /* ---- Till panel: on phones, force it open while the till is closed (selling is blocked without it) ---- */
@@ -54,6 +124,7 @@
   function decorate() {
     body.querySelectorAll('td:nth-child(2) input[type="number"]').forEach(function (inp) {
       if (inp.dataset.uiStep) return;
+      if (inp.parentNode.querySelector('button')) { inp.dataset.uiStep = 'native'; return; }
       inp.dataset.uiStep = '1';
       inp.setAttribute('inputmode', 'decimal');   // phone keyboard with a decimal point for .25 kg
       inp.parentNode.insertBefore(mk('−', 'Decrease quantity', -1, inp), inp);
@@ -66,7 +137,7 @@
 
 /* ---- Bottom nav: built from the existing tab buttons the user's role can see ---- */
 (function () {
-  var PRIMARY = [['pos-tab', 'Sales'], ['stock-tab', 'Stock'], ['sales-tab', 'Ledger'], ['factory-tab', 'Factory']];
+  var PRIMARY = [['dashboard-tab', 'Home', '⌂'], ['pos-tab', 'Sell', '▣'], ['stock-tab', 'Inventory', '▧'], ['report-tab', 'Reports', '▥']];
   function visibleButtons() {
     return Array.prototype.filter.call(document.querySelectorAll('.nav-tabs .tab-btn'), function (b) { return b.style.display !== 'none'; });
   }
@@ -83,16 +154,24 @@
     PRIMARY.forEach(function (p) {
       var orig = byId[p[0]]; if (!orig) return;
       used[p[0]] = 1;
-      var b = document.createElement('button'); b.type = 'button'; b.textContent = p[1];
+      var b = document.createElement('button'); b.type = 'button';
+      b.innerHTML = '<span class="ui-nav-icon" aria-hidden="true">' + p[2] + '</span><span>' + p[1] + '</span>';
       b.addEventListener('click', function () { close(); orig.click(); });
       nav.appendChild(b); items.push([b, orig]);
     });
     var rest = btns.filter(function (b) { return !used[tabId(b)]; });
     if (rest.length) {
-      var more = document.createElement('button'); more.type = 'button'; more.textContent = 'More';
+      var more = document.createElement('button'); more.type = 'button'; more.innerHTML = '<span class="ui-nav-icon" aria-hidden="true">⋯</span><span>More</span>';
       more.addEventListener('click', function () { sheet.classList.add('open'); scrim.classList.add('open'); });
       nav.appendChild(more); items.push([more, null]);
+      var lastGroup = '';
       rest.forEach(function (orig) {
+        var parentGroup = orig.closest('.nav-group');
+        var groupName = parentGroup ? (parentGroup.dataset.group || 'Modules') : 'More modules';
+        if (groupName !== lastGroup) {
+          var heading = document.createElement('div'); heading.className = 'ui-more-category'; heading.textContent = groupName;
+          sheet.appendChild(heading); lastGroup = groupName;
+        }
         var b = document.createElement('button'); b.type = 'button'; b.textContent = orig.textContent.trim();
         b.addEventListener('click', function () { close(); orig.click(); });
         sheet.appendChild(b); items.push([b, orig]);

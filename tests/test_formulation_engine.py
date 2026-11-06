@@ -239,6 +239,31 @@ class VerifyTests(EngineBase):
         self.assertFalse(bad['releasable'])
         self.assertTrue(any('above its limit of 60%' in i for i in bad['issues']))
 
+    def test_profile_cap_is_enforced_by_optimizer_and_verifier(self):
+        self.a.max_inclusion_pct = 100
+        db.session.commit()
+        omena = self.add('Omena', 1, CP=60)
+        lines = [self.line('CP', lo=20)]
+        ings = [self.a, omena]
+        table, _ = fe.build_table([i.id for i in ings], self.nut, fe.needed_codes(lines, self.nut))
+        cap = {omena.id: {'min': 0, 'max': 5}}
+        result = fe.optimize([i.id for i in ings], lines, table, self.nut, self.info(ings), cap)
+        self.assertEqual(result['status'], 'optimal', result)
+        recipe = {x['ingredient_id']: x['pct'] for x in result['recipe']}
+        self.assertLessEqual(recipe.get(omena.id, 0), 5)
+        good = fe.verify({self.a.id: 95, omena.id: 5}, lines, table, self.info(ings), cap)
+        self.assertTrue(good['releasable'], good)
+        bad = fe.verify({self.a.id: 90, omena.id: 10}, lines, table, self.info(ings), cap)
+        self.assertFalse(bad['releasable'])
+        self.assertTrue(any('above its limit of 5%' in issue for issue in bad['issues']))
+
+    def test_fingerprint_includes_profile_bounds(self):
+        lines = [self.line('CP', lo=1)]
+        table = self.table([self.a], lines)
+        h1 = fe.formula_data_hash({self.a.id: 100}, lines, table, {self.a.id: {'min': 0, 'max': 100}})
+        h2 = fe.formula_data_hash({self.a.id: 100}, lines, table, {self.a.id: {'min': 0, 'max': 5}})
+        self.assertNotEqual(h1, h2)
+
     def test_total_must_be_100(self):
         r = self.v({self.a.id: 40, self.b.id: 40}, [self.line('CP', lo=1)])
         self.assertEqual(r['status'], 'fail')

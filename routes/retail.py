@@ -7,6 +7,7 @@ from sqlalchemy import func
 from routes.auth import roles_required, ALL_STAFF, SALES_FLOOR_STAFF
 from services.models import db, Customer, FeedIngredient, OrderHeader, PaymentSplit, ItemPrice, TillSession, LocationStock, OperatingExpense, SalesRefund, TillCashMovement
 from services.inventory import resolve_location, stock_quantity
+from services.sales_rank import sales_rank
 retail_bp = Blueprint('retail', __name__)
 @retail_bp.route('/api/stock')
 @roles_required(*ALL_STAFF)
@@ -16,7 +17,9 @@ def stock():
     except ValueError as exc:
         return error_response(exc)
     rows = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service'),
-                                       FeedIngredient.is_active.isnot(False)).order_by(db.func.lower(FeedIngredient.name)).all()
+                                       FeedIngredient.is_active.isnot(False)).all()
+    ranked = sales_rank(location.id)
+    rows.sort(key=lambda item: (-ranked.get(item.id, 0.0), (item.name or '').lower()))
     show_cost = g.user.role in ('admin', 'accountant', 'warehouse')
     result = []
     for i in rows:
@@ -31,6 +34,7 @@ def stock():
         'bag_size_kg': i.bag_size_kg or 0,
         'retail_price_per_kg': i.retail_price_per_kg or 0,
         'priced': (i.retail_price_per_kg or 0) > 0,
+        'sold_kg_30d': round(ranked.get(i.id, 0.0), 2),
         }
         if show_cost:
             cost = (balance.unit_cost_per_kg if balance else 0.0) or 0.0
@@ -47,7 +51,10 @@ def _max_outlet_unit_cost(ingredient_id, fallback=0.0):
 @roles_required('admin')
 def prices_list():
     out = []
-    for i in FeedIngredient.query.order_by(db.func.lower(FeedIngredient.name)).all():
+    ranked = sales_rank()
+    items = FeedIngredient.query.all()
+    items.sort(key=lambda item: (-ranked.get(item.id, 0.0), (item.name or '').lower()))
+    for i in items:
         cost = _max_outlet_unit_cost(i.id, i.cost_per_kg or 0)
         price = i.retail_price_per_kg or 0
         margin = round((price - cost) / price * 100, 1) if price > 0 else None
@@ -226,21 +233,62 @@ def merge_customers():
                    debt_entries_moved=moved_debts, balance_moved=moved_balance, kept_id=target.id)
 
 
-PACK_SIZES = (50, 70)
+PACK_SIZES = (50, 70)      # only the old two-column API uses this; the screen now sends a free list of sizes
+MAX_PACKS_PER_ITEM = 8
+
+
 @retail_bp.route('/api/admin/packs')
 @roles_required('admin')
 def packs_list():
     by_item = {}
-    for r in ItemPrice.query.all():
-        by_item.setdefault(r.ingredient_id, {})[int(round(r.pack_kg))] = r.price
+    for r in ItemPrice.query.order_by(ItemPrice.pack_kg).all():
+        by_item.setdefault(r.ingredient_id, []).append({'pack_kg': round(r.pack_kg, 3), 'price': round(r.price, 2)})
     out = []
-    for i in FeedIngredient.query.order_by(db.func.lower(FeedIngredient.name)).all():
-        prices = by_item.get(i.id, {})
+    ranked = sales_rank()
+    items = FeedIngredient.query.all()
+    items.sort(key=lambda item: (-ranked.get(item.id, 0.0), (item.name or '').lower()))
+    for i in items:
+        packs = by_item.get(i.id, [])
+        by_size = {int(round(p['pack_kg'])): p['price'] for p in packs}
         out.append({'id': i.id, 'name': i.name,
                     'cost_per_kg': _max_outlet_unit_cost(i.id, i.cost_per_kg or 0),
                     'kg_price': i.retail_price_per_kg or 0,
-                    'p50': prices.get(50), 'p70': prices.get(70)})
+                    'bag_size_kg': i.bag_size_kg or 0,
+                    'packs': packs,
+                    'p50': by_size.get(50), 'p70': by_size.get(70)})
     return jsonify(out)
+
+
+def _parse_pack_list(raw, cost, item_name):
+    """Validate a list of {pack_kg, price}. Returns {pack_kg: price}. Any bag size is allowed (45, 40, 25.5 ...)."""
+    if not isinstance(raw, list):
+        raise ValueError('Bag prices must be a list.')
+    if len(raw) > MAX_PACKS_PER_ITEM:
+        raise ValueError(f'At most {MAX_PACKS_PER_ITEM} bag sizes per item.')
+    out = {}
+    for entry in raw:
+        entry = entry or {}
+        size_raw, price_raw = entry.get('pack_kg'), entry.get('price')
+        if size_raw in (None, '') and price_raw in (None, ''):
+            continue                                   # an untouched blank row
+        try:
+            size, price = round(float(size_raw), 3), round(float(price_raw), 2)
+        except (TypeError, ValueError):
+            raise ValueError('Enter both a bag size in kg and a price for each bag row.')
+        if not math.isfinite(size) or not math.isfinite(price):
+            raise ValueError('Enter both a bag size in kg and a price for each bag row.')
+        if size <= 1 or size > 1000:
+            raise ValueError('A bag must be more than 1 kg and at most 1000 kg. Per-kg prices are set under Retail Pricing.')
+        if price <= 0:
+            raise ValueError('%g kg bag: the price must be above 0.' % size)
+        if price <= cost * size:
+            raise ValueError('%g kg bag: price %.2f is not above its cost %.2f (%.2f per kg).' % (size, price, cost * size, cost))
+        if any(abs(size - k) < 0.0005 for k in out):
+            raise ValueError('%g kg bag is listed twice for %s.' % (size, item_name))
+        out[size] = price
+    return out
+
+
 @retail_bp.route('/api/admin/packs', methods=['POST'])
 @roles_required('admin')
 def packs_save():
@@ -252,34 +300,28 @@ def packs_save():
     if not item:
         return jsonify(status='error', message='Item not found.'), 404
     cost = _max_outlet_unit_cost(item.id, item.cost_per_kg or 0)
-    new_prices = {}
-    for size in PACK_SIZES:
-        raw = data.get('p%d' % size)
-        if raw is None or raw == '':
-            new_prices[size] = None
-            continue
-        try:
-            price = round(float(raw), 2)
-        except (TypeError, ValueError):
-            return jsonify(status='error', message='Invalid %d kg price.' % size), 400
-        if not math.isfinite(price) or price <= 0:
-            return jsonify(status='error', message='%d kg price must be above 0.' % size), 400
-        if price <= cost * size:
-            return jsonify(status='error',
-                           message='%d kg price %.2f is not above its cost %.2f (%.2f per kg).' % (size, price, cost * size, cost)), 400
-        new_prices[size] = price
+    try:
+        if 'packs' in data:
+            new_prices = _parse_pack_list(data.get('packs'), cost, item.name)
+        else:                                          # older clients: the fixed 50 kg and 70 kg boxes
+            legacy = [{'pack_kg': size, 'price': data.get('p%d' % size)} for size in PACK_SIZES
+                      if data.get('p%d' % size) not in (None, '')]      # a blank old-style box means "remove it"
+            new_prices = _parse_pack_list(legacy, cost, item.name)
+    except ValueError as exc:
+        return jsonify(status='error', message=str(exc)), 400
+    existing = ItemPrice.query.filter_by(ingredient_id=item.id).all()
+    managed = existing if 'packs' in data else [r for r in existing if any(abs(r.pack_kg - z) < 0.0005 for z in PACK_SIZES)]
+    keep = set()
     for size, price in new_prices.items():
-        row = None
-        for r in ItemPrice.query.filter_by(ingredient_id=item.id).all():
-            if abs(r.pack_kg - size) < 0.0005:
-                row = r
-        if price is None:
-            if row:
-                db.session.delete(row)
-        elif row:
+        row = next((r for r in existing if abs(r.pack_kg - size) < 0.0005), None)
+        if row:
             row.price = price
+            keep.add(row.id)
         else:
             db.session.add(ItemPrice(ingredient_id=item.id, pack_kg=float(size), price=price))
+    for r in managed:
+        if r.id not in keep and not any(abs(r.pack_kg - k) < 0.0005 for k in new_prices):
+            db.session.delete(r)
     db.session.commit()
     return jsonify(status='success')
 
@@ -299,7 +341,7 @@ def price_list_pdf():
     packs = {}
     for r in ItemPrice.query.all():
         if (r.price or 0) > 0:
-            packs.setdefault(r.ingredient_id, {})[int(round(r.pack_kg))] = r.price
+            packs.setdefault(r.ingredient_id, {})[round(r.pack_kg, 3)] = r.price
     sizes = sorted({size for p in packs.values() for size in p})
 
     def group_rank(cat):
@@ -321,7 +363,7 @@ def price_list_pdf():
     cell = ParagraphStyle('c', parent=styles['Normal'], fontSize=10, leading=12)
     now_eat = datetime.utcnow() + timedelta(hours=3)
 
-    header = ['Product', 'Per kg (KSh)'] + ['%d kg bag (KSh)' % z for z in sizes]
+    header = ['Product', 'Per kg (KSh)'] + ['%g kg bag (KSh)' % z for z in sizes]
     rows = [header]
     for i in items:
         rows.append([Paragraph((i.name or '').replace('&', '&amp;').replace('<', '&lt;'), cell),

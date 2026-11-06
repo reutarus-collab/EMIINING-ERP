@@ -1,0 +1,67 @@
+<div id="dashboard-tab" class="tab-content active">
+  <section class="dashboard-welcome">
+    <div><span class="pos-kicker">EMINING FEEDS · OPERATIONS</span><h2>Today at your branch</h2><p>Review today’s activity or open a business module.</p></div>
+    <button type="button" class="dashboard-primary" onclick="showTab('pos-tab')">Open Quick POS <span aria-hidden="true">→</span></button>
+  </section>
+
+  <section class="dashboard-metrics" aria-label="Today's sales summary" aria-live="polite">
+    <button type="button" class="dashboard-metric" onclick="openDashboardMetric('sales')"><span>Sales today</span><strong id="dash-sales-value">Loading…</strong><small id="dash-sales-count">Checking today’s activity</small></button>
+    <button type="button" class="dashboard-metric" onclick="openDashboardMetric('discounts')"><span>Discounts</span><strong id="dash-discounts-value">—</strong><small>Today · view insights</small></button>
+    <button type="button" class="dashboard-metric" onclick="openDashboardMetric('credit')"><span>Credit issued</span><strong id="dash-credit-value">—</strong><small>Today · view credit sales</small></button>
+    <button type="button" class="dashboard-metric" onclick="openDashboardMetric('expenses')"><span>Expenses</span><strong id="dash-expenses-value">—</strong><small>Today · view expenses</small></button>
+  </section>
+
+  <section class="dashboard-section">
+    <div class="dashboard-section-heading"><div><span class="pos-kicker">WORKSPACE</span><h2>Business modules</h2></div><span id="dash-location" class="dashboard-location">Current branch</span></div>
+    <div class="dashboard-module-grid">
+      <button type="button" class="dashboard-module module-sell" onclick="showTab('pos-tab')"><span class="dashboard-module-icon">▣</span><span><strong>Quick POS</strong><small>Find products, build a cart and complete a sale</small></span><b aria-hidden="true">→</b></button>
+      <button type="button" class="dashboard-module" onclick="showTab('stock-tab'); loadStock()"><span class="dashboard-module-icon">▧</span><span><strong>Inventory</strong><small>Stock on hand, adjustments and transfers</small></span><b aria-hidden="true">→</b></button>
+      <button type="button" class="dashboard-module" data-roles="admin,accountant,warehouse,factory" onclick="showTab('po-tab'); if(typeof initPOModule==='function') initPOModule()"><span class="dashboard-module-icon">▤</span><span><strong>Purchasing &amp; GRN</strong><small>Purchase orders, deliveries and receiving</small></span><b aria-hidden="true">→</b></button>
+      <button type="button" class="dashboard-module" data-roles="admin,accountant,sales,factory" onclick="showTab('sales-tab')"><span class="dashboard-module-icon">▥</span><span><strong>Sales history</strong><small>Receipts, refunds, summaries and top products</small></span><b aria-hidden="true">→</b></button>
+      <button type="button" class="dashboard-module" data-roles="admin,accountant" onclick="showTab('customers-tab'); loadCustAdmin()"><span class="dashboard-module-icon">♙</span><span><strong>Customers</strong><small>Profiles, balances and credit accounts</small></span><b aria-hidden="true">→</b></button>
+      <button type="button" class="dashboard-module" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('till-tab'); refreshTill(); loadTillMovementHistory()"><span class="dashboard-module-icon">▣</span><span><strong>Till management</strong><small>Open or close a till and record cash movements</small></span><b aria-hidden="true">→</b></button>
+      <button type="button" class="dashboard-module" data-roles="admin,accountant,sales,factory" onclick="showTab('report-tab'); loadDailyReport()"><span class="dashboard-module-icon">▥</span><span><strong>Reports</strong><small>Daily sales, payment and till reconciliation</small></span><b aria-hidden="true">→</b></button>
+      <button type="button" class="dashboard-module" data-roles="admin,accountant,factory" onclick="showTab('matrix-tab'); labInit()"><span class="dashboard-module-icon">⚗</span><span><strong>Formulation Lab</strong><small>Build, compare and manage feed formulas</small></span><b aria-hidden="true">→</b></button>
+    </div>
+  </section>
+  <p id="dash-summary-message" class="dashboard-summary-message" role="status"></p>
+</div>
+<script>
+async function loadDashboard(){
+  const money=n=>'KSh '+Number(n||0).toLocaleString('en-KE',{minimumFractionDigits:0,maximumFractionDigits:0});
+  const outlet=document.getElementById('pos-location');
+  if(outlet&&outlet.selectedOptions[0]) document.getElementById('dash-location').textContent=outlet.selectedOptions[0].textContent;
+  const msg=document.getElementById('dash-summary-message');
+  try{
+    const location=typeof activeLocationId!=='undefined'?activeLocationId:'';
+    const r=await fetch('/api/reports/daily?location_id='+encodeURIComponent(location),{credentials:'same-origin'});
+    const d=await r.json(); if(!r.ok) throw new Error(d.message||'Daily summary is unavailable.');
+    document.getElementById('dash-sales-value').textContent=money(d.total_sales);
+    document.getElementById('dash-sales-count').textContent=Number(d.sales_count||0)+' completed sale'+(Number(d.sales_count||0)===1?'':'s');
+    document.getElementById('dash-discounts-value').textContent=money(d.discounts);
+    document.getElementById('dash-credit-value').textContent=money(d.credit_sales);
+    document.getElementById('dash-expenses-value').textContent=money(d.expenses_total);
+    msg.textContent='Today’s summary · '+d.date;
+  }catch(e){
+    document.getElementById('dash-sales-value').textContent='—';
+    document.getElementById('dash-sales-count').textContent='Summary unavailable';
+    msg.textContent=e.message||'Could not load today’s summary.';
+  }
+}
+function openDashboardMetric(metric){
+  if(metric==='sales'){
+    if(typeof salesFilter!=='undefined'){salesFilter.period='today';salesFilter.creditOnly=false;}
+    const period=document.getElementById('top-period'); if(period) period.value='today';
+    showTab('sales-tab'); if(typeof loadTopProducts==='function') loadTopProducts();
+  }else if(metric==='credit'){
+    if(typeof salesFilter!=='undefined'){salesFilter.period='';salesFilter.creditOnly=true;}
+    const period=document.getElementById('top-period'); if(period) period.value='today';
+    const credit=document.getElementById('sales-credit-only'); if(credit) credit.checked=true;
+    showTab('sales-tab');
+  }else if(metric==='discounts'){
+    showTab('insights-tab'); if(typeof loadInsights==='function') loadInsights();
+  }else if(metric==='expenses'){
+    showTab('expenses-tab'); if(typeof loadExpenses==='function') loadExpenses();
+  }
+}
+</script>

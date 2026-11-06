@@ -63,7 +63,7 @@
         </div>
         <div id="nutrient-import-panel" data-roles="admin,factory" style="display:none; background:#f8f9fa; padding:12px; border-radius:6px; margin-bottom:12px;">
             <p class="po-hint" style="margin-top:0">Excel (.xlsx), CSV, or pasted cells. Row 1: ingredient name first, then nutrient names such as CP, ME, CF, Ca, Lys. Blank cells never overwrite a saved value and are never treated as zero.</p>
-            <p class="po-hint">WUFFDA sheets are read as they are: Cost, Min., Max., Weight, Dry Matter, M.E., Protein, E.E., C18:2, C.F, Calcium, Total/Avail. Phos., amino acids (read as <b>total</b>), Choline, Folate, Biotin, or NEL, RDP, RUP, NDF, ADF for dairy. M.E. above 20 is kcal/kg. Blank, "-" and "#N/A" cells are skipped.</p>
+            <p class="po-hint">WUFFDA sheets include crude protein, energy, fibre, macro and trace minerals, amino acids, Choline, Folate, and Biotin. Bare amino-acid headings are treated as <b>SID</b> in the Formulation Lab. M.E. above 20 is kcal/kg.</p>
             <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
                 <label><input type="checkbox" id="nut-import-create" checked> Create ingredients not in the system</label>
                 <label>as <select id="nut-import-cat"><option>Raw - Energy</option><option>Raw - Protein</option><option>Raw - Mineral</option><option>Raw - Additive</option><option selected>Raw - Other</option></select></label>
@@ -543,7 +543,7 @@
                 <td>KSh ${Number(i.cost_per_kg).toFixed(2)}</td>
                 <td>${isRaw ? `${Number(i.crude_protein_pct).toFixed(1)} · ${Number(i.metabolizable_energy_mcal).toFixed(2)} · ${Number(i.crude_fiber_pct).toFixed(1)} · ${Number(i.max_inclusion_pct).toFixed(0)} <button type="button" class="btn btn-secondary" onclick="po_openNutrients(${i.id})">Edit</button>` : '-'}</td>
                 <td>${i.is_active ? 'Active' : '<b style="color:#b00">Hidden from Stock &amp; POS</b>'}</td>
-                <td>${window.currentRole === 'admin' ? `<button type="button" class="btn btn-secondary" onclick="po_setItemActive(${i.id}, ${!i.is_active})">${i.is_active ? 'Disable' : 'Enable'}</button> ` : ''}<button type="button" class="btn btn-secondary" style="color:#b00;" onclick="po_deleteItem(${i.id})">Delete</button></td>
+                <td>${window.currentRole === 'admin' ? `<button type="button" class="btn btn-secondary" onclick="po_renameItem(${i.id})">Rename</button> <button type="button" class="btn btn-secondary" onclick="po_setItemActive(${i.id}, ${!i.is_active})">${i.is_active ? 'Disable' : 'Enable'}</button> ` : ''}<button type="button" class="btn btn-secondary" style="color:#b00;" onclick="po_deleteItem(${i.id})">Delete</button></td>
             </tr>`;
         });
         tbody.innerHTML = html;
@@ -995,10 +995,25 @@
         } catch (e) { alert('No connection. Try again.'); }
     }
 
+    async function po_renameItem(id) {
+        const item = po_inventoryList.find(x => x.id === id);
+        const current = item ? item.name : '';
+        const entered = prompt('New name for this item:', current);
+        if (entered === null) return;
+        const name = entered.trim();
+        if (!name || name === current) return;
+        try {
+            const res = await fetch('/api/po/inventory/' + id + '/rename', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name})});
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) return alert(data.message || 'Could not rename this item.');
+            await refreshItemViews();
+        } catch (e) { alert('No connection. Try again.'); }
+    }
+
     async function po_deleteItem(id) {
         const item = po_inventoryList.find(x => x.id === id);
         const name = item ? item.name : ('#' + id);
-        if (!confirm('Delete "' + name + '" from the Item Master?\n\nThis only works for items with no stock or purchase history.')) return;
+        if (!confirm('Delete "' + name + '" from the Item Master?\n\nThis only works for items with no stock, purchase or sales history. Its nutrient values are deleted with it.')) return;
         try {
             const res = await fetch('/api/po/inventory/' + id, {method: 'DELETE', credentials: 'same-origin'});
             let data = {};

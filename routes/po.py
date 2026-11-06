@@ -9,12 +9,13 @@ import json
 from sqlalchemy.exc import IntegrityError
 from services.db import db
 from services.models import Supplier, PurchaseOrderHeader, PurchaseOrderLine, FeedIngredient, StockMovement, GoodsReceiptNote, GoodsReceiptLine, IdempotencyKey
-from services.po_service import create_purchase_order, item_usage, purge_empty_stock_rows
+from services.po_service import create_purchase_order, item_usage, purge_empty_stock_rows, purge_item_scaffolding
 from routes.auth import roles_required, PURCHASING_STAFF
 from services.inventory import resolve_location, location_stock, stock_quantity, change_stock, receive_stock
 from services.uom import (rule_for_item, rule_for_line, receiving_rule, normalise_rule, price_per_kg, check_price,
                           PriceCheckError, VALID_UOMS)
 from services.item_groups import group_for, GROUP_LABEL, GROUP_RANK, CATEGORY_CHOICES, name_order
+from services.sales_rank import sales_rank
 
 po_bp = Blueprint('po_bp', __name__)
 
@@ -127,6 +128,33 @@ def po_message(po_id):
         return error_response(e)
 
 
+@po_bp.route('/api/po/<int:po_id>', methods=['DELETE'])
+@roles_required('admin', 'accountant')
+def delete_purchase_order(po_id):
+    """Delete an order nothing has been received against. Once goods or a payable exist it stays in history."""
+    from services.models import SupplierTxn
+    try:
+        location = resolve_location(request.args.get('location_id'))
+        po = db.session.get(PurchaseOrderHeader, po_id)
+        if not po or str(po.location_id) != str(location.id):
+            return jsonify(status='error', message='Purchase order not found at this outlet.'), 404
+        lines = PurchaseOrderLine.query.filter_by(po_header_id=po.id).all()
+        received = any((l.qty_received or 0) > 0 or (l.qty_rejected or 0) > 0 for l in lines)
+        has_grn = GoodsReceiptNote.query.filter_by(po_header_id=po.id).first() is not None
+        has_txn = SupplierTxn.query.filter_by(po_id=po.id).first() is not None
+        if received or has_grn or has_txn:
+            return jsonify(status='error', message=f'{po.po_number} has goods received against it, so it cannot be deleted. It stays in PO history.'), 409
+        number = po.po_number
+        for l in lines:
+            db.session.delete(l)
+        db.session.delete(po)
+        db.session.commit()
+        return jsonify(status='success', deleted=number)
+    except Exception as e:
+        db.session.rollback()
+        return error_response(e)
+
+
 @po_bp.route('/api/po/<int:po_id>/lines', methods=['GET'])
 @roles_required(*PURCHASING_STAFF)
 def get_po_lines_by_id(po_id):
@@ -166,8 +194,9 @@ def get_po_inventory():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return error_response(exc)
-    items = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')
-                                        ).order_by(name_order()).all()
+    items = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).all()
+    ranked = sales_rank(location.id)
+    items.sort(key=lambda item: (GROUP_RANK[group_for(item.category)], -ranked.get(item.id, 0.0), (item.name or '').lower()))
     result = []
     for i in items:
         group = group_for(i.category)
@@ -179,6 +208,7 @@ def get_po_inventory():
         result.append({
             'id': i.id,
             'name': i.name,
+            'sold_kg_30d': round(ranked.get(i.id, 0.0), 2),
             'category': i.category or '',
             'group': group,
             'group_label': GROUP_LABEL[group],
@@ -197,7 +227,7 @@ def get_po_inventory():
             'lysine_pct': i.lysine_pct or 0.0, 'methionine_pct': i.methionine_pct or 0.0,
             'max_inclusion_pct': 100.0 if i.max_inclusion_pct is None else i.max_inclusion_pct
         })
-    result.sort(key=lambda r: (GROUP_RANK[r['group']], r['name'].lower()))
+    result.sort(key=lambda r: (GROUP_RANK[r['group']], -r['sold_kg_30d'], r['name'].lower()))
     return jsonify(result)
 
 
@@ -276,6 +306,28 @@ def set_item_nutrients(item_id):
     return jsonify(status='success')
 
 
+@po_bp.route('/api/po/inventory/<int:item_id>/rename', methods=['POST'])
+@roles_required('admin')
+def rename_item(item_id):
+    """Change an item's name. History, stock, prices and formulas follow the item because they use its id."""
+    from services.formulation_engine import norm
+    data = request.get_json(silent=True) or {}
+    new_name = ' '.join(str(data.get('name') or '').split())
+    if not new_name or len(new_name) > 100 or any(ch in new_name for ch in '<>'):
+        return jsonify(status='error', message='Enter a name of up to 100 characters (no < or >).'), 400
+    item = db.session.get(FeedIngredient, item_id)
+    if not item:
+        return jsonify(status='error', message='Item not found.'), 404
+    for other in FeedIngredient.query.filter(FeedIngredient.id != item_id).all():
+        if other.name.strip().lower() == new_name.lower() or norm(other.name) == norm(new_name):
+            return jsonify(status='error', message=f'"{other.name}" (item #{other.id}) already has this name, or one the '
+                           'importer would treat as the same. Pick a clearly different name.'), 409
+    old_name = item.name
+    item.name = new_name
+    db.session.commit()
+    return jsonify(status='success', id=item.id, old_name=old_name, name=new_name)
+
+
 @po_bp.route('/api/po/inventory/<int:item_id>/active', methods=['POST'])
 @roles_required('admin')
 def set_item_active(item_id):
@@ -338,6 +390,7 @@ def delete_item(item_id):
                        message=f'Cannot delete: item has history ({detail}).'), 409
     try:
         purge_empty_stock_rows(item.id)
+        purge_item_scaffolding(item.id)
         db.session.delete(item)
         db.session.commit()
         return jsonify(status='success')

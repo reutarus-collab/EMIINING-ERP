@@ -1,47 +1,77 @@
 <div id="bags-tab" class="tab-content">
   <div class="card">
     <h3>Bag Prices (admin only)</h3>
-    <p style="font-size:.9rem;color:#666">Enter the price for ONE bag. Leave blank if the item is not sold in that bag. The per-kg price is set under Retail Pricing. A bag price must be above the cost of the bag.</p>
+    <p style="font-size:.9rem;color:#666">Each item has its own bag sizes: wheat bran can be a 45 kg bag and another item a 40 kg bag. Press <b>+ Add bag size</b>, enter the kg in the bag and the price for ONE bag. Leave an item with no bag rows if it is only sold by the kg. The per-kg price is set under Retail Pricing. A bag price must be above the cost of the bag.</p>
+    <input type="search" id="bags-search" placeholder="Search items..." oninput="renderBagPrices()" style="padding:10px;width:100%;max-width:320px;margin-bottom:10px" aria-label="Search items">
     <table class="data-table">
-      <thead><tr><th>Item</th><th>Cost / kg</th><th>Per-kg price</th><th>50 kg bag</th><th>70 kg bag</th><th>Margin</th><th></th></tr></thead>
-      <tbody id="bags-body"><tr><td colspan="7">Loading...</td></tr></tbody>
+      <thead><tr><th>Item</th><th>Cost / kg</th><th>Per-kg price</th><th>Bag sizes and prices</th><th></th></tr></thead>
+      <tbody id="bags-body"><tr><td colspan="5">Loading...</td></tr></tbody>
     </table>
-    <div id="bags-msg" style="margin-top:10px"></div>
+    <div id="bags-msg" role="status" style="margin-top:10px"></div>
   </div>
 </div>
 <script>
+let bagItems = [];                 // items as loaded, each with an editable `packs` list
 function bagMargin(cost, price, size) {
-  if (!price || price <= 0) return '';
-  return size + ' kg: ' + (((price - cost * size) / price) * 100).toFixed(1) + '%';
+  size = parseFloat(size); price = parseFloat(price);
+  if (!(price > 0) || !(size > 0)) return '';
+  return (((price - cost * size) / price) * 100).toFixed(1) + '% margin';
+}
+function bagRowHtml(item, idx) {
+  const p = item.packs[idx];
+  return `<div style="display:flex;gap:6px;align-items:center;margin:3px 0;flex-wrap:wrap">
+    <input type="number" min="1.01" step="any" value="${p.pack_kg === '' ? '' : p.pack_kg}" placeholder="kg" aria-label="Bag size in kg" oninput="bagEdit(${item.id}, ${idx}, 'pack_kg', this.value)" style="width:80px;padding:6px"> kg bag
+    <input type="number" min="0" step="0.01" value="${p.price === '' ? '' : p.price}" placeholder="price" aria-label="Price of one bag" oninput="bagEdit(${item.id}, ${idx}, 'price', this.value)" style="width:110px;padding:6px">
+    <small id="bagm-${item.id}-${idx}" style="color:#555;min-width:90px">${bagMargin(item.cost_per_kg, p.price, p.pack_kg)}</small>
+    <button type="button" class="btn-sm btn-danger" aria-label="Remove this bag size" onclick="bagRemove(${item.id}, ${idx})">x</button></div>`;
+}
+function bagCell(item) {
+  const have = new Set(item.packs.map(p => Number(p.pack_kg)));
+  const quick = (item.bag_size_kg > 1 && !have.has(Number(item.bag_size_kg)))
+    ? ` <button type="button" class="btn-sm" onclick="bagAdd(${item.id}, ${Number(item.bag_size_kg)})">+ ${Number(item.bag_size_kg)} kg</button>` : '';
+  return item.packs.map((_, idx) => bagRowHtml(item, idx)).join('') +
+    `<button type="button" class="btn-sm" onclick="bagAdd(${item.id})">+ Add bag size</button>${quick}`;
+}
+function bagItem(id) { return bagItems.find(i => i.id === id); }
+function bagEdit(id, idx, field, value) {
+  const item = bagItem(id); if (!item) return;
+  item.packs[idx][field] = value;
+  const m = document.getElementById(`bagm-${id}-${idx}`);
+  if (m) m.textContent = bagMargin(item.cost_per_kg, item.packs[idx].price, item.packs[idx].pack_kg);
+}
+function bagRefresh(id) { const c = document.getElementById('bagcell-' + id); if (c) c.innerHTML = bagCell(bagItem(id)); }
+function bagAdd(id, size) { const item = bagItem(id); if (!item) return; item.packs.push({pack_kg: size || '', price: ''}); bagRefresh(id); }
+function bagRemove(id, idx) { const item = bagItem(id); if (!item) return; item.packs.splice(idx, 1); bagRefresh(id); }
+function renderBagPrices() {
+  const body = document.getElementById('bags-body');
+  const q = (document.getElementById('bags-search')?.value || '').toLowerCase().trim();
+  const rows = bagItems.filter(i => !q || i.name.toLowerCase().includes(q));
+  body.innerHTML = rows.map(i =>
+    `<tr><td>${retailEsc(i.name)}</td><td>${i.cost_per_kg.toFixed(2)}</td>
+     <td>${i.kg_price ? i.kg_price.toFixed(2) : '<span style="color:#b00">none</span>'}</td>
+     <td id="bagcell-${i.id}">${bagCell(i)}</td>
+     <td><button type="button" class="btn-sm btn-primary" onclick="saveBagPrices(${i.id})">Save</button></td></tr>`
+  ).join('') || '<tr><td colspan="5">No items.</td></tr>';
 }
 async function loadBagPrices() {
   const body = document.getElementById('bags-body');
   const r = await fetch('/api/admin/packs', {credentials: 'same-origin'});
-  if (!r.ok) { body.innerHTML = '<tr><td colspan="7">Cannot load bag prices.</td></tr>'; return; }
-  const rows = await r.json();
-  body.innerHTML = rows.map(i =>
-    `<tr><td>${retailEsc(i.name)}</td><td>${i.cost_per_kg.toFixed(2)}</td>
-     <td>${i.kg_price ? i.kg_price.toFixed(2) : '<span style="color:#b00">none</span>'}</td>
-     <td><input type="number" min="0" step="0.01" id="p50-${i.id}" value="${i.p50 || ''}" style="width:110px;padding:6px"></td>
-     <td><input type="number" min="0" step="0.01" id="p70-${i.id}" value="${i.p70 || ''}" style="width:110px;padding:6px"></td>
-     <td><small>${[bagMargin(i.cost_per_kg, i.p50, 50), bagMargin(i.cost_per_kg, i.p70, 70)].filter(Boolean).join(' | ') || '-'}</small></td>
-     <td><button class="btn-sm btn-primary" onclick="saveBagPrices(${i.id})">Save</button></td></tr>`
-  ).join('') || '<tr><td colspan="7">No items.</td></tr>';
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="5">Cannot load bag prices.</td></tr>'; return; }
+  bagItems = (await r.json()).map(i => Object.assign(i, {packs: (i.packs || []).map(p => ({pack_kg: p.pack_kg, price: p.price}))}));
+  renderBagPrices();
 }
 async function saveBagPrices(id) {
-  const msg = document.getElementById('bags-msg');
-  const payload = {id: id,
-                   p50: document.getElementById('p50-' + id).value,
-                   p70: document.getElementById('p70-' + id).value};
+  const msg = document.getElementById('bags-msg'), item = bagItem(id);
+  if (!item) return;
   const r = await fetch('/api/admin/packs', {
     method: 'POST', credentials: 'same-origin',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload)
+    body: JSON.stringify({id: id, packs: item.packs})
   });
   const d = await r.json().catch(() => ({status: 'error', message: 'Server error.'}));
   msg.innerHTML = d.status === 'success'
-    ? '<span style="color:green">Saved.</span>'
-    : '<span style="color:red">' + retailEsc(d.message) + '</span>';
+    ? '<span style="color:green">Saved ' + retailEsc(item.name) + '.</span>'
+    : '<span style="color:red">' + retailEsc(item.name) + ': ' + retailEsc(d.message) + '</span>';
   if (d.status === 'success') loadBagPrices();
 }
 </script>

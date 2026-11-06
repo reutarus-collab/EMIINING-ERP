@@ -24,6 +24,10 @@ def create_app(config=None):
         SQLALCHEMY_DATABASE_URI=os.getenv(
             'DATABASE_URL', 'sqlite:///' + os.path.join(base_dir, 'emining_erp.db')),
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        # 'enforce' (default): a blocked formula needs an admin override with a reason, per batch.
+        # 'grace': blocked formulas may be produced by any production role while the system is being finished;
+        # every such batch is still stamped GRACE with the reasons. Set the environment variable to 'grace' and reload.
+        FORMULA_GATE_MODE=os.environ.get('FORMULA_GATE_MODE', 'enforce').strip().lower(),
     )
     if config:
         app.config.update(config)
@@ -55,6 +59,8 @@ def create_app(config=None):
     app.register_blueprint(po_bp)
     app.register_blueprint(reports_bp)
     app.register_blueprint(nutrition_bp)
+    from routes.receipts import receipts_bp
+    app.register_blueprint(receipts_bp)
     init_auth(app)
 
     @app.route('/')

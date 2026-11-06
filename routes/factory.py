@@ -3,7 +3,7 @@ import math
 import uuid
 from datetime import datetime
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 from services.errors import error_response
 
 from routes.auth import roles_required
@@ -23,82 +23,19 @@ factory_bp = Blueprint('factory', __name__)
 @factory_bp.route('/api/formulate', methods=['POST'])
 @roles_required('admin', 'accountant', 'warehouse', 'factory')
 def run_formulation():
-    from services.formulator_service import solve_feed_formulation
-    data = request.get_json(silent=True) or {}
-    species = str(data.get('species') or '').strip()
-    if not species or len(species) > 100:
-        return jsonify(status='error', message='Choose a livestock stage.'), 400
-    try:
-        location = resolve_location(data.get('location_id'))
-        batch = _positive_number(data.get('target_batch_kg'), 'Batch size')
-        raw_ids = data.get('ingredient_ids')
-        if raw_ids is not None:
-            if not isinstance(raw_ids, list) or not raw_ids:
-                raise ValueError('Choose at least one raw ingredient.')
-            raw_ids = sorted({int(value) for value in raw_ids})
-    except (TypeError, ValueError) as exc:
-        return error_response(exc)
-    try:
-        target_cp = float(data.get('target_cp_pct')) if data.get('target_cp_pct') not in (None, '') else None
-        target_me = float(data.get('target_me_mcal')) if data.get('target_me_mcal') not in (None, '') else None
-        target_fiber = float(data.get('target_fiber_max_pct')) if data.get('target_fiber_max_pct') not in (None, '') else None
-    except (TypeError, ValueError):
-        return jsonify(status='error', message='Enter valid protein, energy and fibre targets.'), 400
-    extra = {k: data.get(k) for k in ('min_lysine', 'min_methionine', 'min_calcium', 'max_calcium', 'min_phosphorus')}
-    result = solve_feed_formulation(species, batch, raw_ids, location.id, target_cp, target_me,
-                                    target_fiber, bool(data.get('limit_to_stock')), extra=extra)
-    return jsonify(result), 200 if result.get('status') == 'optimal' else 422
+    return jsonify(status='error', message='The legacy calculator is retired. Create and release a formula in the Formulation Lab.'), 410
 
 
 @factory_bp.route('/api/formulate/requirements', methods=['GET'])
 @roles_required('admin', 'accountant', 'warehouse', 'factory')
 def get_stage_requirements():
-    from services.models import AnimalRequirement
-    species = str(request.args.get('species') or '').strip()
-    row = AnimalRequirement.query.filter_by(species_stage=species).first()
-    return jsonify(species=species, saved=bool(row),
-                   min_cp=(row.min_cp if row and row.min_cp else 16.0),
-                   min_me=(row.min_me if row and row.min_me else 2.5),
-                   max_fiber=(row.max_fiber if row and row.max_fiber else 0.0),
-                   min_lysine=(row.min_lysine if row and row.min_lysine else 0.0),
-                   min_methionine=(row.min_methionine if row and row.min_methionine else 0.0),
-                   min_calcium=(row.min_calcium if row and row.min_calcium else 0.0),
-                   max_calcium=(row.max_calcium if row and row.max_calcium else 0.0),
-                   min_phosphorus=(row.min_phosphorus if row and row.min_phosphorus else 0.0))
+    return jsonify(status='error', message='Legacy animal targets are retired. Use saved requirement profiles in the Formulation Lab.'), 410
 
 
 @factory_bp.route('/api/formulate/requirements', methods=['POST'])
 @roles_required('admin', 'accountant')
 def save_stage_requirements():
-    """Save the targets as this stage's defaults so the calculator opens with them."""
-    from services.models import AnimalRequirement
-    data = request.get_json(silent=True) or {}
-    species = str(data.get('species') or '').strip()
-    if not species or len(species) > 100:
-        return jsonify(status='error', message='Choose a livestock stage.'), 400
-    try:
-        min_cp, min_me, max_fiber = (float(data.get(k) or 0) for k in ('min_cp', 'min_me', 'max_fiber'))
-    except (TypeError, ValueError):
-        return jsonify(status='error', message='Enter numbers for the targets.'), 400
-    if not (0 < min_cp <= 100 and min_me > 0 and 0 <= max_fiber <= 100):
-        return jsonify(status='error', message='Protein must be 0-100%, energy above 0, fibre 0-100% (0 = no limit).'), 400
-    extras = {}
-    for key in ('min_lysine', 'min_methionine', 'min_calcium', 'max_calcium', 'min_phosphorus'):
-        try:
-            extras[key] = float(data.get(key) or 0)
-        except (TypeError, ValueError):
-            return jsonify(status='error', message='Enter numbers for the targets.'), 400
-        if not 0 <= extras[key] <= 100 or extras[key] != extras[key]:
-            return jsonify(status='error', message='Lysine, methionine, calcium and phosphorus limits must be 0-100% (0 = not enforced).'), 400
-    if extras['max_calcium'] > 0 and extras['min_calcium'] > extras['max_calcium']:
-        return jsonify(status='error', message='Minimum calcium cannot be above maximum calcium.'), 400
-    row = AnimalRequirement.query.filter_by(species_stage=species).first() or AnimalRequirement(species_stage=species)
-    row.min_cp, row.min_me, row.max_fiber = min_cp, min_me, max_fiber
-    for key, value in extras.items():
-        setattr(row, key, value)
-    db.session.add(row)
-    db.session.commit()
-    return jsonify(status='success')
+    return jsonify(status='error', message='Legacy animal targets are retired. Use saved requirement profiles in the Formulation Lab.'), 410
 
 
 @factory_bp.route('/api/factory/milling-runs', methods=['GET', 'POST'])
@@ -289,12 +226,30 @@ def record_production_run():
 
     from services.models import SavedFormula
     from routes.nutrition import release_check
-    saved = SavedFormula.query.filter(db.func.lower(SavedFormula.name) == formula_name.lower()).first()
-    if saved is not None:
-        gate = release_check(saved)
-        if gate['controlled'] and not gate['ok']:
-            return jsonify(status='error', message='Formula "%s" is blocked: it does not pass its requirement profile. %s' % (
-                saved.name, ' '.join(gate['reasons'][:4]))), 409
+    try:
+        formula_id = int(data.get('formula_id'))
+    except (TypeError, ValueError):
+        return jsonify(status='error', message='Choose a released saved formula from the Formulation Lab.'), 400
+    saved = db.session.get(SavedFormula, formula_id)
+    if saved is None or saved.name.lower() != formula_name.lower():
+        return jsonify(status='error', message='The selected saved formula does not match this production run.'), 409
+    gate = release_check(saved)
+    gate_status, gate_reasons, override_by, override_reason = 'PASS', None, None, None
+    if not gate['ok']:
+        gate_reasons = ' '.join(gate['reasons'])[:2000]
+        blocked_msg = 'Formula "%s" is blocked: %s' % (saved.name, ' '.join(gate['reasons'][:4]))
+        mode = str(current_app.config.get('FORMULA_GATE_MODE', 'enforce')).lower()
+        reason = str(data.get('override_reason') or '').strip()
+        if mode == 'grace':
+            gate_status, override_by, override_reason = 'GRACE', g.user.username, (reason[:200] or None)
+        elif data.get('override'):
+            if getattr(g.user, 'role', None) != 'admin':
+                return jsonify(status='error', message=blocked_msg + ' Only an admin can release a blocked formula.'), 403
+            if len(reason) < 10:
+                return jsonify(status='error', message='Give a reason (at least 10 characters) to release a blocked formula.'), 400
+            gate_status, override_by, override_reason = 'OVERRIDDEN', g.user.username, reason[:200]
+        else:
+            return jsonify(status='error', message=blocked_msg, can_override=getattr(g.user, 'role', None) == 'admin'), 409
     try:
         location = resolve_location(data.get('location_id'))
         output_id = int(data.get('output_ingredient_id'))
@@ -341,6 +296,14 @@ def record_production_run():
                 )
 
         input_total = sum(row[2] for row in inputs)
+        planned_total = sum(row[1] for row in inputs)
+        expected = {line.ingredient_id: float(line.pct) for line in saved.lines}
+        if planned_total <= 0 or set(expected) != {row[0] for row in inputs}:
+            raise ValueError('Planned batch ingredients must match the selected released formula.')
+        for ingredient_id, planned_qty, _actual_qty in inputs:
+            expected_qty = planned_total * expected.get(ingredient_id, 0.0) / 100.0
+            if abs(planned_qty - expected_qty) > max(0.05, planned_total * 0.0005):
+                raise ValueError(f'Planned quantity for {by_id[ingredient_id].name} does not match the saved formula.')
         if actual_output > input_total + 0.01:
             raise ValueError('Actual output exceeds total ingredient input. Verify the scale readings and include every material added to the batch.')
         loss_kg = max(0.0, input_total - actual_output)
@@ -362,6 +325,11 @@ def record_production_run():
             created_by=g.user.username,
             created_at=datetime.utcnow(),
             location_id=location.id,
+            formula_id=saved.id,
+            gate_status=gate_status,
+            gate_reasons=gate_reasons,
+            override_by=override_by,
+            override_reason=override_reason,
         )
         db.session.add(run)
         db.session.flush()
@@ -411,6 +379,7 @@ def record_production_run():
         loss_pct=round(loss_pct, 2),
         yield_gain_kg=round(max(0.0, actual_output - input_total), 2),
         total_input_cost=round(input_cost, 2),
+        gate_status=gate_status,
     )
 
 
@@ -438,6 +407,10 @@ def production_run_history():
         'loss_cost': round(run.loss_cost, 2),
         'created_by': run.created_by or '',
         'created_at': run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '',
+        'gate_status': run.gate_status or '',
+        'override_by': run.override_by or '',
+        'override_reason': run.override_reason or '',
+        'gate_reasons': run.gate_reasons or '',
     } for run in runs])
 
 
@@ -498,7 +471,11 @@ def _formula_json(fm, costs):
                       'ingredient_name': ing.name if ing else '?',
                       'pct': ln.pct, 'cost_per_kg': round(c, 2)})
     total = sum(l['pct'] for l in lines)
-    return {'id': fm.id, 'name': fm.name, 'notes': fm.notes or '',
+    from routes.nutrition import release_check
+    gate = release_check(fm)
+    return {'id': fm.id, 'name': fm.name, 'notes': fm.notes or '', 'controlled': gate.get('controlled', False),
+            'releasable': gate.get('ok', False), 'release_reasons': gate.get('reasons', []),
+            'gate_mode': str(current_app.config.get('FORMULA_GATE_MODE', 'enforce')).lower(),
             'total_pct': round(total, 4), 'lines': lines,
             'cost_per_kg': round(weighted / total, 2) if total else 0.0,
             'unpriced': unpriced}

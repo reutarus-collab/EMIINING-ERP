@@ -142,6 +142,33 @@ class NutritionRouteTests(unittest.TestCase):
         bad = c.post('/api/nutrition/ingredient-values', json={'cells': [{'ingredient_id': self.maize.id, 'code': 'CP', 'value': -1}]})
         self.assertEqual(bad.status_code, 400)
 
+    def test_local_confirmed_lab_value_wins_over_import_and_keeps_history(self):
+        self.post('/api/nutrition/import/ingredients', json={'text': 'Ingredient\tCP\tSource\nMaize\t45.4\timport layers std.xlsx', 'commit': True})
+        local = self.post('/api/nutrition/ingredient-values', json={'cells': [
+            {'ingredient_id': self.maize.id, 'code': 'CP', 'value': 30, 'source': 'Local lab certificate 2026-10'}]})
+        self.assertEqual(local.status_code, 200, local.get_data(as_text=True))
+        self.post('/api/nutrition/import/ingredients', json={'text': 'Ingredient\tCP\tSource\nMaize\t46.1\timport layers std.xlsx', 'commit': True})
+        row = IngredientNutrient.query.filter_by(ingredient_id=self.maize.id, nutrient_code='CP').one()
+        self.assertEqual((row.value, row.source_type, row.confirmed), (30, 'local', True))
+        history = self.c().get(f'/api/nutrition/ingredient-values/{self.maize.id}/CP/history').get_json()['values']
+        self.assertTrue(any(x['value'] == 45.4 and 'import layers' in x['source'] for x in history))
+
+    def test_requirement_generator_converts_energy_ratio_and_saves_unreleased_profile(self):
+        preset = self.post('/api/nutrition/presets', json={
+            'name':'Owner broiler preset', 'genotype':'Owner strain', 'stage':'Starter',
+            'age_min_days':1, 'age_max_days':21, 'sid_lys_g_mcal':3.0,
+            'ideal_aa':{'SID_MET':45.0}, 'me_min_mcal':2.8, 'me_max_mcal':3.0,
+            'source':'Breeder guide supplied by owner'}).get_json()
+        self.assertEqual(preset['status'], 'success')
+        generated = self.post('/api/nutrition/profiles/generate', json={
+            'preset_id':preset['id'], 'target_me_mcal':2.9, 'age_days':14, 'name':'Generated starter test'}).get_json()
+        self.assertFalse(generated['released'])
+        self.assertAlmostEqual(generated['sid_lys_pct'], 0.87)
+        profile = RequirementProfile.query.filter_by(name='Generated starter test').one()
+        self.assertEqual((profile.lines[0].nutrient_code, profile.lines[0].min_value, profile.lines[0].max_value), ('ME', 2.8, 3.0))
+        self.assertEqual((profile.lines[1].nutrient_code, profile.lines[1].min_value), ('SID_LYS', 0.87))
+        self.assertEqual((profile.lines[2].nutrient_code, profile.lines[2].per, profile.lines[2].min_value), ('SID_MET', 'SID_LYS', 45.0))
+
     # ---- requirements import ----------------------------------------------------------------------
     def test_your_pasted_table_becomes_correct_lines(self):
         pre = self.post('/api/nutrition/import/requirements', json={'text': USER_TABLE}).get_json()
@@ -165,8 +192,8 @@ class NutritionRouteTests(unittest.TestCase):
         self.assertEqual(r['status'], 'missing_data')
         c = self.c('factory')
         c.post('/api/nutrition/ingredient-values', json={'cells': [
-            {'ingredient_id': self.maize.id, 'code': 'CP', 'value': 9}, {'ingredient_id': self.maize.id, 'code': 'CA', 'value': 0.02},
-            {'ingredient_id': self.soya.id, 'code': 'CP', 'value': 44}, {'ingredient_id': self.soya.id, 'code': 'CA', 'value': 0.3}]})
+            {'ingredient_id': self.maize.id, 'code': 'CP', 'value': 9, 'source':'test analysis'}, {'ingredient_id': self.maize.id, 'code': 'CA', 'value': 0.02, 'source':'test analysis'},
+            {'ingredient_id': self.soya.id, 'code': 'CP', 'value': 44, 'source':'test analysis'}, {'ingredient_id': self.soya.id, 'code': 'CA', 'value': 0.3, 'source':'test analysis'}]})
         r = self.post('/api/nutrition/optimize', json=body).get_json()
         self.assertEqual(r['status'], 'optimal', r)
         v = self.post('/api/nutrition/verify', json={'recipe': [{'ingredient_id': i['ingredient_id'], 'pct': i['pct']} for i in r['recipe']], 'lines': lines}).get_json()
@@ -177,7 +204,7 @@ class NutritionRouteTests(unittest.TestCase):
     def _controlled_formula(self):
         c = self.c('factory')
         c.post('/api/nutrition/ingredient-values', json={'cells': [
-            {'ingredient_id': self.maize.id, 'code': 'CP', 'value': 9}, {'ingredient_id': self.soya.id, 'code': 'CP', 'value': 44}]})
+            {'ingredient_id': self.maize.id, 'code': 'CP', 'value': 9, 'source':'test analysis'}, {'ingredient_id': self.soya.id, 'code': 'CP', 'value': 44, 'source':'test analysis'}]})
         pid = c.post('/api/nutrition/profiles', json={'name': 'P1', 'species': 'poultry', 'lines': [{'code': 'CP', 'min': 20}]}).get_json()['id']
         r = c.post('/api/nutrition/formulas', json={'name': 'Layer X', 'profile_id': pid, 'recipe': [
             {'ingredient_id': self.maize.id, 'pct': 50}, {'ingredient_id': self.soya.id, 'pct': 50}]}).get_json()
@@ -195,24 +222,25 @@ class NutritionRouteTests(unittest.TestCase):
         self.assertFalse(chk['ok'])
         self.assertIn('Crude protein', chk['reasons'][0])
         # and production refuses it
-        resp = self.post('/api/factory/produce', json={'formula_name': 'Layer X'}, headers={'Idempotency-Key': str(uuid.uuid4())})
+        resp = self.post('/api/factory/produce', json={'formula_name': 'Layer X', 'formula_id': r['id']}, headers={'Idempotency-Key': str(uuid.uuid4())})
         self.assertEqual(resp.status_code, 409, resp.get_data(as_text=True))
         self.assertIn('blocked', resp.get_json()['message'])
 
     def test_profile_limits_cannot_be_loosened_on_screen_to_pass_a_save(self):
         c = self.c('factory')
         c.post('/api/nutrition/ingredient-values', json={'cells': [
-            {'ingredient_id': self.maize.id, 'code': 'CP', 'value': 9}, {'ingredient_id': self.soya.id, 'code': 'CP', 'value': 44}]})
+            {'ingredient_id': self.maize.id, 'code': 'CP', 'value': 9, 'source':'test analysis'}, {'ingredient_id': self.soya.id, 'code': 'CP', 'value': 44, 'source':'test analysis'}]})
         pid = c.post('/api/nutrition/profiles', json={'name': 'P2', 'lines': [{'code': 'CP', 'min': 30}]}).get_json()['id']
         r = c.post('/api/nutrition/formulas', json={'name': 'Weak', 'profile_id': pid, 'lines': [{'code': 'CP', 'min': 1}],
                                                     'recipe': [{'ingredient_id': self.maize.id, 'pct': 80}, {'ingredient_id': self.soya.id, 'pct': 20}]}).get_json()
         self.assertFalse(r['releasable'])                    # verified against the SAVED profile, not the on-screen edit
 
-    def test_formulas_without_a_profile_are_not_blocked(self):
+    def test_formulas_without_a_profile_are_blocked(self):
         fm = SavedFormula(name='Old formula'); db.session.add(fm); db.session.flush()
         db.session.add(SavedFormulaLine(formula_id=fm.id, ingredient_id=self.maize.id, pct=100)); db.session.commit()
         resp = self.post('/api/factory/produce', json={'formula_name': 'Old formula'}, headers={'Idempotency-Key': str(uuid.uuid4())})
-        self.assertNotEqual(resp.status_code, 409)
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('released saved formula', resp.get_json()['message'])
 
     def test_profile_in_use_cannot_be_deleted(self):
         pid, _ = self._controlled_formula()

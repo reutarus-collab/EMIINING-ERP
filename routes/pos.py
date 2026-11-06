@@ -13,6 +13,7 @@ import json
 from services.db import db
 from services.models import LocationStock, FeedIngredient, Customer, CustomerPayment, CustomerDebtEntry, OrderHeader, OrderLine, PaymentSplit, StockMovement, Location, TillSession, InventoryTransfer, InventoryTransferReceipt, OperatingExpense, TillCashMovement, SalesRefund, SalesRefundLine, IdempotencyKey
 from services.pos_service import process_full_pos_checkout
+from services.sales_rank import sales_rank
 from services.inventory import resolve_location, location_stock, stock_quantity, reserved_quantity, active_till, change_stock, receive_stock
 from routes.auth import roles_required, ALL_STAFF, SALES_FLOOR_STAFF
 from services import business_hours
@@ -53,7 +54,11 @@ def search_products():
     for word in query.split():
         like = f"%{word}%"
         items_query = items_query.filter(db.or_(FeedIngredient.name.ilike(like), FeedIngredient.category.ilike(like)))
-    items = items_query.order_by(db.func.lower(FeedIngredient.name)).all()
+    items = items_query.all()
+    ranked = sales_rank(location.id)
+    items.sort(key=lambda item: (-ranked.get(item.id, 0.0), (item.name or '').lower()))
+    # One query for this outlet's stock instead of two queries per item.
+    stock_by_item = {r.ingredient_id: r for r in LocationStock.query.filter_by(location_id=location.id).all()}
     packs_by_item = {}
     for pr in ItemPrice.query.order_by(ItemPrice.pack_kg).all():
         if (pr.price or 0) > 0:
@@ -61,12 +66,48 @@ def search_products():
     return jsonify([{
         'id': i.id, 'name': i.name, 'category': i.category or 'Uncategorised',
         'is_service': (i.category or '').strip().lower() == 'milling service',
-        'available_stock_kg': max(0.0, stock_quantity(location.id, i.id) - reserved_quantity(location.id, i.id)),
+        'available_stock_kg': max(0.0, ((stock_by_item[i.id].quantity_kg or 0.0) - (stock_by_item[i.id].reserved_quantity_kg or 0.0)) if i.id in stock_by_item else 0.0),
         'bag_size_kg': i.bag_size_kg,
         'retail_price_kg': round(i.retail_price_per_kg or 0, 2),
+        'sold_kg_30d': round(ranked.get(i.id, 0.0), 2),
         'priced': (i.retail_price_per_kg or 0) > 0 or bool(packs_by_item.get(i.id)),
         'packs': packs_by_item.get(i.id, [])
     } for i in items])
+@pos_bp.route('/api/pos/top-items', methods=['GET'])
+@roles_required(*ALL_STAFF)
+def top_items():
+    """The outlet's best sellers over the last 30 days, each with the pack size it is usually sold in.
+    Read-only; drives the one-tap Quick Items grid on the POS screen."""
+    try:
+        location = resolve_location(request.args.get('location_id'))
+    except ValueError as exc:
+        return error_response(exc)
+    since = datetime.utcnow() - timedelta(days=30)
+    rows = (db.session.query(OrderLine.ingredient_id, OrderLine.unit_type, db.func.count(OrderLine.id).label('n'))
+            .join(OrderHeader, OrderHeader.id == OrderLine.order_id)
+            .filter(OrderHeader.location_id == location.id, OrderHeader.created_at >= since)
+            .group_by(OrderLine.ingredient_id, OrderLine.unit_type).all())
+    best = {}      # ingredient -> [total sales count, usual unit_type, that unit's count]
+    for ing_id, unit_type, n in rows:
+        e = best.setdefault(ing_id, [0, unit_type, 0])
+        e[0] += n
+        if n > e[2]:
+            e[1], e[2] = unit_type, n
+    out = []
+    volume = sales_rank(location.id)
+    for ing_id, (total, unit_type, _) in sorted(best.items(), key=lambda kv: (-volume.get(kv[0], 0.0), -kv[1][0]))[:12]:
+        ut = (unit_type or 'KG').upper()
+        pack = 1.0
+        if ut.endswith('KG BAG'):
+            try:
+                pack = float(ut[:-len('KG BAG')])
+            except ValueError:
+                pack = 1.0
+        out.append({'ingredient_id': ing_id, 'pack_kg': pack, 'sales': total,
+                    'sales_kg_30d': round(volume.get(ing_id, 0.0), 2)})
+    return jsonify(out)
+
+
 @pos_bp.route('/api/inventory', methods=['GET'])
 @roles_required(*ALL_STAFF)
 def get_inventory():
@@ -76,10 +117,14 @@ def get_inventory():
     except ValueError as exc:
         return error_response(exc)
     out = []
-    for i in FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).order_by(db.func.lower(FeedIngredient.name)).all():
+    ranked = sales_rank(location.id)
+    items = FeedIngredient.query.filter(db.or_(FeedIngredient.category.is_(None), FeedIngredient.category != 'Milling Service')).all()
+    items.sort(key=lambda item: (-ranked.get(item.id, 0.0), (item.name or '').lower()))
+    for i in items:
         row = {'id': i.id, 'name': i.name, 'category': i.category,
                'stock_quantity_kg': stock_quantity(location.id, i.id),
                'is_active': i.is_active is not False,
+               'sold_kg_30d': round(ranked.get(i.id, 0.0), 2),
                'location_id': location.id, 'location_name': location.name}
         if show_cost:
             row['cost_per_kg'] = i.cost_per_kg
@@ -283,6 +328,8 @@ def checkout():
         if not till:
             raise ValueError('Open a till session for this outlet before completing a sale.')
         data['location_id'] = location.id
+        data['location_name'] = location.name
+        data['cashier_name'] = g.user.username
         data['till_session_id'] = till.id
         result = process_full_pos_checkout(data, idempotency_key=key, request_hash=request_hash,
                                            created_by=g.user.username)
@@ -564,32 +611,55 @@ def adjust_inventory():
 @roles_required('admin', 'warehouse')
 @idempotent('transfer-send')
 def transfer_inventory():
+    """Dispatch one or many items to another outlet in ONE action. Pass `items: [{ingredient_id, quantity_kg}]`
+    (the older single ingredient_id / quantity_kg body still works). Either every line is dispatched or none is."""
     data = request.get_json(silent=True) or {}
     try:
         source = resolve_location(data.get('from_location_id'))
-        destination_id = int(data.get('to_location_id'))
-        ingredient = db.session.get(FeedIngredient, int(data.get('ingredient_id')))
-        quantity = float(data.get('quantity_kg'))
+        destination = db.session.get(Location, int(data.get('to_location_id')))
         reason = str(data.get('reason') or '').strip()
-        destination = db.session.get(Location, destination_id)
         if not source or not destination or source.id == destination.id:
             raise ValueError('Choose two different valid outlets.')
-        if not ingredient or not math.isfinite(quantity) or quantity <= 0:
-            raise ValueError('Choose an item and enter a positive transfer quantity.')
         if len(reason) < 4 or len(reason) > 200:
-            raise ValueError('Enter a transfer reason (4–200 characters).')
-        ref = 'TRF-' + uuid.uuid4().hex[:10].upper()
-        source_stock = location_stock(source.id, ingredient.id, lock=True)
-        dispatch_cost = source_stock.unit_cost_per_kg or 0.0
-        change_stock(source.id, ingredient, -quantity, 'TRANSFER_OUT', ref, reason)
-        db.session.add(InventoryTransfer(transfer_no=ref, from_location_id=source.id,
-                                         to_location_id=destination.id, ingredient_id=ingredient.id,
-                                         quantity_kg=quantity, received_quantity_kg=0.0,
-                                         unit_cost_per_kg=dispatch_cost,
-                                         status='IN_TRANSIT', reason=reason,
-                                         created_by=g.user.username))
+            raise ValueError('Enter a transfer reason (4\u2013200 characters).')
+        raw_items = data.get('items')
+        if raw_items is None:
+            raw_items = [{'ingredient_id': data.get('ingredient_id'), 'quantity_kg': data.get('quantity_kg')}]
+        if not isinstance(raw_items, list) or not raw_items:
+            raise ValueError('Add at least one item to transfer.')
+        if len(raw_items) > 40:
+            raise ValueError('A transfer can carry at most 40 items. Split it into two.')
+        wanted = {}                                   # the same item twice becomes one line
+        for entry in raw_items:
+            try:
+                iid, qty = int((entry or {}).get('ingredient_id')), float((entry or {}).get('quantity_kg'))
+            except (TypeError, ValueError):
+                raise ValueError('Every line needs an item and a quantity in kg.')
+            if not math.isfinite(qty) or qty <= 0 or qty > 10_000_000:
+                raise ValueError('Every quantity must be above zero.')
+            wanted[iid] = wanted.get(iid, 0.0) + qty
+        items = []
+        for iid, qty in wanted.items():
+            ingredient = db.session.get(FeedIngredient, iid)
+            if not ingredient:
+                raise ValueError('One of the items no longer exists. Reload and try again.')
+            items.append((ingredient, qty))
+        base = 'TRF-' + uuid.uuid4().hex[:10].upper()
+        refs = []
+        for n, (ingredient, qty) in enumerate(items, start=1):
+            ref = base if len(items) == 1 else f'{base}-{n}'
+            source_stock = location_stock(source.id, ingredient.id, lock=True)
+            dispatch_cost = source_stock.unit_cost_per_kg or 0.0
+            change_stock(source.id, ingredient, -qty, 'TRANSFER_OUT', ref, reason)      # raises if short: nothing is kept
+            db.session.add(InventoryTransfer(transfer_no=ref, from_location_id=source.id,
+                                             to_location_id=destination.id, ingredient_id=ingredient.id,
+                                             quantity_kg=qty, received_quantity_kg=0.0,
+                                             unit_cost_per_kg=dispatch_cost,
+                                             status='IN_TRANSIT', reason=reason,
+                                             created_by=g.user.username))
+            refs.append(ref)
         db.session.commit()
-        return jsonify(status='success', transfer_no=ref, status_text='IN_TRANSIT')
+        return jsonify(status='success', transfer_no=refs[0], transfer_nos=refs, lines=len(refs), status_text='IN_TRANSIT')
     except Exception as exc:
         db.session.rollback()
         return error_response(exc)
@@ -911,3 +981,73 @@ def sales_summary():
                       'gross_sales': round(gross, 2), 'refunds': round(refunds, 2),
                       'net_sales': round(gross - refunds, 2), 'credit_given': round(credit, 2)}
     return jsonify(location=location.name, periods=out)
+
+
+def _pack_kg_from_unit_type(unit_type):
+    """'KG' -> 1, '45KG BAG' -> 45, 'KG SERVICE' -> 1 (service). Returns (kg_per_unit, is_bag, is_service)."""
+    import re
+    ut = str(unit_type or '').upper()
+    if 'SERVICE' in ut:
+        return 1.0, False, True
+    m = re.match(r'\s*([0-9]+(?:\.[0-9]+)?)\s*KG\s*BAG', ut)
+    if m:
+        return float(m.group(1)), True, False
+    return 1.0, False, False
+
+
+@pos_bp.route('/api/sales-history/top-products', methods=['GET'])
+@roles_required(*SALES_FLOOR_STAFF)
+def top_products():
+    """Best sellers for a period, by sales value: kg sold, bags sold, share of sales. Refunds are taken off.
+    Profit is only returned to admin and accountant."""
+    try:
+        location = resolve_location(request.args.get('location_id'))
+    except ValueError as exc:
+        return error_response(exc)
+    windows = _period_windows()
+    period = request.args.get('period') or 'this_month'
+    if period not in windows:
+        return jsonify(status='error', message='Unknown period.'), 400
+    try:
+        limit = max(1, min(50, int(request.args.get('limit') or 10)))
+    except ValueError:
+        limit = 10
+    first, last = windows[period]
+    start, end = _utc_window(first, last)
+    rows = (db.session.query(OrderLine, OrderHeader.id)
+            .join(OrderHeader, OrderHeader.id == OrderLine.order_id)
+            .filter(OrderHeader.location_id == location.id, OrderHeader.status == 'COMPLETED',
+                    OrderHeader.created_at >= start, OrderHeader.created_at < end).all())
+    line_ids = [l.id for l, _ in rows]
+    refunded_kg = {}
+    if line_ids:
+        for lid, kg in db.session.query(SalesRefundLine.order_line_id, db.func.sum(SalesRefundLine.quantity_kg)) \
+                .filter(SalesRefundLine.order_line_id.in_(line_ids)).group_by(SalesRefundLine.order_line_id).all():
+            refunded_kg[lid] = kg or 0.0
+    agg = {}
+    for line, _oid in rows:
+        pack, is_bag, is_service = _pack_kg_from_unit_type(line.unit_type)
+        gross_kg = (line.qty_entered or 0.0) * pack
+        kg = max(0.0, gross_kg - refunded_kg.get(line.id, 0.0))
+        share = (kg / gross_kg) if gross_kg > 0 else 0.0
+        revenue = (line.subtotal or 0.0) * share
+        a = agg.setdefault(line.ingredient_id, {'kg': 0.0, 'bags': 0.0, 'revenue': 0.0, 'cost': 0.0, 'sales': set()})
+        a['kg'] += kg
+        a['bags'] += (line.qty_entered or 0.0) * share if is_bag else 0.0
+        a['revenue'] += revenue
+        a['cost'] += kg * (line.unit_cost_per_kg or 0.0) if not is_service else 0.0
+        a['sales'].add(_oid)
+    names = {i.id: i.name for i in FeedIngredient.query.filter(FeedIngredient.id.in_(list(agg) or [0])).all()}
+    total = sum(a['revenue'] for a in agg.values())
+    show_profit = getattr(g.user, 'role', None) in ('admin', 'accountant')
+    ranked = sorted(agg.items(), key=lambda kv: kv[1]['revenue'], reverse=True)[:limit]
+    products = []
+    for iid, a in ranked:
+        row = {'id': iid, 'name': names.get(iid, 'Item'), 'kg_sold': round(a['kg'], 2), 'bags_sold': round(a['bags'], 2),
+               'sales': round(a['revenue'], 2), 'orders': len(a['sales']),
+               'share_pct': round(100.0 * a['revenue'] / total, 1) if total > 0 else 0.0}
+        if show_profit:
+            row['profit'] = round(a['revenue'] - a['cost'], 2)
+        products.append(row)
+    return jsonify(location=location.name, period=period, **{'from': first.isoformat(), 'to': last.isoformat()},
+                   total_sales=round(total, 2), products=products, show_profit=show_profit)

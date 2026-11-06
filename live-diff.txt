@@ -1,0 +1,82 @@
+ M app.py
+ M routes/auth.py
+ M routes/nutrition.py
+ M routes/po.py
+ M routes/pos.py
+ M routes/retail.py
+ M services/db.py
+ M services/models.py
+ M services/pos_service.py
+ M static/js/nutrition.js
+ M static/js/pos.js
+ M templates/base.html
+ M templates/dashboard.html
+ M templates/tabs/bagprices_tab.html
+ M templates/tabs/formulator_tab.html
+ M templates/tabs/po_tab.html
+ M templates/tabs/pos_tab.html
+ M templates/tabs/retail_tab.html
+ M templates/tabs/sales_tab.html
+ M tests/test_nov_features.py
+ M tests/test_oct26_features.py
+ M tests/test_pos.py
+?? live-diff.txt
+?? routes/receipts.py
+?? services/receipt.py
+?? templates/tabs/insights_tab.html
+?? tests/test_receipts_and_insights.py
+diff --git a/templates/dashboard.html b/templates/dashboard.html
+index 6e38f66..d27ae4b 100644
+--- a/templates/dashboard.html
++++ b/templates/dashboard.html
+@@ -84,6 +84,7 @@ input, select, textarea {
+   <button class="tab-btn" onclick="showTab('stock-tab'); loadStock();">📦 Stock</button>
+   <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('expenses-tab'); loadExpenses(); if (typeof loadTillMovementHistory === 'function') loadTillMovementHistory();">💸 Expenses</button>
+   <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('report-tab'); loadDailyReport();">📊 Daily Report</button>
++  <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('insights-tab'); loadInsights();">📈 Insights</button>
+   <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('money-tab'); initMoneyReports();">💵 Money & leaks</button>
+   <button class="tab-btn" data-roles="admin" onclick="showTab('pricing-tab'); loadPrices();">💰 Retail Pricing</button>
+   <button class="tab-btn" data-roles="admin" onclick="showTab('bags-tab'); loadBagPrices();">Bag Prices</button>
+@@ -102,12 +103,13 @@ input, select, textarea {
+ {% include "tabs/formulator_tab.html" %}
+ {% include "tabs/factory_tab.html" %}
+ {% include "tabs/retail_tab.html" %}
++{% include "tabs/insights_tab.html" %}
+ {% include "tabs/bagprices_tab.html" %}
+ {% include "tabs/payables_tab.html" %}
+ 
+ <!-- ==================== SCRIPTS ==================== -->
+ <script src="/static/js/main.js?v=12"></script>
+-<script src="/static/js/pos.js?v=21"></script>
++<script src="/static/js/pos.js?v=22"></script>
+ <script src="/static/js/factory.js?v=18"></script>
+ <script src="/static/js/nutrition.js?v=2"></script>
+ <script src="/static/js/reports.js?v=4"></script>
+diff --git a/templates/tabs/pos_tab.html b/templates/tabs/pos_tab.html
+index 49a6414..1151550 100644
+--- a/templates/tabs/pos_tab.html
++++ b/templates/tabs/pos_tab.html
+@@ -118,6 +118,23 @@ window.escHtml = window.escHtml || function (s) {
+           </select>
+         </div>
+ 
++        <div id="discount-extra" style="display:none; margin:-10px 0 16px; padding:10px; background:#fff8e1; border-radius:6px;">
++          <select id="discount-reason" style="width:100%; height:46px; font-size:16px; margin-bottom:8px;" aria-label="Discount reason">
++            <option value="">-- Why the discount? (required) --</option>
++            <option value="BULK">Bulk purchase</option><option value="LOYAL">Loyal customer</option><option value="PROMO">Promotion</option>
++            <option value="DAMAGED">Damaged / short-dated stock</option><option value="STAFF">Staff</option><option value="OTHER">Other</option>
++          </select>
++          <input type="text" id="discount-approver" maxlength="100" placeholder="Approved by (name) - needed above 2%" style="width:100%; height:46px; font-size:16px;" aria-label="Discount approved by">
++        </div>
++
++        <div id="walkin-capture" style="margin-bottom:16px;">
++          <label style="font-size:14px;"><strong>Customer phone (optional, builds their history):</strong></label>
++          <div style="display:flex; gap:8px; flex-wrap:wrap;">
++            <input type="tel" id="new-cust-phone" inputmode="tel" maxlength="20" placeholder="0712 345 678" style="flex:1 1 150px; height:46px; font-size:16px;">
++            <input type="text" id="new-cust-name" maxlength="100" placeholder="Name (optional)" style="flex:1 1 150px; height:46px; font-size:16px;">
++          </div>
++        </div>
++
+         <label style="font-size: 16px;"><strong>Cashier Manual Entry:</strong></label>
+         <div id="payment-lines"></div>
+         <button class="btn-sm" style="height: 40px; font-size: 16px; margin-top: 5px; margin-bottom: 20px;" onclick="addPaymentLine()">+ Add Split Payment</button>

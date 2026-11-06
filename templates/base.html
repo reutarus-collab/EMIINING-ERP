@@ -5,25 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EMINING ERP - Online</title>
   <link rel="manifest" href="/static/manifest.json">
-  <meta name="theme-color" content="#007bff">
+  <meta name="theme-color" content="#0f4d34">
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background-color: #f4f6f9; color: #333; }
-    header { background: #212529; color: #fff; padding: 1rem; text-align: center; display: flex; justify-content: space-between; align-items: center; }
+    header { background: #0f4d34; color: #fff; padding: 1rem; text-align: center; display: flex; justify-content: space-between; align-items: center; }
     nav a { color: #fff; margin: 0 10px; text-decoration: none; font-weight: bold; }
     .container { padding: 20px; max-width: 1200px; margin: 0 auto; }
     .card { background: #fff; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }
     .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; }
     .online { background: #28a745; color: #fff; }
     .offline { background: #dc3545; color: #fff; }
-    button { background: #007bff; color: #fff; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
-    button:hover { background: #0056b3; }
+    button { background: #1b7f4f; color: #fff; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #145f3b; }
   </style>
-  <link rel="stylesheet" href="/static/css/ui-mobile.css?v=5">
+  <link rel="stylesheet" href="/static/css/ui-mobile.css?v={{ asset_v("css/ui-mobile.css") }}">
   <script src="/static/js/idem.js?v=4"></script>
 </head>
 <body>
   <header>
-    <h2>EMINING Feed ERP System</h2>
+    <h2>EMINING FEEDS <small style="font-size:.72em;font-weight:500;opacity:.82">ERP</small></h2>
     <nav>
       <a href="/">Dashboard</a>
       <span id="network-status" class="status-badge online" aria-live="polite">ONLINE · SERVER REQUIRED</span>
@@ -48,6 +48,7 @@
     window.addEventListener('offline', updateStatus);
     updateStatus();
   </script>
-  <script src="/static/js/ui-mobile.js?v=5"></script>
+  <script src="/static/js/ui-mobile.js?v={{ asset_v("js/ui-mobile.js") }}"></script>
 </body>
 </html>
+

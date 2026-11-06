@@ -73,6 +73,12 @@ NUTRIENT_SEED = [
     _n('SID_VAL', 'SID Valine', '%', 'asfed', 'amino', ['sid valine', 'sid val', 'valine sid']),
     _n('SID_HIS', 'SID Histidine', '%', 'asfed', 'amino', ['sid histidine', 'sid his', 'histidine sid']),
     _n('SID_PHE', 'SID Phenylalanine', '%', 'asfed', 'amino', ['sid phenylalanine', 'sid phe', 'phenylalanine sid']),
+    _n('SID_GLY', 'SID Glycine', '%', 'asfed', 'amino', ['sid glycine', 'sid gly', 'glycine sid']),
+    _n('SID_SER', 'SID Serine', '%', 'asfed', 'amino', ['sid serine', 'sid ser', 'serine sid']),
+    _n('SID_GLYSER', 'SID Glycine + Serine', '%', 'asfed', 'amino', ['sid gly ser', 'sid glycine serine']),
+    _n('SID_CYS', 'SID Cystine', '%', 'asfed', 'amino', ['sid cystine', 'sid cysteine', 'sid cys', 'cystine sid']),
+    _n('SID_TYR', 'SID Tyrosine', '%', 'asfed', 'amino', ['sid tyrosine', 'sid tyr', 'tyrosine sid']),
+    _n('SID_TAAA', 'SID Phenylalanine + Tyrosine', '%', 'asfed', 'amino', ['sid phe tyr', 'sid phenylalanine tyrosine']),
     _n('LA', 'Linoleic acid C18:2', '%', 'asfed', 'basic', ['linoleic acid', 'linoleic', 'c18 2', 'la']),
     _n('CHOLINE', 'Choline', 'mg/kg', 'asfed', 'vitamin', ['choline']),
     _n('FOLATE', 'Folate', 'mg/kg', 'asfed', 'vitamin', ['folate', 'folic acid']),
@@ -226,6 +232,12 @@ def _label(line, nutrients):
     if per == 'dm':
         return f'{base} (per kg DM)' if (n and n.basis != 'dm') else base
     d = nutrients.get(per)
+    if (n and d and n.code.startswith('SID_') and n.unit == '%'
+            and d.unit == 'Mcal/kg' and line['scale'] == 10.0):
+        return f'{base} (g/Mcal {d.name})'
+    if (n and d and n.code.startswith('SID_') and n.unit == '%'
+            and d.unit == 'kcal/kg' and line['scale'] == 10000.0):
+        return f'{base} (g/Mcal {d.name})'
     return f'{base} : {d.name if d else per}' if line['scale'] == 1.0 else f'{base} as % of {d.name if d else per}'
 
 
@@ -264,6 +276,12 @@ def clean_line(raw, nutrients):
         line['unit'] = n.unit
     elif per == 'dm':
         line['unit'] = n.unit if n.basis == 'dm' else f'{n.unit} of DM'
+    elif (n.code.startswith('SID_') and n.unit == '%' and nutrients[per].unit == 'Mcal/kg'
+          and line['scale'] == 10.0):
+        line['unit'] = 'g/Mcal'
+    elif (n.code.startswith('SID_') and n.unit == '%' and nutrients[per].unit == 'kcal/kg'
+          and line['scale'] == 10000.0):
+        line['unit'] = 'g/Mcal'
     elif line['scale'] == 100.0:
         line['unit'] = f'% of {nutrients[per].name}'
     else:
@@ -325,11 +343,13 @@ def recipe_cost(recipe, prices):
     return sum(x * float(prices.get(i, 0.0)) for i, x in recipe.items())
 
 
-def formula_data_hash(recipe_pct, lines, table):
+def formula_data_hash(recipe_pct, lines, table, bounds=None):
     """Fingerprint of everything a verification depended on."""
     body = {'r': sorted((int(i), round(float(p), 4)) for i, p in recipe_pct.items()),
             'l': [[l['code'], l['per'], l['scale'], l['min'], l['max'], l['tolerance'], l['required'], l['enabled']] for l in lines],
-            't': {str(i): {c: (None if v is None else round(v, 6)) for c, v in sorted(table[i].items())} for i in sorted(table)}}
+            't': {str(i): {c: (None if v is None else round(v, 6)) for c, v in sorted(table[i].items())} for i in sorted(table)},
+            'b': {str(i): [round(float(v.get('min', 0)), 6), round(float(v.get('max', 100)), 6)]
+                  for i, v in sorted((bounds or {}).items())}}
     return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
 
 
@@ -372,6 +392,10 @@ def verify(recipe_pct, lines, table, info, bounds=None, total_tol=0.1):
             issues.append(f'{meta["name"]} is {p:.3f}%, below its minimum of {lo:g}%.')
         if p > 0 and (meta.get('price') or 0) <= 0:
             warnings.append(f'{meta["name"]} has no price, so cost is understated.')
+    for iid, bound in bounds.items():
+        if iid not in recipe_pct and float(bound.get('min', 0.0)) > 1e-4:
+            meta = info.get(iid, {'name': f'Ingredient {iid}'})
+            issues.append(f'{meta["name"]} is 0%, below its minimum of {float(bound["min"]):g}%.')
     frac = {i: p / total for i, p in recipe_pct.items()} if total > 0 else {}
     results = evaluate(frac, lines, table) if frac else []
     failed = [r for r in results if r['status'] == 'fail']
@@ -466,6 +490,11 @@ def optimize(ids, lines, table, nutrients, info, bounds=None, batch_kg=1000.0, p
     active = [l for l in lines if l.get('enabled', True)]
     lp_lines = [l for l in active if l.get('required', True) and (l.get('min') is not None or l.get('max') is not None)]
     ids = list(ids)
+
+    omitted_required = [(i, b) for i, b in bounds.items() if float(b.get('min', 0.0)) > 0 and i not in ids]
+    if omitted_required:
+        return dict(status='infeasible', message='A selected profile requires an ingredient that was not selected: ' +
+                    ', '.join(info.get(i, {}).get('name', f'Ingredient {i}') for i, _ in omitted_required), diagnosis=[])
 
     # 1) data completeness: missing data is never silently treated as zero
     missing = []

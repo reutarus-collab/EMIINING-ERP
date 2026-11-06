@@ -2,6 +2,7 @@ let cart = [];
 let heldCart = [];
 let customersCache = [];
 let searchResultsCache = [];
+let catalogViewMode = 'grid';
 let activeLocationId = '';
 let currentTill = null;
 let pendingCheckoutAttempt = null;
@@ -23,8 +24,9 @@ async function initOutletTill() {
     }
     activeLocationId = select.value;
     window.activeLocationId = activeLocationId;
-    searchProducts();   // the first search ran before the outlet was known
+    reloadCatalog();   // the first load ran before the outlet was known
     await refreshTill();
+    if (document.getElementById('dashboard-tab')?.classList.contains('active') && typeof loadDashboard === 'function') loadDashboard();
     if (typeof loadCustomers === 'function') loadCustomers();
     if (typeof loadFactoryDropdowns === 'function') loadFactoryDropdowns();
     if (typeof loadProductionRuns === 'function') loadProductionRuns();
@@ -39,7 +41,8 @@ async function changePosLocation() {
   activeLocationId = document.getElementById('pos-location').value;
   window.activeLocationId = activeLocationId;
   await refreshTill();
-  searchProducts();
+  if (document.getElementById('dashboard-tab')?.classList.contains('active') && typeof loadDashboard === 'function') loadDashboard();
+  reloadCatalog();
   if (typeof loadCustomers === 'function') loadCustomers();
   if (typeof loadStock === 'function') loadStock();
   if (typeof loadDailyReport === 'function') loadDailyReport();
@@ -107,8 +110,43 @@ async function recordTillMovement() {
   await refreshTill();
 }
 
-let searchSeq = 0, searchTimer = null;
-function searchProductsSoon() { clearTimeout(searchTimer); searchTimer = setTimeout(searchProducts, 150); }
+// ---- Catalogue cache: ONE server call per outlet, then search is instant and local. ----
+let catalogCache = [], catalogLoadedAt = 0, catalogLoading = null, catalogSeq = 0, topItemsCache = [], quickItemPrefs = null;
+const CATALOG_STALE_MS = 120000;
+const SEARCH_ROW_LIMIT = 30;
+function kes(n) { return Number(n || 0).toLocaleString('en-US', {maximumFractionDigits: 2}); }
+function searchProductsSoon() { searchProducts(); }   // local filtering is instant; no debounce needed
+function reloadCatalog() {
+  const seq = ++catalogSeq;
+  const loc = encodeURIComponent(activeLocationId || '');
+  catalogLoading = (async () => {
+    try {
+      const [res, topRes] = await Promise.all([
+        fetch(`/api/products/search?location_id=${loc}`, { credentials: 'same-origin' }),
+        fetch(`/api/pos/top-items?location_id=${loc}`, { credentials: 'same-origin' }).catch(() => null)
+      ]);
+      const items = await res.json();
+      if (!res.ok || !Array.isArray(items)) throw new Error((items && items.message) || 'Could not load items');
+      if (seq !== catalogSeq) return;                      // outlet changed while loading
+      catalogCache = items; catalogLoadedAt = Date.now();
+      let top = [];
+      try { top = (topRes && topRes.ok) ? await topRes.json() : []; } catch (_) {}
+      topItemsCache = Array.isArray(top) ? top : [];
+      try { quickItemPrefs = JSON.parse(localStorage.getItem(`eminingQuickItems:${activeLocationId}`) || 'null'); }
+      catch (_) { quickItemPrefs = null; }
+    } catch (e) {
+      if (seq === catalogSeq && !catalogCache.length) {
+        document.getElementById('search-results').innerHTML = `<div style="padding:10px;color:#b00;">Could not load items: ${escHtml(e.message)}</div>`;
+      }
+      return;
+    } finally { if (seq === catalogSeq) catalogLoading = null; }
+    renderQuickItems(); searchProducts();
+  })();
+  return catalogLoading;
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && catalogLoadedAt && !catalogLoading && Date.now() - catalogLoadedAt > CATALOG_STALE_MS) reloadCatalog();
+});
 async function loadCategories() {
   const sel = document.getElementById('category-filter');
   if (!sel) return;
@@ -119,39 +157,112 @@ async function loadCategories() {
     const cur = sel.value;
     sel.innerHTML = '<option value="">All Categories</option>' + cats.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
     sel.value = cur;
+    renderPosCategoryChips();
   } catch (e) { /* keep whatever options are already in the page */ }
 }
-async function searchProducts() {
-  const seq = ++searchSeq;
-  const q = document.getElementById('search-input').value;
-  const cat = document.getElementById('category-filter').value;
+function renderPosCategoryChips() {
+  const box = document.getElementById('pos-category-chips'), sel = document.getElementById('category-filter');
+  if (!box || !sel) return;
+  const active = sel.value || '';
+  const values = Array.from(sel.options).map(o => ({value:o.value, label:o.textContent}));
+  box.innerHTML = values.map(o => `<button type="button" class="pos-category-chip ${o.value === active ? 'is-active' : ''}" aria-pressed="${o.value === active}" data-category="${escHtml(o.value)}" onclick="choosePosCategory(this.dataset.category)">${escHtml(o.label)}</button>`).join('');
+}
+function choosePosCategory(category) {
+  const select = document.getElementById('category-filter'); if (!select) return;
+  select.value = category; renderPosCategoryChips(); searchProducts();
+}
+function setCatalogView(mode) {
+  catalogViewMode = mode === 'list' ? 'list' : 'grid';
+  const box = document.getElementById('search-results');
+  const gridButton = document.getElementById('catalog-grid-btn');
+  const listButton = document.getElementById('catalog-list-btn');
+  if (box) box.classList.toggle('is-product-list', catalogViewMode === 'list');
+  if (gridButton) gridButton.setAttribute('aria-pressed', String(catalogViewMode === 'grid'));
+  if (listButton) listButton.setAttribute('aria-pressed', String(catalogViewMode === 'list'));
+}
+function searchProducts() {
   const div = document.getElementById('search-results');
-  let items;
-  try {
-    const res = await fetch(`/api/products/search?q=${encodeURIComponent(q)}&category=${encodeURIComponent(cat)}&location_id=${encodeURIComponent(activeLocationId)}`, { credentials: 'same-origin' });
-    items = await res.json();
-    if (!res.ok || !Array.isArray(items)) throw new Error((items && items.message) || 'Search failed');
-  } catch (e) {
-    if (seq === searchSeq) div.innerHTML = `<div style="padding:10px;color:#b00;">Could not load items: ${escHtml(e.message)}</div>`;
-    return;
-  }
-  if (seq !== searchSeq) return;   // a newer search is already running
+  if (!catalogLoadedAt) { if (!catalogLoading) reloadCatalog(); div.innerHTML = '<div style="padding:10px;">Loading items…</div>'; return; }
+  if (!catalogLoading && Date.now() - catalogLoadedAt > CATALOG_STALE_MS) reloadCatalog();   // quiet background refresh
+  const words = (document.getElementById('search-input').value || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const cat = (document.getElementById('category-filter').value || '').trim().toLowerCase();
+  renderPosCategoryChips();
+  const items = catalogCache.filter(i => {
+    if (cat && (i.category || '').toLowerCase() !== cat) return false;
+    const hay = ((i.name || '') + ' ' + (i.category || '')).toLowerCase();
+    return words.every(w => hay.includes(w));
+  });
   searchResultsCache = items;
   if (items.length === 0) { div.innerHTML = '<div style="padding:10px;">No items match.</div>'; return; }
-  div.innerHTML = `<div style="padding:4px 8px;font-size:.8rem;color:#666;">${items.length} item${items.length === 1 ? '' : 's'}</div>` + items.map(i => {
-    const tiers = [];
-    if ((i.retail_price_kg || 0) > 0) tiers.push('KSh ' + i.retail_price_kg + '/kg');
-    (i.packs || []).forEach(p => tiers.push(p.pack_kg + 'kg bag KSh ' + p.price));
-    const priceText = tiers.length ? tiers.join(' | ') : '<b style="color:#b00">NO PRICE</b>';
+  const shown = items.slice(0, SEARCH_ROW_LIMIT);
+  div.innerHTML = shown.map(i => {
     const stock = Number(i.available_stock_kg || 0);
     const noStock = !i.is_service && stock <= 0;
-    const btn = !i.priced ? '<button class="btn-sm" disabled>No price</button>'
-      : noStock ? '<button class="btn-sm" disabled>Out of stock</button>'
-      : `<button class="btn-sm btn-primary" onclick="addToCart(${i.id})">Add</button>`;
-    return `<div class="product-row">
-      <div><b>${escHtml(i.name)}</b> <span style="font-size:0.75rem; background:#e9ecef; padding:1px 4px; border-radius:3px;">${escHtml(i.category)}</span><br/><small>${i.is_service ? 'Charged per kg · customer grain is not company stock' : `Stock: ${stock.toFixed(2)} kg`} | ${priceText}</small></div>
-      ${btn}</div>`;
-  }).join('');
+    const packOptions = buildPackOptions(i);
+    const smallestPack = packOptions.reduce((smallest, o) => Math.min(smallest, o.pack_kg), Infinity);
+    const lowStock = !i.is_service && !noStock && Number.isFinite(smallestPack) && stock < smallestPack;
+    let btns;
+    if (!i.priced) btns = '<button class="btn-sm" disabled>No price</button>';
+    else if (noStock) btns = '<button class="btn-sm" disabled>Out of stock</button>';
+    else btns = packOptions.map(o => `<button type="button" class="pack-btn" aria-label="Add ${escHtml(i.name)}, ${escHtml(o.label)}, KSh ${kes(o.price)}" onclick="addToCart(${i.id}, ${o.pack_kg})"><span>${escHtml(o.label)}</span><strong>KSh ${kes(o.price)}</strong><span class="pack-add-mark" aria-hidden="true">+</span></button>`).join('');
+    return `<article class="pos-product-card">
+      <div class="product-card-meta"><span class="product-category">${escHtml(i.category)}</span><span class="product-stock ${noStock ? 'is-out' : (lowStock ? 'is-low' : 'is-ok')}">${i.is_service ? 'Service' : (noStock ? 'Out of stock' : `${stock.toFixed(2)} kg available`)}</span></div>
+      <h3>${escHtml(i.name)}</h3>
+      <p class="product-card-note">${i.is_service ? 'Charged per kilogram; customer grain is not company stock.' : (lowStock ? 'Low stock · less than one configured pack remains.' : 'Choose a configured pack size.')}</p>
+      <div class="product-pack-options">${btns}</div></article>`;
+  }).join('') + (items.length > shown.length ? `<div style="padding:8px;font-size:.85rem;color:#666;">Showing ${shown.length} of ${items.length}. Type more to narrow.</div>` : '');
+  div.classList.add('is-product-grid');
+  div.classList.toggle('is-product-list', catalogViewMode === 'list');
+}
+function renderQuickItems() {
+  const box = document.getElementById('quick-items'), card = document.getElementById('quick-card');
+  if (!box) return;
+  const selected = Array.isArray(quickItemPrefs) ? quickItemPrefs : topItemsCache.map(t => ({id:t.ingredient_id, pack_kg:t.pack_kg}));
+  const btns = [];
+  selected.forEach(t => {
+    const i = catalogCache.find(x => x.id === Number(t.id));
+    if (!i || !i.priced) return;
+    if (!i.is_service && Number(i.available_stock_kg || 0) <= 0) return;
+    const opts = buildPackOptions(i); if (!opts.length) return;
+    const o = opts.find(p => Math.abs(p.pack_kg - Number(t.pack_kg)) < 0.0005) || opts[0];
+    btns.push(`<button class="quick-btn" onclick="addToCart(${i.id}, ${o.pack_kg})">${escHtml(i.name)}<small>${escHtml(o.label)} · KSh ${kes(o.price)}</small></button>`);
+  });
+  if (card) card.style.display = '';
+  box.innerHTML = btns.length ? btns.join('') : '<p>No quick items selected yet. Use Edit Quick items to choose products.</p>';
+}
+
+function toggleQuickEditor(force) {
+  const editor = document.getElementById('quick-items-editor');
+  if (!editor) return;
+  const open = force === undefined ? editor.hidden : !!force;
+  editor.hidden = !open;
+  if (open) renderQuickItemEditor();
+}
+function renderQuickItemEditor() {
+  const box = document.getElementById('quick-items-editor-list');
+  if (!box) return;
+  const selected = Array.isArray(quickItemPrefs) ? quickItemPrefs : topItemsCache.map(t => ({id:t.ingredient_id, pack_kg:t.pack_kg}));
+  const byId = new Map(selected.map(t => [Number(t.id), Number(t.pack_kg)]));
+  const candidates = catalogCache.filter(i => i.priced && (i.is_service || Number(i.available_stock_kg || 0) > 0));
+  box.innerHTML = candidates.map(i => {
+    const opts = buildPackOptions(i), current = byId.get(i.id);
+    const options = opts.map(o => `<option value="${o.pack_kg}" ${Math.abs(o.pack_kg - (current || opts[0]?.pack_kg || 0)) < 0.0005 ? 'selected' : ''}>${escHtml(o.label)} · KSh ${kes(o.price)}</option>`).join('');
+    return `<label class="quick-editor-row"><input type="checkbox" class="quick-editor-check" value="${i.id}" ${byId.has(i.id) ? 'checked' : ''}><span>${escHtml(i.name)}</span><select class="quick-editor-pack" data-item-id="${i.id}">${options}</select></label>`;
+  }).join('') || '<p>No priced, in-stock products available.</p>';
+}
+function saveQuickItems() {
+  const rows = Array.from(document.querySelectorAll('#quick-items-editor-list .quick-editor-check:checked'));
+  const msg = document.getElementById('quick-items-editor-message');
+  if (rows.length > 12) { if (msg) msg.textContent = 'Select no more than 12 items.'; return; }
+  quickItemPrefs = rows.map(check => ({id:Number(check.value), pack_kg:Number(document.querySelector(`.quick-editor-pack[data-item-id="${check.value}"]`)?.value || 1)}));
+  try { localStorage.setItem(`eminingQuickItems:${activeLocationId}`, JSON.stringify(quickItemPrefs)); }
+  catch (_) { if (msg) msg.textContent = 'Could not save on this device. Check browser storage settings.'; return; }
+  renderQuickItems(); toggleQuickEditor(false);
+}
+function resetQuickItems() {
+  quickItemPrefs = null;
+  try { localStorage.removeItem(`eminingQuickItems:${activeLocationId}`); } catch (_) {}
+  renderQuickItems(); renderQuickItemEditor();
 }
 
 function buildPackOptions(item) {
@@ -160,20 +271,36 @@ function buildPackOptions(item) {
   (item.packs || []).forEach(p => out.push({ pack_kg: p.pack_kg, price: p.price, label: p.pack_kg + ' kg bag' }));
   return out;
 }
-function addToCart(itemId) {
-  const item = searchResultsCache.find(i => i.id === itemId);
+// Warn at tap time, not at the end of the queue. The server still re-checks stock at checkout.
+function stockAllows(item, packKg, qty, excludeIdx) {
+  if (item.is_service) return true;
+  let kg = packKg * qty;
+  cart.forEach((c, i) => { if (c.id === item.id && i !== excludeIdx) kg += c.qty * c.bag_size_kg; });
+  const avail = Number(item.available_stock_kg || 0);
+  if (kg > avail + 0.0001) { alert(`Only ${avail.toFixed(2)} kg of ${item.name} in stock at this outlet.`); return false; }
+  return true;
+}
+function addToCart(itemId, packKg) {
+  const item = catalogCache.find(i => i.id === itemId);
   if (!item) return;
   const options = buildPackOptions(item);
   if (options.length === 0) return alert('This item has no price set.');
-  const first = options[0];
-  const existing = cart.find(c => c.id === item.id && c.bag_size_kg === first.pack_kg);
+  const chosen = (packKg != null && options.find(o => Math.abs(o.pack_kg - packKg) < 0.0005)) || options[0];
+  const existing = cart.find(c => c.id === item.id && c.bag_size_kg === chosen.pack_kg);
+  if (!stockAllows(item, chosen.pack_kg, (existing ? existing.qty : 0) + 1, existing ? cart.indexOf(existing) : -1)) return;
   if (existing) {
       existing.qty += 1;
   } else {
-      cart.push({ id: item.id, name: item.name, options: options, bag_size_kg: first.pack_kg,
-                  unit_type: first.pack_kg === 1 ? 'KG' : 'BAG', unit_price: first.price, qty: 1 });
+      cart.push({ id: item.id, name: item.name, options: options, bag_size_kg: chosen.pack_kg,
+                  unit_type: chosen.pack_kg === 1 ? 'KG' : 'BAG', unit_price: chosen.price, qty: 1 });
   }
   renderCart();
+}
+function bumpQty(idx, delta) {
+  const c = cart[idx]; if (!c) return;
+  const next = Math.max(1, c.qty + delta);
+  if (delta > 0) { const item = catalogCache.find(i => i.id === c.id); if (item && !stockAllows(item, c.bag_size_kg, next, idx)) return; }
+  c.qty = next; renderCart();
 }
 function updateCartUnit(idx, packKg) {
   const line = cart[idx];
@@ -197,13 +324,24 @@ function calculateChange() {
 }
 
 function renderCart() {
+  if (tenderState) { tenderState = null; resetPaymentLines(); }   // total changed: pick the payment again
   const tbody = document.getElementById('cart-body');
+  const itemCount = cart.reduce((sum, item) => sum + (Number(item.qty) || 0), 0);
+  const countLabel = itemCount + (itemCount === 1 ? ' item' : ' items');
+  const stageCount = document.getElementById('pos-cart-count'); if (stageCount) stageCount.textContent = itemCount;
+  const stickyCount = document.getElementById('sticky-count'); if (stickyCount) stickyCount.textContent = countLabel;
+  const desktopCount = document.getElementById('pos-cart-count-desktop');
+  if (desktopCount) desktopCount.textContent = countLabel;
+  const cartCount = document.getElementById('pos-cart-count');
+  if (cartCount) cartCount.textContent = itemCount;
   tbody.innerHTML = '';
   let subtotal = 0;
   if (cart.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #888; padding: 20px;">Cart is empty.</td></tr>';
     document.getElementById('cart-total').textContent = '0.00';
+    const sticky = document.getElementById('sticky-total'); if (sticky) sticky.textContent = '0.00';
     calculateChange();
+    renderTenderBar();
     return;
   }
   cart.forEach((c, idx) => {
@@ -213,20 +351,22 @@ function renderCart() {
       `<option value="${o.pack_kg}" ${o.pack_kg === c.bag_size_kg ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('');
     tbody.innerHTML += `<tr>
       <td><b>${escHtml(c.name)}</b></td>
-      <td><input type="number" value="${c.qty}" step="any" min="0.1" onchange="cart[${idx}].qty=Math.max(0.1, parseFloat(this.value)); renderCart()" style="width: 80px; text-align: center; padding: 10px; font-size: 16px; height: 50px;" /></td>
+      <td><div class="qty-step"><button type="button" aria-label="Decrease ${escHtml(c.name)} quantity" onclick="bumpQty(${idx}, -1)">−</button><input type="number" aria-label="${escHtml(c.name)} quantity" inputmode="decimal" value="${c.qty}" step="any" min="0.1" onchange="cart[${idx}].qty=Math.max(0.1, parseFloat(this.value)||1); renderCart()" /><button type="button" aria-label="Increase ${escHtml(c.name)} quantity" onclick="bumpQty(${idx}, 1)">+</button></div></td>
       <td>
         <select onchange="updateCartUnit(${idx}, this.value)" style="height: 50px; font-size: 16px; width: 100%; min-width: 120px;">${opts}</select>
       </td>
       <td style="font-size: 16px;">${c.unit_price.toFixed(2)}</td>
       <td style="font-size: 16px;"><b>${lineTotal.toFixed(2)}</b></td>
-      <td><button class="btn-sm btn-danger" style="height: 50px;" onclick="cart.splice(${idx}, 1); renderCart()">x</button></td>
+      <td><button class="btn-sm btn-danger cart-remove" aria-label="Remove ${escHtml(c.name)}" onclick="cart.splice(${idx}, 1); renderCart()">Remove</button></td>
     </tr>`;
   });
   let discVal = parseFloat(document.getElementById('discount-val').value) || 0;
   let discType = document.getElementById('discount-type').value;
   let absoluteDisc = discType === 'PCT' ? (subtotal * (discVal / 100)) : discVal;
   document.getElementById('cart-total').textContent = Math.max(0, subtotal - absoluteDisc).toFixed(2);
+  const sticky = document.getElementById('sticky-total'); if (sticky) sticky.textContent = document.getElementById('cart-total').textContent;
   calculateChange();
+  renderTenderBar();
 }
 function clearCart() { 
     cart = []; 
@@ -253,13 +393,42 @@ function restoreCart() {
 }
 
 function paymentRowHtml() {
-    return `<div class="split-row" style="margin-bottom: 10px; flex-wrap: wrap;"><select class="p-method" onchange="onPayMethodChange(this)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="number" min="0" step="0.01" class="p-fee" placeholder="Deduction (KSh)" title="M-Pesa / bank charge deducted from this payment" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;" /></div>`;
+    return `<div class="split-row" style="margin-bottom: 10px; flex-wrap: wrap;"><select class="p-method" onchange="onPayMethodChange(this)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="number" min="0" step="0.01" class="p-fee" placeholder="Deduction (KSh)" title="M-Pesa / bank charge deducted from this payment" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /></div>`;
 }
 function onPayMethodChange(select) {
     const fee = select.closest('.split-row').querySelector('.p-fee');
     const show = select.value === 'MPESA' || select.value === 'BANK';
     fee.style.display = show ? '' : 'none';
     if (!show) fee.value = '';
+    const ref = select.closest('.split-row').querySelector('.p-ref');
+    ref.style.display = show ? '' : 'none';
+    ref.placeholder = show ? 'M-Pesa / bank code' : 'Ref (Optional)';
+    if (!show) ref.value = '';
+}
+// ---- One-tap payment buttons: fill the payment row so the cashier only presses Complete Sale. ----
+let tenderState = null;
+function tenderTotal() { return Math.round((parseFloat(document.getElementById('cart-total').textContent) || 0) * 100) / 100; }
+function renderTenderBar() {
+  const bar = document.getElementById('tender-bar'); if (!bar) return;
+  const total = tenderTotal();
+  if (cart.length === 0 || total <= 0) { bar.innerHTML = '<div style="color:#888;padding:6px;">Add items to see payment buttons.</div>'; return; }
+  const on = (m, a) => tenderState && tenderState.method === m && Math.abs(tenderState.amount - a) < 0.005 ? ' active' : '';
+  const notes = [];
+  [100, 500, 1000, 5000].forEach(step => { const n = Math.ceil(total / step) * step; if (n > total + 0.001 && !notes.includes(n)) notes.push(n); });
+  let html = `<button type="button" class="tender-btn${on('CASH', total)}" onclick="quickTender('CASH', ${total})">Exact cash<br/><small>KSh ${kes(total)}</small></button>`;
+  notes.slice(0, 3).forEach(n => { html += `<button type="button" class="tender-btn${on('CASH', n)}" onclick="quickTender('CASH', ${n})">Cash ${kes(n)}<br/><small>change ${kes(n - total)}</small></button>`; });
+  html += `<button type="button" class="tender-btn mpesa${on('MPESA', total)}" onclick="quickTender('MPESA', ${total})">M-Pesa<br/><small>KSh ${kes(total)}</small></button>`;
+  if (document.getElementById('customer-select').value) html += `<button type="button" class="tender-btn credit${on('CREDIT', total)}" onclick="quickTender('CREDIT', ${total})">On credit<br/><small>KSh ${kes(total)}</small></button>`;
+  bar.innerHTML = html;
+}
+function quickTender(method, amount) {
+  resetPaymentLines();
+  const row = document.querySelector('#payment-lines .split-row');
+  const sel = row.querySelector('.p-method'); sel.value = method; onPayMethodChange(sel);
+  row.querySelector('.p-amount').value = amount;
+  tenderState = {method: method, amount: amount};
+  calculateChange(); renderTenderBar();
+  if (method === 'MPESA' || method === 'BANK') row.querySelector('.p-ref').focus();
 }
 function resetPaymentLines() {
     document.getElementById('payment-lines').innerHTML = paymentRowHtml();
@@ -275,6 +444,8 @@ function resetSaleForm() {
     document.getElementById('repay-amount').value = '';
     document.getElementById('discount-val').value = 0;
     document.getElementById('discount-type').value = 'KSH';
+    ['discount-reason', 'discount-approver', 'new-cust-phone', 'new-cust-name'].forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+    const customerSearch = document.getElementById('customer-search'); if (customerSearch) { customerSearch.value = ''; filterCustomerOptions(); }
     resetPaymentLines();
     renderCart();
 }
@@ -305,6 +476,11 @@ async function completeCheckout() {
     const discType = document.getElementById('discount-type').value;
     const absoluteDisc = discType === 'PCT' ? (rawSubtotal * (discVal / 100)) : discVal;
     if (absoluteDisc < 0) return alert('Negative discounts are strictly prohibited.');
+    const discReason = document.getElementById('discount-reason').value;
+    const discApprover = document.getElementById('discount-approver').value.trim();
+    if (absoluteDisc > 0 && !discReason) return alert('Choose why this discount is given.');
+    if (absoluteDisc > rawSubtotal * 0.02 + 0.01 && !discApprover && window.currentRole !== 'admin') return alert('A discount above 2% needs the name of the person who approved it.');
+    const newPhone = custId ? '' : document.getElementById('new-cust-phone').value.trim();
     const totalDue = Math.max(0, rawSubtotal - absoluteDisc);
     if (totalDue <= 0) return alert('Cannot complete sale: total amount due is KSh 0.00. Check that items have prices.');
     let explicitTotal = 0, emptyCreditRow = null;
@@ -341,7 +517,8 @@ async function completeCheckout() {
     const cartPayload = cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}));
     attempt = {key:newCheckoutUuid(), owner:window.currentUsername,
       cartFingerprint:JSON.stringify(cartPayload), payload:{customer_id:custId ? parseInt(custId) : null,
-        location_id:activeLocationId, discount_amount:absoluteDisc, cart:cartPayload, payments}};
+        location_id:activeLocationId, discount_amount:absoluteDisc, discount_reason:discReason, discount_approver:discApprover,
+        customer_phone:newPhone, customer_name:newPhone ? document.getElementById('new-cust-name').value.trim() : '', cart:cartPayload, payments}};
     pendingCheckoutAttempt = attempt;
     try { sessionStorage.setItem('pendingCheckoutAttempt', JSON.stringify(attempt)); } catch (_) {}
   }
@@ -365,10 +542,10 @@ async function completeCheckout() {
           pendingCheckoutAttempt = null;
           try { sessionStorage.removeItem('pendingCheckoutAttempt'); } catch (_) {}
           await loadCustomers();
-          renderReceipt(data.data);
+          renderReceipt(data.data, attempt.payload);
           if (JSON.stringify(cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}))) === attempt.cartFingerprint) { clearCart(); resetSaleForm(); }
           else alert('The earlier checkout was confirmed. Your current cart was kept separate.');
-          searchProducts();
+          reloadCatalog();   // refresh stock after the sale
           if (typeof loadSalesHistory === 'function') loadSalesHistory();
       } else {
           if (res.status === 400) {
@@ -381,13 +558,15 @@ async function completeCheckout() {
       alert('Online only: no connection or response. The sale may have reached the server. Keep this tab open and retry before re-entering the sale; the same checkout key will prevent duplicates.');
   } finally { checkoutInFlight = false; }
 }
-function renderReceipt(data) {
-  document.getElementById('r-date').textContent = new Date().toLocaleString(); 
-  document.getElementById('r-id').textContent = data.sale_id; 
+function renderReceipt(data, payload) {
+  const completedAt = data.completed_at ? new Date(data.completed_at) : new Date();
+  document.getElementById('r-date').textContent = Number.isNaN(completedAt.getTime()) ? new Date().toLocaleString() : completedAt.toLocaleString();
+  document.getElementById('r-id').textContent = data.receipt_no || data.sale_id;
+  window.lastReceiptOrderId = data.order_id;
   
   const cSel = document.getElementById('customer-select');
   const custId = cSel.value;
-  let customerDisplayText = "Walk-In Cash Customer";
+  let customerDisplayText = data.customer_name || "Walk-in customer";
   let debtText = "";
 
   if (custId) {
@@ -398,13 +577,25 @@ function renderReceipt(data) {
       }
   }
 
-  document.getElementById('r-cust').innerHTML = `<strong>${escHtml(customerDisplayText)}</strong>${debtText}`; 
+  document.getElementById('r-cust').innerHTML = `<strong>${escHtml(customerDisplayText)}</strong>${debtText}`;
+  document.getElementById('r-branch').textContent = data.location_name || '---';
+  document.getElementById('r-cashier').textContent = data.cashier_name || '---';
   document.getElementById('r-total').textContent = data.total_amount.toFixed(2); 
   
   const linesDiv = document.getElementById('r-lines');
   linesDiv.innerHTML = ''; 
   data.items.forEach(i => { 
       linesDiv.innerHTML += `<div style="display:flex; justify-content:space-between; margin-bottom: 4px;"><span>${i.qty_entered} ${i.unit} x ${escHtml(i.name)}</span><span>KSh ${i.subtotal.toFixed(2)}</span></div>`; 
+  });
+
+  const paymentDiv = document.getElementById('r-payments');
+  paymentDiv.innerHTML = '';
+  (data.payments || []).forEach(payment => {
+    const method = escHtml(String(payment.method || '').replace('_', ' '));
+    const reference = payment.reference ? ` · Ref ${escHtml(payment.reference)}` : '';
+    const fee = Number(payment.fee || 0);
+    const feeText = fee > 0 ? ` (fee KSh ${fee.toFixed(2)})` : '';
+    paymentDiv.innerHTML += `<div style="display:flex; justify-content:space-between;"><span>${method}${reference}${feeText}</span><span>KSh ${Number(payment.amount || 0).toFixed(2)}</span></div>`;
   });
 
   linesDiv.innerHTML += `<hr style="border-top: 1px dashed #333; margin: 5px 0;"/>`;
@@ -419,8 +610,9 @@ function renderReceipt(data) {
   }
   if(waBtn) {
       waBtn.disabled = false;
-      waBtn.onclick = shareWhatsApp; // Binds the new tab logic
+      waBtn.onclick = () => window.lastReceiptOrderId ? shareReceiptImage(window.lastReceiptOrderId) : shareWhatsApp();
   }
+  if (typeof window.setPosStage === 'function') window.setPosStage('receipt');
 }
 
 // 1. Opens WhatsApp in a New Tab
@@ -490,17 +682,34 @@ async function loadCustomers() {
     sel.innerHTML = '<option value="">CASH CUSTOMER (Walk-In)</option><option disabled>Could not load customers - ' + escHtml(e.message) + '</option>';
     return;
   }
-  let html = '<option value="">CASH CUSTOMER (Walk-In)</option>';
-  customersCache.forEach(c => {
-    const locText = c.location && c.location !== 'Unknown' ? ` (${escHtml(c.location)})` : '';
-    const phone = c.phone ? ` - ${escHtml(c.phone)}` : '';
-    html += `<option value="${c.id}">${escHtml(c.name)}${locText}${phone} - Debt: KSh ${Number(c.balance || 0).toFixed(2)}</option>`;
+  renderCustomerOptions(currentSelVal);
+  updateCustomerDetails();
+}
+
+function renderCustomerOptions(selectedId) {
+  const sel = document.getElementById('customer-select'); if (!sel) return;
+  const query = (document.getElementById('customer-search')?.value || '').trim().toLowerCase();
+  let matches = customersCache.filter(c => !query || `${c.name || ''} ${c.phone || ''} ${c.location || ''}`.toLowerCase().includes(query));
+  if (selectedId && !matches.some(c => String(c.id) === String(selectedId))) {
+    const selected = customersCache.find(c => String(c.id) === String(selectedId)); if (selected) matches = [selected, ...matches];
+  }
+  let html = '<option value="">Walk-in customer</option>';
+  matches.forEach(c => {
+    const locText = c.location && c.location !== 'Unknown' ? ` · ${escHtml(c.location)}` : '';
+    const phone = c.phone ? ` · ${escHtml(c.phone)}` : '';
+    html += `<option value="${c.id}">${escHtml(c.name)}${phone}${locText} · Balance KSh ${Number(c.balance || 0).toFixed(2)}</option>`;
   });
+  if (query && !matches.length) html += '<option disabled>No customers match this search</option>';
   sel.innerHTML = html;
-  sel.value = currentSelVal; updateCustomerDetails();
+  if (selectedId) sel.value = selectedId;
+}
+function filterCustomerOptions() {
+  const selectedId = document.getElementById('customer-select')?.value || '';
+  renderCustomerOptions(selectedId);
 }
 
 function updateCustomerDetails() {
+  if (typeof renderTenderBar === 'function') renderTenderBar();
   const selId = document.getElementById('customer-select').value;
   const card = document.getElementById('customer-credit-card');
   if (!selId) { card.style.display = 'none'; return; }
@@ -617,9 +826,24 @@ async function loadSalesSummary() {
       <small>${p.orders} sales${p.refunds ? ' · refunds ' + Number(p.refunds).toFixed(0) : ''}${p.credit_given ? ' · credit ' + Number(p.credit_given).toFixed(0) : ''}</small></button>`;
   }).join('');
 }
+async function loadTopProducts() {
+  const box = document.getElementById('top-products');
+  if (!box) return;
+  const period = (document.getElementById('top-period') || {}).value || 'this_month';
+  try {
+    const res = await fetch('/api/sales-history/top-products?limit=10&period=' + encodeURIComponent(period) + '&location_id=' + encodeURIComponent(activeLocationId), { credentials: 'same-origin' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { box.textContent = d.message || 'Could not load top products.'; return; }
+    if (!d.products.length) { box.textContent = 'No sales in this period.'; return; }
+    const money = v => Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    box.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Product</th><th>Sold</th><th>Sales (KSh)</th><th>% of sales</th>${d.show_profit ? '<th>Profit (KSh)</th>' : ''}</tr></thead><tbody>` +
+      d.products.map((p, i) => `<tr><td>${i + 1}</td><td>${escHtml(p.name)}</td><td>${Number(p.kg_sold).toLocaleString(undefined, { maximumFractionDigits: 1 })} kg${p.bags_sold ? ' (' + Number(p.bags_sold).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' bags)' : ''}</td><td>${money(p.sales)}</td><td>${p.share_pct}%</td>${d.show_profit ? `<td>${money(p.profit)}</td>` : ''}</tr>`).join('') +
+      `</tbody></table><small style="color:#666">Total sales in period: KSh ${money(d.total_sales)} (refunds taken off)</small>`;
+  } catch (e) { box.textContent = 'Could not load top products.'; }
+}
 async function loadSalesHistory(append) {
   append = append === true;
-  if (!append) { salesOffset = 0; loadSalesSummary(); }
+  if (!append) { salesOffset = 0; loadSalesSummary(); loadTopProducts(); }
   const q = new URLSearchParams({location_id: activeLocationId, limit: '200'});
   if (salesOffset > 0) q.set('offset', salesOffset);
   const ticket = append ? salesLoadTicket : ++salesLoadTicket;   // a newer filter click cancels an older, slower load
@@ -671,9 +895,10 @@ function showSaleReceipt(orderId) {
   ov.innerHTML = `<div style="background:#fff;border-radius:10px;max-width:360px;width:100%;max-height:90vh;overflow:auto;padding:16px;font-family:monospace">
     <style>#sale-receipt-overlay h3,#sale-receipt-overlay p{text-align:center;margin:4px 0}#sale-receipt-overlay hr{border:0;border-top:1px dashed #000;margin:8px 0}#sale-receipt-overlay .r-row{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px}</style>
     <div id="sale-receipt-body">${saleReceiptHtml(s)}</div>
-    <div style="display:flex;gap:8px;margin-top:12px;font-family:system-ui"><button class="btn-primary" style="flex:1;min-height:44px" id="sale-receipt-print">Print</button><button class="btn-info" style="flex:1;min-height:44px" id="sale-receipt-close">Close</button></div></div>`;
+    <div style="display:flex;gap:8px;margin-top:12px;font-family:system-ui"><button class="btn-primary" style="flex:1;min-height:44px" id="sale-receipt-print">Print</button><button class="btn-success" style="flex:1;min-height:44px" id="sale-receipt-share">Share image</button><button class="btn-info" style="flex:1;min-height:44px" id="sale-receipt-close">Close</button></div></div>`;
   document.body.appendChild(ov);
   document.getElementById('sale-receipt-close').onclick = () => ov.remove();
+  const shareBtn = document.getElementById('sale-receipt-share'); if (shareBtn) shareBtn.onclick = () => shareReceiptImage(orderId);
   ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
   document.getElementById('sale-receipt-print').onclick = () => {
     const w = window.open('', '', 'width=400,height=600');
@@ -709,3 +934,52 @@ async function refundSale(orderId, refundable) {
 }
 resetPaymentLines();
 window.addEventListener('load', initOutletTill);
+
+
+// ---- receipt as an image: attach it from the share sheet (pick the customer's chat there)
+async function shareReceiptImage(orderId) {
+  try {
+    const res = await fetch('/api/receipts/' + orderId + '.png', {credentials: 'same-origin'});
+    if (!res.ok) throw new Error('Could not build the receipt image.');
+    const blob = await res.blob();
+    const file = new File([blob], 'receipt-' + orderId + '.png', {type: 'image/png'});
+    if (navigator.canShare && navigator.canShare({files: [file]})) {
+      await navigator.share({files: [file], title: 'Emining Feeds receipt'});
+    } else {
+      const a = document.createElement('a');            // no share sheet (desktop): save the picture instead
+      a.href = URL.createObjectURL(blob); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;            // the person closed the share sheet
+    alert(e.message || 'Could not share the receipt.');
+  }
+}
+
+// ---- show the reason/approver boxes only while a discount is typed
+document.addEventListener('input', e => {
+  if (e.target && e.target.id === 'discount-val') {
+    document.getElementById('discount-extra').style.display = (parseFloat(e.target.value) || 0) > 0 ? 'block' : 'none';
+  }
+});
+document.addEventListener('change', e => {
+  if (e.target && (e.target.id === 'discount-val' || e.target.id === 'discount-type')) {
+    document.getElementById('discount-extra').style.display = (parseFloat(document.getElementById('discount-val').value) || 0) > 0 ? 'block' : 'none';
+  }
+  if (e.target && e.target.id === 'customer-select') {
+    document.getElementById('walkin-capture').style.display = e.target.value ? 'none' : '';
+  }
+});
+
+async function verifyReceipt() {
+  const ref = document.getElementById('verify-ref').value.trim(), code = document.getElementById('verify-code').value.trim();
+  const out = document.getElementById('verify-out');
+  if (!ref || !code) { out.innerHTML = '<span style="color:#b00">Enter the receipt number and the check code.</span>'; return; }
+  try {
+    const r = await fetch('/api/receipts/verify?ref=' + encodeURIComponent(ref) + '&code=' + encodeURIComponent(code), {credentials: 'same-origin'});
+    const d = await r.json();
+    out.innerHTML = d.valid
+      ? `<div style="color:#146c2e;font-weight:700">${escHtml(d.message)}</div><div>${escHtml(d.ref)} &middot; ${escHtml(d.when)} &middot; ${escHtml(d.customer)} &middot; served by ${escHtml(d.cashier)}</div><div><b>KSh ${Number(d.total).toFixed(2)}</b></div><ul>${d.items.map(i => '<li>' + escHtml(i) + '</li>').join('')}</ul>`
+      : `<div style="color:#b00;font-weight:700">${escHtml(d.message || 'Not valid.')}</div>`;
+  } catch (e) { out.innerHTML = '<span style="color:#b00">No connection. Try again.</span>'; }
+}

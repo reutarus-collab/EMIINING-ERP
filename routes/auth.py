@@ -17,20 +17,20 @@ WINDOW = 600  # seconds
 ROLE_ALLOW = {
     'sales': ('/', '/api/me', '/api/customers', '/api/inventory',
               '/api/locations', '/api/products', '/api/pos', '/api/sales-history',
-              '/api/stock', '/api/reports', '/api/till', '/api/expenses',
+              '/api/stock', '/api/reports', '/api/till', '/api/expenses', '/api/receipts',
               '/api/price-list.pdf'),
     'warehouse': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
                   '/api/po', '/api/suppliers', '/api/factory', '/api/stock', '/api/expenses',
                   '/api/nutrition/formulas',
                   '/api/till/current', '/api/till/open', '/api/till/close',
                   '/api/till/cash-movements', '/api/price-list.pdf',
-                  '/api/customers', '/api/pos/checkout'),
+                  '/api/customers', '/api/pos/checkout', '/api/receipts'),
     'factory': ('/', '/api/me', '/api/inventory', '/api/locations', '/api/products',
                 '/api/po', '/api/suppliers',
                 '/api/factory', '/api/formulate', '/api/nutrition', '/api/stock', '/api/customers',
                 '/api/pos/checkout', '/api/till/current', '/api/till/open',
                 '/api/till/close', '/api/till/cash-movements', '/api/reports/daily',
-                '/api/sales-history', '/api/expenses', '/api/customers', '/api/price-list.pdf'),
+                '/api/sales-history', '/api/expenses', '/api/customers', '/api/receipts', '/api/price-list.pdf'),
 }
 
 LOGIN_HTML = """<!doctype html>

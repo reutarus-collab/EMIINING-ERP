@@ -66,25 +66,52 @@ def create_purchase_order(data):
     return po.po_number
 
 
+# Rows that merely describe an item (nutrient values, name aliases, saved limits). They are not history:
+# an item with only these can be deleted, and they go with it.
+SCAFFOLDING_TABLES = ('ingredient_nutrients', 'ingredient_nutrient_history', 'formula_aliases',
+                      'profile_ingredient_bounds')
+
+
+# Columns that point at an item but are NOT declared as foreign keys, so the foreign-key scan below cannot see them.
+# Without this list an item with sales or stock history could be deleted, leaving orphaned history rows.
+UNDECLARED_REFERENCES = (
+    ('order_lines', 'ingredient_id'), ('stock_movements', 'ingredient_id'),
+    ('purchase_order_lines', 'ingredient_id'), ('goods_receipt_lines', 'ingredient_id'),
+    ('production_run_lines', 'ingredient_id'), ('production_runs', 'output_ingredient_id'),
+    ('production_batches', 'target_output_ingredient_id'), ('item_prices', 'ingredient_id'),
+    ('inventory_transfers', 'ingredient_id'), ('sales_refund_lines', 'ingredient_id'),
+    ('saved_formula_lines', 'ingredient_id'),
+    ('internal_milling_runs', 'input_ingredient_id'), ('internal_milling_runs', 'output_ingredient_id'),
+)
+
+
 def item_usage(item_id):
-    """Return {table: row_count} for every table that references this item."""
+    """Return {table: row_count} for every table that references this item (descriptive rows excluded)."""
     from sqlalchemy import inspect, text
     from services.db import db
     insp = inspect(db.engine)
-    usage = {}
-    for table in insp.get_table_names():
+    tables = set(insp.get_table_names())
+    usage, seen = {}, set()
+
+    def count(table, col, extra=''):
+        n = db.session.execute(text(f'SELECT COUNT(*) FROM "{table}" WHERE "{col}" = :i{extra}'),
+                               {'i': item_id}).scalar()
+        if n:
+            usage[table] = usage.get(table, 0) + n
+
+    for table in tables:
+        if table in SCAFFOLDING_TABLES:
+            continue
         for fk in insp.get_foreign_keys(table):
             if fk.get('referred_table') == 'feed_ingredients':
                 col = fk['constrained_columns'][0]
-                extra = ''
-                if table == 'location_stocks':
-                    # boot-time backfill creates empty 0-kg rows; those are not history
-                    extra = ' AND (quantity_kg <> 0 OR reserved_quantity_kg <> 0)'
-                n = db.session.execute(
-                    text(f'SELECT COUNT(*) FROM "{table}" WHERE "{col}" = :i{extra}'),
-                    {'i': item_id}).scalar()
-                if n:
-                    usage[table] = usage.get(table, 0) + n
+                seen.add((table, col))
+                # boot-time backfill creates empty 0-kg rows; those are not history
+                extra = ' AND (quantity_kg <> 0 OR reserved_quantity_kg <> 0)' if table == 'location_stocks' else ''
+                count(table, col, extra)
+    for table, col in UNDECLARED_REFERENCES:
+        if table in tables and (table, col) not in seen:
+            count(table, col)
     return usage
 
 
@@ -93,3 +120,13 @@ def purge_empty_stock_rows(item_id):
     from services.models import LocationStock
     LocationStock.query.filter_by(ingredient_id=item_id, quantity_kg=0.0,
                                   reserved_quantity_kg=0.0).delete()
+
+
+def purge_item_scaffolding(item_id):
+    """Remove the descriptive rows (nutrient values, aliases, saved limits) of an item that is being deleted."""
+    from sqlalchemy import inspect, text
+    from services.db import db
+    existing = set(inspect(db.engine).get_table_names())
+    for table in SCAFFOLDING_TABLES:
+        if table in existing:
+            db.session.execute(text(f'DELETE FROM "{table}" WHERE ingredient_id = :i'), {'i': item_id})

@@ -1,0 +1,55 @@
+<div id="insights-tab" class="tab-content">
+  <h3>Insights: products, customers, discounts</h3>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+    <label>Period <select id="ins-days" onchange="loadInsights()" style="min-height:44px"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="365">1 year</option></select></label>
+    <button class="btn-primary" style="min-height:44px" onclick="loadInsights()">Refresh</button>
+  </div>
+  <div id="ins-note" class="card" style="font-size:.9rem"></div>
+  <div class="card"><h4>Products (most sold first, inside each group)</h4><div id="ins-products" style="overflow-x:auto"></div></div>
+  <div class="card"><h4>Customers</h4><div id="ins-customers" style="overflow-x:auto"></div></div>
+  <div class="card"><h4>Discounts by reason</h4><div id="ins-discounts" style="overflow-x:auto"></div></div>
+  <div class="card" data-roles="admin"><h4>Receipt settings (this outlet)</h4>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input id="rs-phone" placeholder="Outlet phone on receipts" style="flex:1 1 200px;min-height:44px">
+      <select id="rs-width" style="min-height:44px"><option value="80">80 mm paper</option><option value="58">58 mm paper</option></select>
+      <button class="btn-primary" style="min-height:44px" onclick="saveReceiptSettings()">Save</button><span id="rs-msg" role="status"></span>
+    </div></div>
+</div>
+<script>
+const insEsc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const insK = n => Number(n || 0).toLocaleString('en-KE', {maximumFractionDigits: 0});
+async function insGet(url) {
+  const r = await fetch(url, {credentials: 'same-origin'}); const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.message || ('HTTP ' + r.status)); return d;
+}
+async function loadInsights() {
+  const days = document.getElementById('ins-days').value, loc = typeof activeLocationId !== 'undefined' ? activeLocationId : '';
+  const P = document.getElementById('ins-products'), C = document.getElementById('ins-customers'), D = document.getElementById('ins-discounts');
+  P.textContent = C.textContent = D.textContent = 'Loading...';
+  try {
+    const [p, c] = await Promise.all([insGet(`/api/insights/products?days=${days}&location_id=${loc}`), insGet(`/api/insights/customers?days=${days}&location_id=${loc}`)]);
+    document.getElementById('ins-note').innerHTML = insEsc(p.note) + ` Customers are linked on <b>${c.linked_pct == null ? '-' : c.linked_pct + '%'}</b> of sales in the period; below about 60% the customer figures are unreliable.`;
+    let html = '<table class="data-table"><thead><tr><th>Item</th><th>Sold kg</th><th>Revenue</th><th>Profit</th><th>Margin</th><th>Rank kg/KSh/profit</th><th>Stock kg</th><th>Days cover</th><th>Last sold</th></tr></thead><tbody>', last = null;
+    p.rows.forEach(r => {
+      if (r.group !== last) { last = r.group; html += `<tr><td colspan="9" style="background:#eef2f7;font-weight:700">${insEsc(r.group_label)}</td></tr>`; }
+      const cover = r.days_cover == null ? '-' : r.days_cover, low = r.days_cover != null && r.days_cover < 7;
+      html += `<tr><td>${insEsc(r.name)}${r.slow ? ' <b style="color:#b00">SLOW</b>' : ''}</td><td>${r.sold_kg}</td><td>${insK(r.revenue)}</td><td>${insK(r.profit)}</td><td>${r.margin_pct == null ? '-' : r.margin_pct + '%'}</td><td>${r.rank_sold_kg || '-'} / ${r.rank_revenue || '-'} / ${r.rank_profit || '-'}</td><td>${r.stock_kg}</td><td style="${low ? 'color:#b00;font-weight:700' : ''}">${cover}</td><td>${insEsc(r.last_sold)}</td></tr>`;
+    });
+    P.innerHTML = html + '</tbody></table>';
+    const row = x => `<tr><td>${insEsc(x.name)}</td><td>${insEsc(x.phone)}</td><td>${insK(x.spent)}</td><td>${x.visits}</td><td>${insEsc(x.last_purchase)} (${x.days_since_last}d)</td><td>${insK(x.balance)}</td></tr>`;
+    const head = '<thead><tr><th>Customer</th><th>Phone</th><th>Spent</th><th>Visits</th><th>Last bought</th><th>Owes</th></tr></thead>';
+    C.innerHTML = `<b>Top spenders</b><table class="data-table">${head}<tbody>${c.top.map(row).join('') || '<tr><td colspan="6">None yet. Capture phone numbers at the till.</td></tr>'}</tbody></table>` +
+      `<b>Gone quiet (bought 3+ times, now overdue)</b><table class="data-table">${head}<tbody>${c.lapsed.map(row).join('') || '<tr><td colspan="6">None.</td></tr>'}</tbody></table>`;
+    D.innerHTML = '<table class="data-table"><thead><tr><th>Reason</th><th>KSh given away</th><th>Sales</th></tr></thead><tbody>' +
+      (c.discounts.map(x => `<tr><td>${insEsc(x.reason)}</td><td>${insK(x.amount)}</td><td>${x.sales}</td></tr>`).join('') || '<tr><td colspan="3">No discounts in this period.</td></tr>') + '</tbody></table>';
+    const s = await insGet(`/api/locations/${loc}/receipt-settings`).catch(() => null);
+    if (s) { document.getElementById('rs-phone').value = s.phone; document.getElementById('rs-width').value = s.receipt_width; }
+  } catch (e) { P.innerHTML = C.innerHTML = D.innerHTML = '<span style="color:#b00">' + insEsc(e.message) + '</span>'; }
+}
+async function saveReceiptSettings() {
+  const loc = typeof activeLocationId !== 'undefined' ? activeLocationId : '', msg = document.getElementById('rs-msg');
+  const r = await fetch(`/api/locations/${loc}/receipt-settings`, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({phone: document.getElementById('rs-phone').value, receipt_width: parseInt(document.getElementById('rs-width').value)})});
+  const d = await r.json().catch(() => ({})); msg.textContent = r.ok ? ' Saved.' : (' ' + (d.message || 'Could not save.'));
+}
+</script>

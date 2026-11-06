@@ -76,13 +76,9 @@ class NutrientLimitTests(unittest.TestCase):
         db.session.add(u); db.session.commit()
         c = self.app.test_client()
         with c.session_transaction() as s: s['user_id'] = u.id
-        r = c.post('/api/formulate/requirements', json={'species': 'Layer', 'min_cp': 17, 'min_me': 2.7, 'max_fiber': 6,
-                                                         'min_calcium': 3.5, 'max_calcium': 4.2, 'min_lysine': 0.8})
-        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
-        got = c.get('/api/formulate/requirements?species=Layer').get_json()
-        self.assertEqual((got['min_calcium'], got['max_calcium'], got['min_lysine']), (3.5, 4.2, 0.8))
-        bad = c.post('/api/formulate/requirements', json={'species': 'Layer', 'min_cp': 17, 'min_me': 2.7, 'min_calcium': 5, 'max_calcium': 2})
-        self.assertEqual(bad.status_code, 400)
+        self.assertEqual(c.post('/api/formulate/requirements', json={'species': 'Layer', 'min_cp': 17}).status_code, 410)
+        self.assertEqual(c.get('/api/formulate/requirements?species=Layer').status_code, 410)
+        self.assertEqual(c.post('/api/formulate', json={'species': 'Layer'}).status_code, 410)
         item = FeedIngredient.query.filter_by(name='Maize').first()
         ok = c.post(f'/api/po/inventory/{item.id}/nutrients', json={'crude_protein_pct': 9, 'metabolizable_energy_mcal': 3.3,
                     'crude_fiber_pct': 2, 'max_inclusion_pct': 100, 'calcium_pct': 0.05, 'lysine_pct': 0.3})

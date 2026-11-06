@@ -5,42 +5,61 @@ window.escHtml = window.escHtml || function (s) {
   });
 };
 </script>
-<div id="pos-tab" class="tab-content active">
+<div id="pos-tab" class="tab-content">
   <details class="pos-online-note" role="alert">
     <summary>Online only: checkout needs a live server connection</summary>
     <p>Online only: checkout requires a live server connection. If the connection is down, record the sale on paper and enter it after service returns. An unanswered checkout must be retried in this tab before entering it again.</p>
   </details>
-  <details id="till-panel" class="till-panel">
-    <summary><span>Till (open / close)</span><span id="till-state-mirror" style="font-weight:400;color:#55655c">…</span></summary>
-  <div class="card" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-    <label>Outlet <select id="pos-location" onchange="changePosLocation()"></select></label>
-    <span id="till-state">Loading till…</span>
-    <label>Opening cash (KSh) <input id="till-opening-cash" type="number" min="0" step="0.01" value="0" style="width:130px"></label>
-    <button class="btn-sm btn-success" id="till-open-btn" onclick="openTill()">Open till</button>
-    <button class="btn-sm btn-warning" id="till-close-btn" onclick="closeTill()" style="display:none">Close till</button>
+  <div class="pos-pagebar">
+    <div><span class="pos-kicker">POINT OF SALE</span><h1>New Sale</h1><p id="pos-context-line">Choose products, build the cart, and take payment.</p></div>
+    <div class="pos-page-actions">
+      <label class="pos-outlet-select">Outlet <select id="pos-location" onchange="changePosLocation()"></select></label>
+      <button type="button" class="pos-utility-btn" onclick="showTab('sales-tab'); if(typeof loadSalesHistory==='function') loadSalesHistory();">Returns &amp; Sales History</button>
+      <button type="button" class="pos-utility-btn" id="pos-shortcuts-toggle" aria-expanded="false" aria-controls="pos-shortcuts-panel">Keyboard shortcuts</button>
+    </div>
   </div>
-  </details>
-  <div class="pos-grid">
-    <div>
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-          <h4 style="margin:0;">🔍 Product & Service Catalog Search</h4>
-          <a class="btn-sm btn-info" href="/api/price-list.pdf" target="_blank" rel="noopener" style="text-decoration:none; padding:10px 14px;">📄 Price list (PDF)</a>
+  <div id="pos-shortcuts-panel" class="pos-shortcuts-panel" hidden>
+    <strong>Keyboard shortcuts</strong><span>F2 Search</span><span>F4 Customer</span><span>F6 Cart</span><span>F8 Payment</span><span>Esc Close this panel</span>
+  </div>
+  <nav class="pos-view-tabs" aria-label="POS steps">
+    <button type="button" data-pos-stage="products" onclick="setPosStage('products')">1&nbsp; Products</button>
+    <button type="button" data-pos-stage="cart" onclick="setPosStage('cart')">2&nbsp; Cart <span id="pos-cart-count">0</span></button>
+    <button type="button" data-pos-stage="payment" onclick="setPosStage('payment')">3&nbsp; Payment</button>
+    <button type="button" data-pos-stage="receipt" onclick="setPosStage('receipt')" hidden>4&nbsp; Receipt</button>
+  </nav>
+  <div class="pos-workspace">
+    <section id="pos-catalog" class="pos-catalog" aria-label="Product catalogue">
+      <div class="card" id="quick-card">
+        <div class="pos-section-heading"><div><span class="pos-kicker">FAST ACCESS</span><h2>Quick items</h2></div><button type="button" class="pos-utility-btn" onclick="toggleQuickEditor()">Edit Quick items</button></div>
+        <div id="quick-items" class="quick-grid"></div>
+        <div id="quick-items-editor" hidden>
+          <p>Choose up to 12 items and their pack size for this outlet. Your choices are saved on this device.</p>
+          <div id="quick-items-editor-list"></div>
+          <div style="display:flex;gap:8px;margin-top:10px"><button type="button" class="btn-sm btn-primary" onclick="saveQuickItems()">Save Quick items</button><button type="button" class="btn-sm" onclick="toggleQuickEditor(false)">Cancel</button><button type="button" class="btn-sm" onclick="resetQuickItems()">Use best sellers</button></div>
+          <div id="quick-items-editor-message" role="status"></div>
+        </div>
+      </div>
+      <div class="card pos-catalog-card">
+        <div class="pos-section-heading">
+          <div><span class="pos-kicker">CATALOGUE</span><h2>Find a product</h2><p>Search by product name or category, then choose its configured pack size.</p></div>
+          <div class="pos-catalog-tools"><div class="pos-view-toggle" role="group" aria-label="Product catalogue layout"><button id="catalog-grid-btn" type="button" aria-pressed="true" onclick="setCatalogView('grid')">Grid</button><button id="catalog-list-btn" type="button" aria-pressed="false" onclick="setCatalogView('list')">List</button></div><a class="pos-utility-btn" href="/api/price-list.pdf" target="_blank" rel="noopener">Price list PDF</a></div>
         </div>
         <div class="pos-search-row">
-          <!-- FORCED HEIGHT AND FONT SIZE ON SEARCH & CATEGORY -->
-          <input type="text" id="search-input" placeholder="Search item..." oninput="searchProductsSoon()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" />
-          <select id="category-filter" onchange="searchProducts()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;">
+          <label class="pos-search-field"><span class="sr-only">Search products</span><span aria-hidden="true">⌕</span><input type="search" id="search-input" autocomplete="off" placeholder="Search feed, category, or service…" oninput="searchProductsSoon()" /></label>
+          <label class="pos-category-field"><span class="sr-only">Filter by category</span><select id="category-filter" onchange="searchProducts()">
             <option value="">All Categories</option>
-          </select>
+          </select></label>
         </div>
-        <div id="search-results" class="search-results-box" style="max-height:440px;"></div>
+        <div id="pos-category-chips" class="pos-category-chips" aria-label="Product categories"></div>
+        <div id="search-results" class="search-results-box" aria-live="polite" aria-busy="false"></div>
       </div>
 
-      <div class="card">
+    </section>
+    <aside id="pos-checkout" class="pos-checkout" aria-label="Cart and checkout">
+      <div class="card pos-customer-card" id="pos-customer-card">
         <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h4 style="margin: 0;">👤 Customer Selection</h4>
-            <button class="btn-sm btn-primary" onclick="document.getElementById('new-cust-form').style.display='block'" style="height: 40px; font-size: 16px;">+ Add New</button>
+            <div><span class="pos-kicker">CUSTOMER</span><h2 style="margin:4px 0 0;">Who is this sale for?</h2></div>
+            <button class="btn-sm btn-primary" onclick="document.getElementById('new-cust-form').style.display='block'">+ Add</button>
         </div>
         
         <div id="new-cust-form" style="display:none; margin-top:10px; margin-bottom:10px; border: 1px solid #ddd; padding:15px; border-radius: 6px; background: #f8f9fa;">
@@ -54,8 +73,8 @@ window.escHtml = window.escHtml || function (s) {
             </div>
         </div>
 
-        <!-- FORCED HEIGHT AND FONT SIZE ON CUSTOMER DROPDOWN -->
-        <select id="customer-select" style="width: 100%; margin-top: 15px; height: 50px; font-size: 18px; padding: 10px; border-radius: 6px; border: 1px solid #ccc;" onchange="updateCustomerDetails()">
+        <input id="customer-search" type="search" placeholder="Find customer by name or phone" autocomplete="off" oninput="filterCustomerOptions()" aria-label="Search customers" />
+        <select id="customer-select" aria-label="Select customer" onchange="updateCustomerDetails()">
           <option value="">CASH CUSTOMER (Walk-In)</option>
         </select>
         
@@ -82,8 +101,8 @@ window.escHtml = window.escHtml || function (s) {
         </div>
       </div>
 
-      <div class="card">
-        <h4>🛒 Active Sales Cart</h4>
+      <div class="card pos-cart-card" id="pos-cart-card">
+        <div class="pos-section-heading"><div><span class="pos-kicker">CURRENT SALE</span><h2>Cart <span class="pos-cart-total-items" id="pos-cart-count-desktop">0 items</span></h2></div><button type="button" class="pos-text-danger" onclick="cancelSale()">Clear cart</button></div>
         <div style="overflow-x: auto;">
           <table class="cart-table" style="font-size: 16px;">
             <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Price</th><th>Total</th><th></th></tr></thead>
@@ -92,25 +111,36 @@ window.escHtml = window.escHtml || function (s) {
         </div>
         <br/>
         <div style="display: flex; gap: 10px;">
-            <button class="btn-sm btn-danger" style="height: 40px; font-size: 16px;" onclick="cancelSale()">Cancel Sale</button>
+            <button class="btn-sm btn-danger" onclick="cancelSale()">Cancel Sale</button>
             <button id="btn-hold" class="btn-sm btn-warning" style="height: 40px; font-size: 16px;" onclick="holdCart()">Hold Sale</button>
             <button id="btn-restore" class="btn-sm btn-info" style="height: 40px; font-size: 16px; display: none;" onclick="restoreCart()">Restore Sale</button>
         </div>
+        <button type="button" class="pos-cart-continue" onclick="setPosStage('payment')">Continue to payment <span aria-hidden="true">→</span></button>
       </div>
-    </div>
-
-    <div>
       <div class="card" id="checkout-card">
-        <h4>💳 Checkout & Payment</h4>
-        <div style="background:#eef6ff; padding:15px; border-radius:6px; border:1px solid #b6d4fe; margin-bottom:15px;">
-            <h4 style="margin: 0; color: #333;">Total Amount Due:</h4>
-            <h2 style="margin: 5px 0; color: #dc3545; font-size: 2.5rem;">KSh <span id="cart-total">0.00</span></h2>
-            <h4 style="margin: 0; color: #333; margin-top: 10px;">Change Due to Customer:</h4>
-            <h3 style="margin: 5px 0; color: #28a745; font-size: 1.8rem;">KSh <span id="change-due">0.00</span></h3>
+        <div class="pos-section-heading"><div><span class="pos-kicker">PAYMENT</span><h2>Checkout</h2></div></div>
+        <div class="pos-total-box">
+            <span>Total due</span><strong>KSh <span id="cart-total">0.00</span></strong>
+            <div class="pos-change-row"><span>Change</span><b>KSh <span id="change-due">0.00</span></b></div>
         </div>
-        
-        <label style="font-size: 16px;"><strong>Discount Application (Optional):</strong></label>
-        <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <label class="pos-field-label"><strong>Choose a payment method</strong></label>
+        <p class="pos-payment-note">M-Pesa is not verified by this app. Confirm the payment on the customer’s phone before completing the sale.</p>
+        <div id="tender-bar" class="tender-bar"></div>
+
+        <div id="payment-lines"></div>
+        <button class="btn-sm pos-split-button" onclick="addPaymentLine()">+ Split payment</button>
+
+        <div id="walkin-capture" style="margin-bottom:16px;">
+          <label><strong>Walk-in customer details (optional)</strong><small>Save a phone number to help find this customer next time.</small></label>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <input type="tel" id="new-cust-phone" inputmode="tel" maxlength="20" placeholder="0712 345 678" style="flex:1 1 150px; height:46px; font-size:16px;">
+            <input type="text" id="new-cust-name" maxlength="100" placeholder="Name (optional)" style="flex:1 1 150px; height:46px; font-size:16px;">
+          </div>
+        </div>
+
+        <details class="more-opts" id="discount-details" style="margin-bottom: 16px;">
+          <summary style="cursor:pointer; font-weight:600;">Discount (optional)</summary>
+        <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 8px;">
           <input type="number" id="discount-val" value="0" min="0" onchange="renderCart()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" />
           <select id="discount-type" onchange="renderCart()" style="flex: 1; height: 50px; font-size: 18px; padding: 10px;">
             <option value="KSH">KSh (Flat)</option>
@@ -118,18 +148,25 @@ window.escHtml = window.escHtml || function (s) {
           </select>
         </div>
 
-        <label style="font-size: 16px;"><strong>Cashier Manual Entry:</strong></label>
-        <div id="payment-lines"></div>
-        <button class="btn-sm" style="height: 40px; font-size: 16px; margin-top: 5px; margin-bottom: 20px;" onclick="addPaymentLine()">+ Add Split Payment</button>
-        <button onclick="completeCheckout()" class="btn-primary" style="width: 100%; padding: 20px; font-size: 20px; border-radius: 8px;">Complete Sale</button>
+        <div id="discount-extra" style="display:none; margin:-10px 0 16px; padding:10px; background:#fff8e1; border-radius:6px;">
+          <select id="discount-reason" style="width:100%; height:46px; font-size:16px; margin-bottom:8px;" aria-label="Discount reason">
+            <option value="">-- Why the discount? (required) --</option>
+            <option value="BULK">Bulk purchase</option><option value="LOYAL">Loyal customer</option><option value="PROMO">Promotion</option>
+            <option value="DAMAGED">Damaged / short-dated stock</option><option value="STAFF">Staff</option><option value="OTHER">Other</option>
+          </select>
+          <input type="text" id="discount-approver" maxlength="100" placeholder="Approved by (name) - needed above 2%" style="width:100%; height:46px; font-size:16px;" aria-label="Discount approved by">
+        </div>
+        </details>
+
+        <div class="pos-checkout-submit"><button onclick="completeCheckout()" class="btn-primary" id="complete-sale-button">Complete Sale</button><small>Sale posts only after the server confirms it.</small></div>
       </div>
 
-      <div class="card">
+      <div class="card pos-receipt-card" id="pos-receipt-card">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h4 style="margin:0;">📄 Receipt</h4>
+            <div><span class="pos-kicker">CONFIRMED SALE</span><h2 style="margin:4px 0 0;">Receipt</h2></div>
             <div style="display: flex; gap: 10px;">
-                <button class="btn-sm btn-info" id="btn-print" style="height: 40px; font-size: 16px;" onclick="window.print()" disabled>🖨️ Print</button>
-                <button class="btn-sm btn-success" id="btn-wa" style="height: 40px; font-size: 16px;" onclick="shareWhatsApp()" disabled>💬 WhatsApp</button>
+                <button class="btn-sm btn-info" id="btn-print" onclick="window.print()" disabled>Print</button>
+                <button class="btn-sm btn-success" id="btn-wa" onclick="shareWhatsApp()" disabled>Share</button>
             </div>
         </div>
         
@@ -141,16 +178,19 @@ window.escHtml = window.escHtml || function (s) {
           </center>
           <hr style="border-top: 1px dashed #333;"/>
           Receipt #: <span id="r-id">---</span><br/>Customer: <span id="r-cust">---</span><br/>
+          Branch: <span id="r-branch">---</span><br/>Cashier: <span id="r-cashier">---</span><br/>
           <hr style="border-top: 1px dashed #333;"/>
           <div id="r-lines"></div>
+          <div id="r-payments"></div>
           <hr style="border-top: 1px dashed #333;"/>
           <strong style="font-size:1.4rem;">TOTAL: KSh <span id="r-total">0.00</span></strong>
         </div>
+        <button type="button" class="pos-new-sale" onclick="setPosStage('products')">Start another sale</button>
       </div>
-    </div>
+    </aside>
   </div>
   <div class="pos-sticky-bar" aria-label="Sale total">
-    <div><div class="lbl">Total due</div><div class="amt">KSh <span id="sticky-total">0.00</span></div></div>
-    <button type="button" id="sticky-go">Checkout ↓</button>
+    <div><div class="lbl"><span id="sticky-count">0 items</span> · Total due</div><div class="amt">KSh <span id="sticky-total">0.00</span></div></div>
+    <button type="button" id="sticky-go">View cart</button>
   </div>
 </div>

@@ -1,105 +1,5 @@
 let factoryInventory = [];
 
-const EXTRA_IDS = {min_lysine: 'target-lys', min_methionine: 'target-met', min_calcium: 'target-ca-min',
-                   max_calcium: 'target-ca-max', min_phosphorus: 'target-p'};
-function extraTargets() {
-    const out = {};
-    for (const [key, id] of Object.entries(EXTRA_IDS)) { const el = document.getElementById(id); out[key] = el ? (el.value || 0) : 0; }
-    return out;
-}
-
-async function runFormulation() {
-    const speciesSelect = document.getElementById('species-select');
-    if (!speciesSelect) return;
-    const result = document.getElementById('formulation-result');
-    try {
-        const res = await fetch('/api/formulate', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                species: speciesSelect.value,
-                target_batch_kg: document.getElementById('batch-kg').value,
-                target_cp_pct: document.getElementById('target-cp').value,
-                target_me_mcal: document.getElementById('target-me').value,
-                target_fiber_max_pct: document.getElementById('target-fiber').value,
-                ...extraTargets(),
-                limit_to_stock: document.getElementById('limit-stock').checked,
-                location_id: window.activeLocationId || ''
-            })
-        });
-        const data = await res.json();
-        if (!res.ok || data.status !== 'optimal') {
-            const warn = (data.warnings || []).map(w => `<br><small>${escHtml(w)}</small>`).join('');
-            result.innerHTML = `<b style="color:#b42318">No recipe.</b> ${escHtml(data.message || 'Could not calculate this ration.')}${warn}`;
-            return;
-        }
-        window.lastFormulation = data;
-        const a = data.achieved, fiberLimit = data.target_max_crude_fiber_pct;
-        const ok = (good) => good ? '' : ' style="color:#b42318"';
-        const warnHtml = (data.warnings || []).map(w => `<div style="color:#92400e; margin-top:6px">⚠ ${escHtml(w)}</div>`).join('');
-        result.innerHTML = `<b>${escHtml(data.species_stage)}</b> · ${Number(data.target_batch_kg).toFixed(2)} kg batch${data.limit_to_stock ? ' · limited to stock on hand' : ''}<br>
-          Estimated cost: KSh ${Number(data.total_batch_cost).toFixed(2)} (${Number(data.cost_per_kg).toFixed(2)} per kg)
-          <div style="overflow-x:auto"><table class="data-table" style="margin-top:8px"><thead><tr><th>Nutrient</th><th>Required</th><th>This recipe</th></tr></thead><tbody>
-            <tr><td>Crude protein</td><td>at least ${Number(data.target_crude_protein_pct).toFixed(2)}%</td><td${ok(a.crude_protein_pct + 0.005 >= data.target_crude_protein_pct)}>${a.crude_protein_pct.toFixed(2)}%</td></tr>
-            <tr><td>Metabolizable energy</td><td>at least ${Number(data.target_metabolizable_energy_mcal).toFixed(2)} Mcal/kg</td><td${ok(a.metabolizable_energy_mcal + 0.0005 >= data.target_metabolizable_energy_mcal)}>${a.metabolizable_energy_mcal.toFixed(2)} Mcal/kg</td></tr>
-            ${extraRows(data)}
-            <tr><td>Crude fibre</td><td>${fiberLimit ? 'at most ' + Number(fiberLimit).toFixed(2) + '%' : 'no limit'}</td><td${ok(!fiberLimit || a.crude_fiber_pct <= fiberLimit + 0.005)}>${a.crude_fiber_pct.toFixed(2)}%</td></tr>
-          </tbody></table></div>
-          <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Ingredient</th><th>%</th><th>Recipe kg</th><th>At outlet kg</th><th>Cost/kg</th><th>Line cost</th></tr></thead><tbody>
-          ${data.recipe.map(row => `<tr><td>${escHtml(row.ingredient_name)}</td><td>${Number(row.fraction).toFixed(2)}</td><td>${Number(row.kg_required).toFixed(2)}</td><td>${Number(row.available_kg).toFixed(2)}</td><td>${Number(row.cost_per_kg).toFixed(2)}</td><td>${Number(row.cost).toFixed(2)}</td></tr>`).join('')}
-          </tbody></table></div>${warnHtml}
-          <button type="button" class="btn-success" style="margin-top:10px" onclick="useFormulaInProduction()">Use this formula in Production Batch</button>`;
-    } catch (err) {
-        result.textContent = 'Could not calculate a formulation. Check the connection and try again.';
-    }
-}
-
-function extraRows(data) {
-    const t = data.extra_targets || {}, a = data.achieved || {};
-    const row = (label, req, got, good) => `<tr><td>${label}</td><td>${req}</td><td${good ? '' : ' style="color:#b42318"'}>${Number(got).toFixed(3)}%</td></tr>`;
-    let h = '';
-    if (t.min_lysine > 0) h += row('Lysine', 'at least ' + t.min_lysine + '%', a.lysine_pct, a.lysine_pct + 0.0005 >= t.min_lysine);
-    if (t.min_methionine > 0) h += row('Methionine', 'at least ' + t.min_methionine + '%', a.methionine_pct, a.methionine_pct + 0.0005 >= t.min_methionine);
-    if (t.min_calcium > 0 || t.max_calcium > 0)
-        h += row('Calcium', [t.min_calcium > 0 ? 'at least ' + t.min_calcium + '%' : '', t.max_calcium > 0 ? 'at most ' + t.max_calcium + '%' : ''].filter(Boolean).join(', '), a.calcium_pct,
-                 a.calcium_pct + 0.0005 >= (t.min_calcium || 0) && (!t.max_calcium || a.calcium_pct <= t.max_calcium + 0.0005));
-    if (t.min_phosphorus > 0) h += row('Available phosphorus', 'at least ' + t.min_phosphorus + '%', a.phosphorus_pct, a.phosphorus_pct + 0.0005 >= t.min_phosphorus);
-    return h;
-}
-
-async function loadStageTargets() {
-    const sel = document.getElementById('species-select');
-    if (!sel) return;
-    try {
-        const res = await fetch('/api/formulate/requirements?species=' + encodeURIComponent(sel.value), { credentials: 'same-origin' });
-        if (!res.ok) return;
-        const r = await res.json();
-        document.getElementById('target-cp').value = r.min_cp;
-        document.getElementById('target-me').value = r.min_me;
-        document.getElementById('target-fiber').value = r.max_fiber || 0;
-        for (const [key, id] of Object.entries(EXTRA_IDS)) { const el = document.getElementById(id); if (el) el.value = r[key] || 0; }
-    } catch (e) { /* keep whatever is typed */ }
-}
-
-async function saveStageTargets() {
-    const result = document.getElementById('formulation-result');
-    try {
-        const res = await fetch('/api/formulate/requirements', {
-            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                species: document.getElementById('species-select').value,
-                min_cp: document.getElementById('target-cp').value,
-                min_me: document.getElementById('target-me').value,
-                max_fiber: document.getElementById('target-fiber').value || 0,
-                ...extraTargets()
-            })
-        });
-        const data = await res.json().catch(() => ({}));
-        result.textContent = res.ok ? 'Saved. This stage will open with these targets.' : (data.message || 'Could not save the targets.');
-    } catch (e) { result.textContent = 'No connection. Try again.'; }
-}
-
 async function loadFactoryDropdowns() {
     const res = await fetch('/api/inventory?location_id=' + encodeURIComponent(window.activeLocationId || ''), { credentials: 'same-origin' });
     if (!res.ok) return;
@@ -197,6 +97,7 @@ async function submitProductionBatch() {
     }
     const payload = {
         formula_name: document.getElementById('prod-formula').value,
+        formula_id: document.getElementById('saved-formula-select')?.value || '',
         output_ingredient_id: document.getElementById('prod-output-select').value,
         planned_output_kg: document.getElementById('prod-planned-output').value,
         actual_output_kg: document.getElementById('prod-actual-output').value,
@@ -204,6 +105,16 @@ async function submitProductionBatch() {
         location_id: window.activeLocationId || '',
         inputs
     };
+    const ov = window.formulaOverride;
+    if (ov && String(ov.id) === String(payload.formula_id)) {
+        if (!ov.reason) {
+            const why = prompt('Reason for releasing this blocked formula (at least 10 characters):', '');
+            if (!why || why.trim().length < 10) { message.style.color = 'red'; message.textContent = 'Batch not recorded: a reason of at least 10 characters is required to release a blocked formula.'; return; }
+            ov.reason = why.trim();
+        }
+        payload.override = true;
+        payload.override_reason = ov.reason;
+    }
     try {
         const res = await fetch('/api/factory/produce', {
             method: 'POST',
@@ -214,7 +125,8 @@ async function submitProductionBatch() {
         const data = await res.json();
         if (!res.ok || data.status !== 'success') throw new Error(data.message || 'Could not record batch.');
         message.style.color = 'green';
-        message.textContent = `Batch ${data.batch_no} recorded. Loss: ${data.loss_kg.toFixed(2)} kg (${data.loss_pct.toFixed(2)}%). Input cost: KSh ${data.total_input_cost.toFixed(2)}.`;
+        window.formulaOverride = null;
+        message.textContent = `Batch ${data.batch_no} recorded${data.gate_status && data.gate_status !== 'PASS' ? ' (RELEASED WITHOUT PASSING THE CHECK)' : ''}. Loss: ${data.loss_kg.toFixed(2)} kg (${data.loss_pct.toFixed(2)}%). Input cost: KSh ${data.total_input_cost.toFixed(2)}.`;
         // Start the next batch clean: nothing from this one may carry over into it by accident.
         document.getElementById('prod-actual-output').value = '';
         document.getElementById('prod-planned-output').value = '';
@@ -243,7 +155,7 @@ async function loadProductionRuns() {
         if (!res.ok) throw new Error('Could not load production history.');
         const rows = await res.json();
         body.innerHTML = rows.map(run => `<tr>
-          <td>${escHtml(run.batch_no)}</td><td>${escHtml(run.formula_name)}<br>${escHtml(run.output_item)}</td>
+          <td>${escHtml(run.batch_no)}</td><td>${escHtml(run.formula_name)}<br>${escHtml(run.output_item)}${run.gate_status && run.gate_status !== 'PASS' ? `<br><span style="color:#b02a37;font-weight:bold" title="${escHtml(run.override_reason || run.gate_reasons)}">&#9888; released without check (${escHtml(run.gate_status)}${run.override_by ? ', ' + escHtml(run.override_by) : ''})</span>` : ''}</td>
           <td>${run.total_input_kg.toFixed(2)}</td><td>${run.planned_output_kg.toFixed(2)}</td>
           <td>${run.actual_output_kg.toFixed(2)}</td><td>${run.output_variance_kg.toFixed(2)}</td>
           <td>${run.loss_kg.toFixed(2)}</td><td>${run.loss_pct.toFixed(2)}%</td><td>${run.loss_cost.toFixed(2)}</td>
@@ -277,34 +189,6 @@ async function toggleProductionLines(batchNo, button) {
 }
 
 
-async function useFormulaInProduction() {
-    const f = window.lastFormulation;
-    if (!f || !Array.isArray(f.recipe) || !f.recipe.length) { alert('Calculate a ration first.'); return; }
-    showTab('factory-tab');
-    await loadFactoryDropdowns();
-    const rawIds = new Set(factoryInventory.filter(i => (i.category || '').includes('Raw')).map(i => i.id));
-    const missing = f.recipe.filter(r => !rawIds.has(Number(r.ingredient_id))).map(r => r.ingredient_name);
-    if (missing.length) {
-        alert('These recipe items are not available as Raw ingredients here, so nothing was copied:\n' + missing.join(', '));
-        return;
-    }
-    document.getElementById('prod-formula').value = f.species_stage || '';
-    document.getElementById('prod-planned-output').value = Number(f.target_batch_kg).toFixed(2);
-    document.getElementById('prod-actual-output').value = '';
-    document.getElementById('prod-loss-reason').value = '';
-    document.getElementById('prod-inputs').innerHTML = '';
-    f.recipe.forEach(r => {
-        addProductionInput(r.ingredient_id);
-        const row = document.querySelector('#prod-inputs tr[data-input-row]:last-child');
-        row.querySelector('.prod-planned-input').value = Number(r.kg_required).toFixed(2);
-    });
-    calculateProductionLoss();
-    const msg = document.getElementById('prod-message');
-    msg.style.color = '#0a58ca';
-    msg.textContent = 'Formula loaded. Pick the Finished Feed output, then enter the ACTUAL kg you weighed for each ingredient.';
-}
-
-
 let savedFormulas = [];
 
 async function loadSavedFormulas() {
@@ -330,13 +214,24 @@ async function loadSavedFormula() {
     const batch = Number(document.getElementById('saved-formula-batch').value);
     if (!fm) { alert('Choose a saved formula first.'); return; }
     if (!(batch > 0)) { alert('Enter the batch size in kg.'); return; }
-    try {   // formulas checked against a requirement profile are re-verified live and blocked when they fail
-        const gate = await fetch('/api/nutrition/formulas/' + fm.id + '/release-check', { credentials: 'same-origin' });
-        if (gate.ok) {
-            const g = await gate.json();
-            if (g.controlled && !g.ok) { alert('This formula is BLOCKED from production:\n' + (g.reasons || []).join('\n')); return; }
-        }
-    } catch (e) { /* the server also enforces this when the batch is recorded */ }
+    let blockedReasons = fm.releasable ? null : (fm.release_reasons && fm.release_reasons.length ? fm.release_reasons : ['Not released: link it to a complete profile in the Formulation Lab.']);
+    if (!blockedReasons) {
+        try {   // formulas checked against a requirement profile are re-verified live and blocked when they fail
+            const gate = await fetch('/api/nutrition/formulas/' + fm.id + '/release-check', { credentials: 'same-origin' });
+            if (gate.ok) {
+                const g = await gate.json();
+                if (!g.controlled || !g.ok) blockedReasons = (g.reasons && g.reasons.length) ? g.reasons : ['Not released for production.'];
+            }
+        } catch (e) { /* the server also enforces this when the batch is recorded */ }
+    }
+    window.formulaOverride = null;
+    if (blockedReasons) {
+        const canOverride = fm.gate_mode === 'grace' || window.currentRole === 'admin';
+        const list = blockedReasons.slice(0, 8).join('\n');
+        if (!canOverride) { alert('This formula is BLOCKED from production:\n' + list); return; }
+        if (!confirm('This formula FAILS the release check:\n' + list + '\n\nRelease it for production anyway? The batch will be recorded as released WITHOUT passing the check, with your name and reason.')) return;
+        window.formulaOverride = { id: fm.id };
+    }
     const rawIds = new Set(factoryInventory.filter(i => (i.category || '').includes('Raw')).map(i => i.id));
     const missing = fm.lines.filter(l => !rawIds.has(Number(l.ingredient_id))).map(l => l.ingredient_name);
     if (missing.length) {

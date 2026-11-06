@@ -70,6 +70,8 @@ class Location(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100))
     code = db.Column(db.String(20))
+    phone = db.Column(db.String(30))                       # printed on receipts
+    receipt_width = db.Column(db.Integer, default=80)      # paper width in mm: 80 or 58
     location_type = db.Column(db.String(20))
 
 class LocationStock(db.Model):
@@ -145,6 +147,11 @@ class OrderHeader(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
     till_session_id = db.Column(db.Integer, db.ForeignKey('till_sessions.id'))
+    receipt_seq = db.Column(db.Integer)                    # 1, 2, 3 ... per outlet, no gaps
+    receipt_no = db.Column(db.String(30))                  # e.g. EMN-000123
+    discount_reason = db.Column(db.String(20))
+    discount_approver = db.Column(db.String(100))
+    balance_after = db.Column(db.Float)                    # customer's balance owed straight after this sale
 
 class OrderLine(db.Model):
     __tablename__ = 'order_lines'
@@ -155,6 +162,7 @@ class OrderLine(db.Model):
     qty_entered = db.Column(db.Float, default=0.0)
     subtotal = db.Column(db.Float, default=0.0)
     unit_cost_per_kg = db.Column(db.Float, nullable=False, default=0.0)
+    qty_kg = db.Column(db.Float)                           # total kg on this line (qty x pack size)
 
 class PaymentSplit(db.Model):
     __tablename__ = 'payment_splits'
@@ -385,6 +393,12 @@ class ProductionRun(db.Model):
     created_by = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     location_id = db.Column(db.Integer, db.ForeignKey('locations.id'))
+    formula_id = db.Column(db.Integer, db.ForeignKey('saved_formulas.id'))
+    # Release-gate audit: PASS, OVERRIDDEN (admin released a blocked formula) or GRACE (grace mode). NULL on older runs.
+    gate_status = db.Column(db.String(20))
+    gate_reasons = db.Column(db.Text)            # why the check failed at the moment of release
+    override_by = db.Column(db.String(50))
+    override_reason = db.Column(db.String(200))
 
 class ProductionRunLine(db.Model):
     __tablename__ = 'production_run_lines'
@@ -573,6 +587,8 @@ class IngredientNutrient(db.Model):
     value = db.Column(db.Float, nullable=False)
     source = db.Column(db.String(200))
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+    source_type = db.Column(db.String(20), nullable=False, default='legacy')
+    confirmed = db.Column(db.Boolean, nullable=False, default=False)
     __table_args__ = (db.UniqueConstraint('ingredient_id', 'nutrient_code', name='uq_ingredient_nutrient'),)
 
 
@@ -587,6 +603,46 @@ class RequirementProfile(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     lines = db.relationship('RequirementLine', backref='profile', cascade='all, delete-orphan',
                             order_by='RequirementLine.sort')
+    ingredient_bounds = db.relationship('ProfileIngredientBound', backref='profile', cascade='all, delete-orphan')
+
+
+class ProfileIngredientBound(db.Model):
+    __tablename__ = 'profile_ingredient_bounds'
+    id = db.Column(db.Integer, primary_key=True)
+    profile_id = db.Column(db.Integer, db.ForeignKey('requirement_profiles.id'), nullable=False)
+    ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
+    min_pct = db.Column(db.Float, nullable=False, default=0.0)
+    max_pct = db.Column(db.Float, nullable=False, default=100.0)
+    source = db.Column(db.String(300), nullable=False)
+    __table_args__ = (db.UniqueConstraint('profile_id', 'ingredient_id', name='uq_profile_ingredient_bound'),)
+
+
+class IngredientNutrientHistory(db.Model):
+    __tablename__ = 'ingredient_nutrient_history'
+    id = db.Column(db.Integer, primary_key=True)
+    ingredient_id = db.Column(db.Integer, db.ForeignKey('feed_ingredients.id'), nullable=False)
+    nutrient_code = db.Column(db.String(20), nullable=False)
+    value = db.Column(db.Float, nullable=False)
+    source = db.Column(db.String(200))
+    source_type = db.Column(db.String(20), nullable=False)
+    confirmed = db.Column(db.Boolean, nullable=False, default=False)
+    recorded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class RequirementPreset(db.Model):
+    __tablename__ = 'requirement_presets'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    genotype = db.Column(db.String(100), nullable=False)
+    stage = db.Column(db.String(100), nullable=False)
+    age_min_days = db.Column(db.Integer)
+    age_max_days = db.Column(db.Integer)
+    sid_lys_g_mcal = db.Column(db.Float)
+    ideal_aa_json = db.Column(db.Text, nullable=False, default='{}')
+    me_min_mcal = db.Column(db.Float)
+    me_max_mcal = db.Column(db.Float)
+    source = db.Column(db.String(300), nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
 
 class RequirementLine(db.Model):

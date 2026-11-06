@@ -111,7 +111,7 @@ class POSCheckoutTests(unittest.TestCase):
         db.session.add(ItemPrice(ingredient_id=self.item.id, pack_kg=70, price=2800))
         db.session.commit()
         response = self.client.post('/api/pos/checkout',
-            json=self.payload(1, 2660, discount_amount=140,
+            json=self.payload(1, 2660, discount_amount=140, discount_reason='BULK', discount_approver='Owner Reu',
                               cart=[{'ingredient_id': self.item.id, 'unit_type': '70KG BAG', 'qty': 1, 'bag_size_kg': 70}]),
             headers={'Idempotency-Key': str(uuid.uuid4())})
         self.assertEqual(response.status_code, 200, response.json)

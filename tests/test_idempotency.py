@@ -147,8 +147,14 @@ class MoneyAndStockReplayTests(Base):
         self.assertEqual(self.stock(self.branch, self.raw), 20.0)
 
     def test_production_batch(self):
+        from services.models import RequirementProfile, SavedFormula, SavedFormulaLine
+        profile = RequirementProfile(name='Test production profile', species='other', source='test profile')
+        db.session.add(profile); db.session.flush()
+        formula = SavedFormula(name='Test Layers', profile_id=profile.id)
+        db.session.add(formula); db.session.flush()
+        db.session.add(SavedFormulaLine(formula_id=formula.id, ingredient_id=self.raw.id, pct=100.0)); db.session.commit()
         first, second = self.twice('keeper', '/api/factory/produce', {
-            'formula_name': 'Test Layers', 'location_id': self.factory.id,
+            'formula_name': 'Test Layers', 'formula_id': formula.id, 'location_id': self.factory.id,
             'output_ingredient_id': self.feed.id, 'planned_output_kg': 100, 'actual_output_kg': 99,
             'loss_reason': 'dust', 'inputs': [
                 {'ingredient_id': self.raw.id, 'planned_qty_kg': 100, 'actual_qty_kg': 100}]})

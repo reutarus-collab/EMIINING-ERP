@@ -35,6 +35,8 @@
         <button class="btn-sm btn-info" onclick="labSaveProfile(true)">Save as new...</button>
         <button class="btn-sm btn-info" onclick="labTogglePanel('lab-reqimport')">Import limits from Excel</button>
         <button class="btn-sm btn-info" onclick="labShowData()">Ingredient data</button>
+        <button class="btn-sm btn-info" onclick="labLoadAudit()">Ingredient audit</button>
+        <button class="btn-sm btn-info" onclick="labLoadPresets()">Requirement generator</button>
       </div>
       <div><label>Batch (kg)</label><input type="number" id="lab-batch" value="1000" min="1" step="1" style="width:90px;padding:6px" onchange="labRender()"></div>
       <div><label>Weigh to (kg)</label>
@@ -47,13 +49,32 @@
       <button id="lab-mode-verify" onclick="labSetMode('verify')">3. Verify formula</button>
     </div>
     <div class="lab-small" id="lab-hint"></div>
+    <div style="margin-top:12px"><h4>Profile ingredient caps</h4><p class="lab-small">Profile caps combine with item master maximum inclusion. Every cap needs a source; no limits are prefilled.</p>
+      <div class="lab-wrap"><table class="lab" id="lab-profile-bounds"></table></div>
+      <button class="btn-sm btn-info" onclick="labAddBound()">+ Add sourced ingredient cap</button></div>
+  </div>
+
+  <div class="card lab-panel" id="lab-audit-panel"><h4>Ingredient data audit (read only)</h4><div class="lab-wrap"><table class="lab" id="lab-audit-table"></table></div></div>
+  <div class="card lab-panel" id="lab-preset-panel"><h4>Poultry requirement presets</h4>
+    <p class="lab-small">Presets are owner-entered, sourced data. This system ships no targets. Generated profiles remain editable and are never released automatically.</p>
+    <div class="lab-bar"><label>Saved preset<select id="lab-preset-select" onchange="labPresetPick()"><option value="">New preset</option></select></label>
+      <label>Name<input id="lab-preset-name"></label><label>Genotype / strain<input id="lab-preset-genotype"></label><label>Stage<input id="lab-preset-stage"></label>
+      <label>Age min (days)<input id="lab-preset-age-min" type="number"></label><label>Age max (days)<input id="lab-preset-age-max" type="number"></label>
+      <label>SID Lys (g/Mcal)<input id="lab-preset-lys" type="number" step="any"></label><label>ME min (Mcal/kg)<input id="lab-preset-me-min" type="number" step="any"></label><label>ME max (Mcal/kg)<input id="lab-preset-me-max" type="number" step="any"></label>
+      <label>Source<input id="lab-preset-source" style="min-width:260px"></label></div>
+    <label>Ideal amino-acid profile ratios (% SID Lys; JSON codes as keys)</label><textarea id="lab-preset-aa" class="lab-paste" placeholder="Enter source-supported SID codes and ratios as JSON"></textarea>
+    <button class="btn-sm btn-primary" onclick="labSavePreset()">Save preset</button>
+    <hr><label>Preset<select id="lab-generate-preset"></select></label><label>Target ME (Mcal/kg)<input id="lab-generate-me" type="number" step="any"></label>
+    <label>Age (days)<input id="lab-generate-age" type="number"></label><label>New profile name<input id="lab-generate-name"></label>
+    <button class="btn-sm btn-success" onclick="labGenerateProfile()">Generate editable profile</button><span id="lab-preset-message" class="lab-small"></span>
   </div>
 
   <div class="card lab-panel" id="lab-reqimport">
     <h4 style="margin-top:0">Import requirement limits</h4>
-    <p class="lab-small">Copy the cells from Excel (Nutrient, Min, Actual, Max, Unit - or just Nutrient, Min, Max) and paste them here, or upload an .xlsx/.csv. A Min of 0 and a Max at the placeholder cap (100 %, 1000 mg/kg) mean "no limit".</p>
+    <p class="lab-small">Paste Nutrient, Min, (Actual), Max, Unit, or upload your WUFFDA workbook: limits are read from the <b>Nutrients</b> sheet. Choose the current specification or a saved feed specification from the selector. A Min of 0 and a Max at the placeholder cap (100 %, 1000 mg/kg) mean "no limit". Bare amino-acid names are treated as SID; explicitly labelled Total values stay total.</p>
     <textarea class="lab-paste" id="lab-req-text" placeholder="Paste here"></textarea>
     <div style="margin:6px 0">or file: <input type="file" id="lab-req-file" accept=".xlsx,.csv,.tsv,.txt"></div>
+    <label id="lab-req-spec-wrap" style="display:none;margin:6px 0">WUFFDA requirement set: <select id="lab-req-spec" onchange="labReqImport(false)" style="padding:6px"></select></label>
     <button class="btn-sm btn-primary" onclick="labReqImport(false)">Preview</button>
     <input id="lab-req-name" placeholder="Import as profile named..." style="padding:6px;width:240px">
     <button class="btn-sm btn-success" onclick="labReqImport(true)">Import as profile</button>
@@ -78,15 +99,15 @@
     <div class="card"><div id="lab-messages"></div></div>
 
     <div class="card">
-      <h4 style="margin-top:0">Nutrient limits <span class="lab-small">(edit Min / Max here, then Save profile to keep them)</span></h4>
+      <h4 style="margin-top:0">Nutrients <span class="lab-small">(edit Min / Max here, then Save profile to keep them)</span></h4>
       <div class="lab-wrap"><table class="lab" id="lab-con-table"></table></div>
       <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <select id="lab-add-nut" style="padding:6px"></select>
         <button class="btn-sm btn-primary" onclick="labAddLine()">+ Add limit</button>
-        <span class="lab-small">Ratio:</span>
+        <span class="lab-small">Ratio (SID amino acid : ME is shown as g/Mcal):</span>
         <select id="lab-ratio-a" style="padding:6px"></select> <span>:</span> <select id="lab-ratio-b" style="padding:6px"></select>
         <button class="btn-sm btn-info" onclick="labAddRatio()">+ Add ratio</button>
-        <button class="btn-sm btn-warning" onclick="labAddSidSet()">+ Add poultry/pig SID amino acid set</button>
+        <button class="btn-sm btn-warning" onclick="labAddSidSet()">+ Add SID amino acid profile (Lys = 100%)</button>
       </div>
       <div class="lab-small" id="lab-sid-note" style="margin-top:6px"></div>
     </div>
@@ -109,10 +130,11 @@
     </div>
     <p class="lab-small">Blank means <b>unknown</b> (never zero). Yellow cells are blank but needed by your current limits. Enter 0 only when the true value is 0.</p>
     <details open style="margin-bottom:8px"><summary style="cursor:pointer;font-weight:600">Paste or upload from Excel</summary>
-      <p class="lab-small">First column = ingredient name, other columns = nutrient names (CP, Ca, SID Lys...). Sheets with nutrients down the side are flipped automatically. A bare "Lysine" column is <b>never</b> assumed to be SID.</p>
+      <p class="lab-small">Ingredient nutrient data is read from WUFFDA's <b>Ingredients</b> sheet. Sheets with nutrients down the side are flipped automatically. Bare amino-acid names (including Lysine) are treated as <b>SID</b>; explicitly labelled Total values stay total.</p>
+      <p class="lab-small">For Excel workbooks with a cover page, the import uses the worksheet named <b>Ingredients</b> when available.</p>
       <textarea class="lab-paste" id="lab-imp-text" placeholder="Paste here"></textarea>
       <div style="margin:6px 0">or file: <input type="file" id="lab-imp-file" accept=".xlsx,.csv,.tsv,.txt"></div>
-      <p class="lab-small">WUFFDA sheets (Cost, Min., Max., Weight, Dry Matter, M.E., Protein, E.E., C18:2, C.F, Calcium, Total/Avail. Phos., amino acids ARG...VAL, Biotin; or NEL, RDP, RUP, NDF, ADF for dairy) are read as they are. Amino acids are read as <b>total</b>. M.E. above 20 is taken as kcal/kg. Blank, "-" and "#N/A" cells are skipped.</p>
+      <p class="lab-small">WUFFDA's crude protein, energy, macro and trace minerals, vitamins, and amino acids ARG...VAL are imported by their headings. Bare amino-acid columns are interpreted as <b>SID</b>. M.E. above 20 is taken as kcal/kg. Blank, "-" and "#N/A" cells are skipped.</p>
       <div style="margin:6px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
         <label><input type="checkbox" id="lab-imp-create" checked> Create ingredients that are not in the system</label>
         <label>as <select id="lab-imp-cat"><option value="Raw - Energy">Raw - Energy</option><option value="Raw - Protein">Raw - Protein</option><option value="Raw - Mineral" >Raw - Mineral/Additive</option><option value="Raw - Other" selected>Raw - Other</option></select></label>

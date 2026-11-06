@@ -252,20 +252,12 @@ class Oct12FeatureTests(unittest.TestCase):
         row = [r for r in admin.get('/api/po/inventory').json if r['id'] == a.id][0]
         self.assertEqual((row['crude_protein_pct'], row['crude_fiber_pct'], row['max_inclusion_pct']), (8.5, 2.5, 60))
 
-    def test_stage_requirements_round_trip_and_drive_the_solver(self):
+    def test_legacy_stage_requirements_and_solver_are_retired(self):
         admin = self.client_for(self.admin_id)
-        self.assertFalse(admin.get('/api/formulate/requirements?species=Test%20Stage').json['saved'])
+        self.assertEqual(admin.get('/api/formulate/requirements?species=Test%20Stage').status_code, 410)
         self.assertEqual(admin.post('/api/formulate/requirements', json={
-            'species': 'Test Stage', 'min_cp': 18, 'min_me': 2.7, 'max_fiber': 5}).status_code, 200)
-        r = admin.get('/api/formulate/requirements?species=Test%20Stage').json
-        self.assertEqual((r['min_cp'], r['min_me'], r['max_fiber']), (18, 2.7, 5))
-        a = self._raw('Maize', 30, 8, 3.3, 2.5)
-        b = self._raw('Soya', 60, 44, 2.9, 6)
-        res = admin.post('/api/formulate', json={'species': 'Test Stage', 'target_batch_kg': 1000,
-                                                 'ingredient_ids': [a.id, b.id], 'location_id': self.branch.id})
-        self.assertEqual(res.status_code, 200, res.json)
-        self.assertEqual(res.json['target_crude_protein_pct'], 18)
-        self.assertEqual(res.json['target_max_crude_fiber_pct'], 5)
+            'species': 'Test Stage', 'min_cp': 18, 'min_me': 2.7, 'max_fiber': 5}).status_code, 410)
+        self.assertEqual(admin.post('/api/formulate', json={'species': 'Test Stage'}).status_code, 410)
         self.assertEqual(self.client_for(self.cashier_id).post('/api/formulate/requirements', json={
             'species': 'Test Stage', 'min_cp': 1, 'min_me': 1}).status_code, 403)
 

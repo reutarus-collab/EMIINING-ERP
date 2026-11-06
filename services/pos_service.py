@@ -6,6 +6,7 @@ from services.inventory import location_stock, change_stock
 
 import math
 from flask import g
+from services import receipt as rcpt
 # Max discount as % of the bill, per role. A role not listed gets 0%.
 DISCOUNT_CAP_PCT = {'sales': 5.0, 'accountant': 10.0, 'admin': 30.0}
 def _unit_price(ingredient, pack_kg):
@@ -88,6 +89,7 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
         unit_cost = (stock_row.unit_cost_per_kg or 0.0) if stock_row else 0.0
         total_cost += total_kg_for_item * unit_cost
         order_lines.append(OrderLine(
+            qty_kg=total_kg_for_item,
             ingredient_id=ingredient.id,
             unit_type=unit_type,
             qty_entered=qty,
@@ -100,6 +102,16 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
     if discount_amount > max_discount + 0.01:
         raise ValueError(f"Discount KSh {discount_amount:.2f} is above the {max_pct:.0f}% limit for your role (max KSh {max_discount:.2f}).")
     # Whole cents: the ledger legs below are posted from this, and customers can only pay in cents.
+    discount_reason, discount_approver = None, None
+    if discount_amount > 0:
+        discount_reason = str(data.get('discount_reason') or '').strip().upper()
+        if discount_reason not in rcpt.DISCOUNT_REASONS:
+            raise ValueError('Choose a reason for the discount: ' + ', '.join(r.title() for r in rcpt.DISCOUNT_REASONS) + '.')
+        discount_approver = str(data.get('discount_approver') or '').strip()[:100]
+        if role == 'admin' and not discount_approver:
+            discount_approver = getattr(g.user, 'username', 'admin')
+        if total_bill > 0 and discount_amount > total_bill * rcpt.APPROVAL_ABOVE_PCT / 100.0 + 0.01 and not discount_approver:
+            raise ValueError(f'A discount above {rcpt.APPROVAL_ABOVE_PCT:g}% needs the name of the person who approved it.')
     final_due = round(max(0.0, total_bill - discount_amount), 2)
     if final_due + 0.01 < total_cost:
         raise ValueError(f"Sale is below the cost of the goods (KSh {final_due:.2f} vs cost KSh {total_cost:.2f}). Reduce the discount.")
@@ -121,6 +133,19 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
     if change_due > cash_tendered + 0.01:
         raise ValueError('Change can only be issued from the cash tender. Reduce non-cash overpayment or enter exact payment amounts.')
 
+    new_phone = rcpt.kenya_phone(data.get('customer_phone')) if not customer_id else ''
+    if not customer_id and str(data.get('customer_phone') or '').strip() and not new_phone:
+        raise ValueError('That customer phone number is not valid. Use e.g. 0712 345 678, or leave it empty.')
+    if new_phone:
+        # Capture the buyer once; the next sale to the same number finds the same record.
+        known = next((c for c in Customer.query.filter(Customer.location_id == location_id).all()
+                      if rcpt.kenya_phone(c.phone) == new_phone), None)
+        if not known:
+            nm = str(data.get('customer_name') or '').strip()[:100] or ('Customer ' + new_phone[-4:])
+            known = Customer(name=nm, phone='0' + new_phone[3:], location_id=location_id, credit_limit=0.0, current_balance=0.0)
+            db.session.add(known)
+            db.session.flush()
+        customer_id = known.id
     if customer_id:
         sale_customer = Customer.query.get(customer_id)
         if not sale_customer:
@@ -137,7 +162,11 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
         customer.current_balance += credit_amount
 
     sale_id = f"SALE-{uuid.uuid4().hex[:6].upper()}"
+    receipt_seq, receipt_no = rcpt.next_receipt(location_id)
+    balance_after = Customer.query.get(customer_id).current_balance if customer_id else None
     order = OrderHeader(
+        receipt_seq=receipt_seq, receipt_no=receipt_no, discount_reason=discount_reason,
+        discount_approver=discount_approver, balance_after=balance_after,
         sale_id=sale_id,
         customer_id=customer_id,
         total_amount=total_bill,
@@ -215,9 +244,21 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
             "subtotal": line.subtotal
         })
 
+    customer = Customer.query.get(customer_id) if customer_id else None
     response = {
-        "sale_id": sale_id, "total_amount": final_due, "paid_amount": total_paid, 
-        "change_due": change_due, "credit_amount": credit_amount, "items": res_items 
+        "sale_id": sale_id, "order_id": order.id, "receipt_no": receipt_no,
+        "total_amount": final_due, "paid_amount": total_paid,
+        "change_due": change_due, "credit_amount": credit_amount, "items": res_items,
+        "customer_name": customer.name if customer else (data.get('customer_name') or 'Walk-in customer'),
+        "location_name": data.get('location_name') or '',
+        "cashier_name": data.get('cashier_name') or getattr(g.user, 'username', ''),
+        "completed_at": datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+        "payments": [{
+            "method": p.get('payment_method'),
+            "amount": round(float(p.get('amount', 0.0) or 0.0), 2),
+            "fee": round(float(p.get('fee', 0.0) or 0.0), 2),
+            "reference": (p.get('reference') or '').strip(),
+        } for p in payments if float(p.get('amount', 0.0) or 0.0) > 0],
     }
     if idempotency_key:
         db.session.add(IdempotencyKey(key=idempotency_key, request_hash=request_hash,

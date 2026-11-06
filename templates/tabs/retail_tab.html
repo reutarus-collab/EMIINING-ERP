@@ -14,18 +14,33 @@
     <div data-roles="admin,warehouse" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <select id="stock-adjust-item"></select><input id="stock-adjust-qty" type="number" step="0.01" placeholder="Adjustment kg (+/-)">
       <input id="stock-adjust-reason" placeholder="Reason"><button class="btn-sm btn-primary" onclick="adjustStock()">Adjust stock</button>
-      <select id="transfer-to"></select><input id="transfer-qty" type="number" min="0.01" step="0.01" placeholder="Transfer kg">
-      <input id="transfer-reason" placeholder="Transfer reason"><button class="btn-sm btn-warning" data-roles="admin,warehouse" onclick="transferStock()">Dispatch to outlet</button>
+    </div>
+    <div data-roles="admin,warehouse" style="border:1px solid #dee2e6;border-radius:8px;padding:10px;margin:10px 0">
+      <b>Transfer stock to another outlet (one or many items)</b>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
+        <label>To <select id="transfer-to"></select></label>
+        <select id="transfer-item" aria-label="Item to transfer"></select>
+        <input id="transfer-qty" type="number" min="0.01" step="0.01" placeholder="kg" style="width:110px">
+        <button type="button" class="btn-sm" onclick="transferAddLine()">+ Add to transfer</button>
+      </div>
+      <table class="data-table" style="margin-top:8px"><thead><tr><th>Item</th><th>kg</th><th>In stock here</th><th></th></tr></thead>
+        <tbody id="transfer-lines"><tr><td colspan="4">No items added yet.</td></tr></tbody></table>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <input id="transfer-reason" placeholder="Transfer reason" style="flex:1 1 220px;min-width:0">
+        <button type="button" id="transfer-send-btn" class="btn-sm btn-warning" onclick="transferStock()">Dispatch to outlet</button>
+      </div>
+      <div id="transfer-msg" role="status" style="margin-top:6px"></div>
     </div>
     <h3>Incoming stock transfers</h3>
     <p>Receive factory or warehouse dispatches into this outlet. Partial receipts remain open until the balance is received.</p>
+    <button type="button" class="btn-sm btn-success" onclick="receiveAllTransfers()" style="margin-bottom:6px">Receive everything shown (full remaining quantities)</button>
     <table class="data-table"><thead><tr><th>Transfer</th><th>From</th><th>Item</th><th>Dispatched</th><th>Received</th><th>Remaining</th><th>Receive now (kg)</th><th>Note</th><th>Actions</th></tr></thead>
       <tbody id="incoming-transfer-body"><tr><td colspan="9">Loading incoming transfers…</td></tr></tbody></table>
     <input id="stock-filter" placeholder="Filter items..." oninput="renderStock()"
            style="padding:10px;width:100%;max-width:320px;margin-bottom:10px">
     <table class="data-table">
-      <thead><tr><th>Item</th><th>Category</th><th>Stock (kg)</th><th>Bag (kg)</th><th>Retail / kg</th><th class="stock-cost-col">Outlet cost / kg</th><th class="stock-cost-col">Outlet value (KSh)</th></tr></thead>
-      <tbody id="stock-body"><tr><td colspan="7">Loading...</td></tr></tbody>
+      <thead><tr><th>Item</th><th>Category</th><th>Sold (30d kg)</th><th>Stock (kg)</th><th>Bag (kg)</th><th>Retail / kg</th><th class="stock-cost-col">Outlet cost / kg</th><th class="stock-cost-col">Outlet value (KSh)</th></tr></thead>
+      <tbody id="stock-body"><tr><td colspan="8">Loading...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -44,18 +59,6 @@
     <h3>Recent outlet expenses</h3>
     <table class="data-table"><thead><tr><th>Reference</th><th>Date</th><th>Category</th><th>Description</th><th>Paid by</th><th>Recorded by</th><th>Amount (KSh)</th></tr></thead>
       <tbody id="expense-body"><tr><td colspan="7">Loading expenses…</td></tr></tbody></table>
-  </div>
-  <div class="card" id="cash-movement-card">
-    <h3>Cash movements</h3>
-    <p style="font-size:.9rem;color:#555">Take cash out of the counter, deposit cash to M-Pesa, or add float back to the counter. These change the till's expected cash. Business costs (fuel, welding, KPLC) belong in the expense form above.</p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <select id="till-movement-type"><option value="PAID_OUT">Remove from counter (to safe)</option><option value="MPESA_DEPOSIT">Deposit to M-Pesa</option><option value="PAID_IN">Add float to counter (from safe)</option></select>
-      <input id="till-movement-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Amount (KSh)">
-      <input id="till-movement-reason" maxlength="200" placeholder="Note (optional)">
-      <button class="btn-sm btn-primary" onclick="recordTillMovement()">Record cash movement</button>
-    </div>
-    <div id="till-movement-message" style="margin-top:6px"></div>
-    <div id="till-movement-history" style="font-size:.85rem;margin-top:6px">No cash movements loaded.</div>
   </div>
 </div>
 <div id="report-tab" class="tab-content">
@@ -149,6 +152,8 @@ async function loadStock() {
   document.getElementById('stock-location-name').textContent = stockRows[0]?.location_name || document.getElementById('pos-location')?.selectedOptions[0]?.textContent || 'Outlet';
   const items = document.getElementById('stock-adjust-item');
   if (items) items.innerHTML = stockRows.map(i => `<option value="${i.id}">${retailEsc(i.name)}</option>`).join('');
+  const tItem = document.getElementById('transfer-item');
+  if (tItem) tItem.innerHTML = stockRows.filter(i => Number(i.stock_kg) > 0).map(i => `<option value="${i.id}">${retailEsc(i.name)} (${Number(i.stock_kg)} kg)</option>`).join('');
   const dest = document.getElementById('transfer-to');
   if (dest) {
     const locations = await (await fetch('/api/locations')).json();
@@ -212,13 +217,61 @@ async function adjustStock() {
   const d = await r.json(); if (!r.ok) return alert(d.message || 'Adjustment failed.');
   document.getElementById('stock-adjust-qty').value=''; document.getElementById('stock-adjust-reason').value=''; await refreshItemViews();
 }
+let transferLines = [];            // [{id, name, kg}] waiting to be dispatched together
+function transferRender() {
+  const body = document.getElementById('transfer-lines');
+  if (!body) return;
+  body.innerHTML = transferLines.map((l, i) => {
+    const have = Number((stockRows.find(r => String(r.id) === String(l.id)) || {}).stock_kg || 0);
+    const short = l.kg > have + 0.000001;
+    return `<tr><td>${retailEsc(l.name)}</td><td>${l.kg}</td><td style="${short ? 'color:#b00;font-weight:bold' : ''}">${have}${short ? ' (not enough)' : ''}</td>
+      <td><button type="button" class="btn-sm btn-danger" aria-label="Remove ${retailEsc(l.name)}" onclick="transferRemove(${i})">x</button></td></tr>`;
+  }).join('') || '<tr><td colspan="4">No items added yet.</td></tr>';
+}
+function transferAddLine() {
+  const sel = document.getElementById('transfer-item'), qtyEl = document.getElementById('transfer-qty');
+  const msg = document.getElementById('transfer-msg');
+  const kg = parseFloat(qtyEl.value);
+  if (!sel.value) { msg.innerHTML = '<span style="color:#b00">Choose an item.</span>'; return; }
+  if (!(kg > 0)) { msg.innerHTML = '<span style="color:#b00">Enter the kg to transfer.</span>'; return; }
+  const name = sel.options[sel.selectedIndex].textContent.replace(/ \([^)]*\)$/, '');
+  const existing = transferLines.find(l => String(l.id) === String(sel.value));
+  if (existing) existing.kg = Math.round((existing.kg + kg) * 1000) / 1000; else transferLines.push({id: sel.value, name: name, kg: kg});
+  qtyEl.value = ''; msg.textContent = ''; transferRender();
+}
+function transferRemove(i) { transferLines.splice(i, 1); transferRender(); }
 async function transferStock() {
-  const body = {from_location_id:activeLocationId, to_location_id:document.getElementById('transfer-to').value,
-    ingredient_id:document.getElementById('stock-adjust-item').value, quantity_kg:document.getElementById('transfer-qty').value,
-    reason:document.getElementById('transfer-reason').value};
-  const r = await fetch('/api/inventory/transfers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const d = await r.json(); if (!r.ok) return alert(d.message || 'Transfer failed.');
-  alert(`Transfer ${d.transfer_no} dispatched. The receiving outlet must confirm the goods before its stock increases.`); document.getElementById('transfer-qty').value=''; document.getElementById('transfer-reason').value=''; await refreshItemViews();
+  const msg = document.getElementById('transfer-msg'), btn = document.getElementById('transfer-send-btn');
+  const pendingKg = parseFloat(document.getElementById('transfer-qty').value);
+  if (pendingKg > 0 && document.getElementById('transfer-item').value) transferAddLine();   // a typed but not yet added line still goes
+  if (!transferLines.length) { msg.innerHTML = '<span style="color:#b00">Add at least one item.</span>'; return; }
+  const body = {from_location_id: activeLocationId, to_location_id: document.getElementById('transfer-to').value,
+    items: transferLines.map(l => ({ingredient_id: l.id, quantity_kg: l.kg})),
+    reason: document.getElementById('transfer-reason').value};
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/inventory/transfers', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { msg.innerHTML = `<span style="color:#b00">${retailEsc(d.message || 'Transfer failed. Nothing was dispatched.')}</span>`; return; }
+    msg.innerHTML = `<span style="color:green">Dispatched ${d.lines} item(s): ${retailEsc((d.transfer_nos || [d.transfer_no]).join(', '))}. The receiving outlet must confirm the goods before its stock increases.</span>`;
+    transferLines = []; document.getElementById('transfer-reason').value = ''; transferRender(); await refreshItemViews();
+  } catch (e) { msg.innerHTML = '<span style="color:#b00">No connection. Check Stock before sending again.</span>'; }
+  finally { btn.disabled = false; }
+}
+async function receiveAllTransfers() {
+  const inputs = Array.from(document.querySelectorAll('[id^="transfer-receive-qty-"]'));
+  if (!inputs.length) return alert('Nothing is waiting to be received.');
+  if (!confirm('Receive the full remaining quantity of all ' + inputs.length + ' line(s) shown?')) return;
+  let done = 0;
+  for (const el of inputs) {
+    const id = el.id.replace('transfer-receive-qty-', '');
+    const r = await fetch('/api/inventory/transfers/' + id + '/receive', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({quantity_kg: el.value, note: (document.getElementById('transfer-receive-note-' + id) || {}).value || ''})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { alert((d.message || 'A line could not be received.') + '\n' + done + ' line(s) were received before this one.'); break; }
+    done++;
+  }
+  await refreshItemViews();
 }
 async function loadExpenses() {
   const body = document.getElementById('expense-body');
@@ -264,15 +317,13 @@ function stockGroup(cat) {
 function renderStock() {
   const words = (document.getElementById('stock-filter').value || '').toLowerCase().split(/\s+/).filter(Boolean);
   const rows = stockRows.filter(i => words.every(w => ((i.name || '') + ' ' + (i.category || '')).toLowerCase().includes(w)))
-    .map(i => Object.assign({g: stockGroup(i.category)}, i))
-    .sort((a, b) => a.g[0] - b.g[0] || String(a.name).localeCompare(String(b.name), undefined, {sensitivity: 'base'}));
+    .sort((a, b) => Number(b.sold_kg_30d || 0) - Number(a.sold_kg_30d || 0) || String(a.name).localeCompare(String(b.name), undefined, {sensitivity: 'base'}));
   const showCost = ['admin','accountant','warehouse'].includes(window.currentRole);
   document.querySelectorAll('.stock-cost-col').forEach(el => el.style.display = showCost ? '' : 'none');
-  const cols = showCost ? 7 : 5;
-  let html = '', last = null;
+  const cols = showCost ? 8 : 6;
+  let html = '';
   rows.forEach(i => {
-    if (i.g[0] !== last) { last = i.g[0]; html += `<tr><td colspan="${cols}" style="background:#eef2f7;font-weight:700">${i.g[1]}</td></tr>`; }
-    html += `<tr><td>${retailEsc(i.name)}</td><td>${retailEsc(i.category)}</td><td>${i.stock_kg}</td><td>${i.bag_size_kg}</td><td>${
+    html += `<tr><td>${retailEsc(i.name)}</td><td>${retailEsc(i.category)}</td><td>${Number(i.sold_kg_30d || 0).toFixed(2)}</td><td>${i.stock_kg}</td><td>${i.bag_size_kg}</td><td>${
       i.priced ? Number(i.retail_price_per_kg).toFixed(2) : '<span style="color:#b00;font-weight:bold">NO PRICE</span>'}</td>${showCost ? `<td>${Number(i.unit_cost_per_kg || 0).toFixed(4)}</td><td>${Number(i.stock_value || 0).toFixed(2)}</td>` : ''}</tr>`;
   });
   document.getElementById('stock-body').innerHTML = html || `<tr><td colspan="${cols}">No items.</td></tr>`;
@@ -391,10 +442,17 @@ async function showCustDebt(id) {
     <div style="display:flex;justify-content:space-between;align-items:center"><h3 style="margin:0">${retailEsc(d.name)}</h3><button id="cdo-x" style="min-height:40px">Close</button></div>
     <p>Owes <b>KSh ${d.balance.toFixed(2)}</b> &middot; limit KSh ${d.credit_limit.toFixed(2)} &middot; available KSh ${d.available_credit.toFixed(2)}${d.last_payment ? ' &middot; last payment ' + retailEsc(d.last_payment) : ' &middot; no repayment yet'}${d.phone ? '<br>Phone ' + retailEsc(d.phone) : ''}</p>
     <div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Date</th><th>Type</th><th>Ref</th><th>KSh</th><th>Note</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No debt history.</td></tr>'}</tbody></table></div>
-    <div style="text-align:right;margin-top:8px"><button id="cdo-x2" style="min-height:40px">Close</button></div></div>`;
+    <div style="text-align:right;margin-top:8px"><button id="cdo-st" style="min-height:40px">Statement (PDF)</button> <button id="cdo-x2" style="min-height:40px">Close</button></div></div>`;
   document.body.appendChild(ov);
   const close = () => ov.remove();
   document.getElementById('cdo-x').onclick = close; document.getElementById('cdo-x2').onclick = close;
+  document.getElementById('cdo-st').onclick = async () => {
+    const r = await fetch('/api/customers/' + id + '/statement.pdf', {credentials: 'same-origin'});
+    if (!r.ok) return alert('Could not build the statement.');
+    const blob = await r.blob(), file = new File([blob], 'statement-' + id + '.pdf', {type: 'application/pdf'});
+    if (navigator.canShare && navigator.canShare({files: [file]})) { try { await navigator.share({files: [file]}); } catch (_) {} }
+    else window.open(URL.createObjectURL(blob), '_blank');
+  };
   ov.addEventListener('click', e => { if (e.target === ov) close(); });
 }
 async function saveCustomer(id) {

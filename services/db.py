@@ -30,11 +30,14 @@ def _migrate_location_schema():
                                 'min_phosphorus': 'FLOAT NOT NULL DEFAULT 0', 'min_lysine': 'FLOAT NOT NULL DEFAULT 0',
                                 'min_methionine': 'FLOAT NOT NULL DEFAULT 0'},
         'saved_formulas': {'profile_id': 'INTEGER', 'last_verified_ok': 'BOOLEAN', 'last_verified_at': 'DATETIME'},
+        'ingredient_nutrients': {'source_type': "VARCHAR(20) NOT NULL DEFAULT 'legacy'",
+                                 'confirmed': 'BOOLEAN NOT NULL DEFAULT 0'},
         'till_sessions': {'location_id': 'INTEGER', 'opened_at': 'DATETIME', 'closed_at': 'DATETIME', 'status': "VARCHAR(20) DEFAULT 'OPEN'", 'counted_cash': 'FLOAT', 'cash_variance': 'FLOAT', 'open_key': 'VARCHAR(120)'},
         'app_users': {'location_id': 'INTEGER'},
         'customers': {'location_id': 'INTEGER'},
         'idempotency_keys': {'request_hash': 'VARCHAR(64)', 'created_by': 'VARCHAR(50)', 'location_id': 'INTEGER'},
-        'production_runs': {'location_id': 'INTEGER'},
+        'production_runs': {'location_id': 'INTEGER', 'formula_id': 'INTEGER', 'gate_status': 'VARCHAR(20)',
+                            'gate_reasons': 'TEXT', 'override_by': 'VARCHAR(50)', 'override_reason': 'VARCHAR(200)'},
         'milling_runs': {
             'customer_name': "VARCHAR(100) NOT NULL DEFAULT 'Walk-in customer'",
             'customer_phone': 'VARCHAR(20)',
@@ -64,6 +67,10 @@ def _migrate_location_schema():
             'shortfall_reason': 'VARCHAR(200)',
             'closed_by': 'VARCHAR(50)',
         },
+        'locations': {'phone': 'VARCHAR(30)', 'receipt_width': 'INTEGER DEFAULT 80'},
+        'order_headers': {'receipt_seq': 'INTEGER', 'receipt_no': 'VARCHAR(30)', 'discount_reason': 'VARCHAR(20)',
+                          'discount_approver': 'VARCHAR(100)', 'balance_after': 'FLOAT'},
+        'order_lines': {'qty_kg': 'FLOAT'},
     }
     if db.engine.dialect.name != 'sqlite':
         additions['till_sessions']['opened_at'] = 'TIMESTAMP'
@@ -176,6 +183,10 @@ def _migrate_location_schema():
     if 'uq_till_open_key' not in index_names:
         with db.engine.begin() as conn:
             conn.execute(text('CREATE UNIQUE INDEX uq_till_open_key ON till_sessions (open_key)'))
+    order_indexes = {index['name'] for index in inspect(db.engine).get_indexes('order_headers')}
+    if 'uq_order_receipt_seq' not in order_indexes:      # NULLs (old sales) never collide
+        with db.engine.begin() as conn:
+            conn.execute(text('CREATE UNIQUE INDEX uq_order_receipt_seq ON order_headers (location_id, receipt_seq)'))
     for code, name, category in (('1000', 'Cash and Bank', 'ASSET'),
                                  ('1010', 'M-Pesa Clearing', 'ASSET'),
                                  ('1020', 'Bank Account', 'ASSET'),

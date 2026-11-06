@@ -77,38 +77,60 @@ input, select, textarea {
   #money-tab .leak-table tbody td:last-child { border-bottom: 0; }
 }
 </style>
-<h2>Emining Feeds Enterprise & Factory Terminal</h2>
-
-<div class="nav-tabs">
-  <button class="tab-btn active" onclick="showTab('pos-tab')">🛒 Point of Sale (POS)</button>
-  <button class="tab-btn" onclick="showTab('stock-tab'); loadStock();">📦 Stock</button>
-  <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('expenses-tab'); loadExpenses(); if (typeof loadTillMovementHistory === 'function') loadTillMovementHistory();">💸 Expenses</button>
-  <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('report-tab'); loadDailyReport();">📊 Daily Report</button>
-  <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('money-tab'); initMoneyReports();">💵 Money & leaks</button>
-  <button class="tab-btn" data-roles="admin" onclick="showTab('pricing-tab'); loadPrices();">💰 Retail Pricing</button>
-  <button class="tab-btn" data-roles="admin" onclick="showTab('bags-tab'); loadBagPrices();">Bag Prices</button>
-  <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('payables-tab'); loadPayables();">Supplier Payables</button>
+<div class="app-shell">
+<aside class="app-sidebar" aria-label="Main navigation">
+  <div class="app-brand"><span class="app-brand-mark" aria-hidden="true">EF</span><div><strong>EMINING FEEDS</strong><small>Perfect feed for perfect farmers</small></div></div>
+<div class="nav-tabs" aria-label="Business modules">
+  <button class="tab-btn active" onclick="showTab('dashboard-tab')">▦ Dashboard</button>
+  <button class="tab-btn" onclick="showTab('pos-tab')">▣ Quick POS</button>
+  <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('till-tab'); refreshTill(); loadTillMovementHistory();">▤ Till Management</button>
   <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('customers-tab'); loadCustAdmin();">👥 Customers</button>
-  <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">📥 Purchase Orders</button>
-  <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('sales-tab')">📄 Sales Ledger</button>
-  <button class="tab-btn" data-roles="admin,accountant,factory" onclick="showTab('matrix-tab'); labInit();">🧮 Ration Formulation</button>
-  <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('factory-tab')">🏭 Factory</button>
+  <section class="nav-group is-open" data-group="Financial"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Financial <span>▾</span></button><div class="nav-group-subnav">
+    <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('money-tab'); initMoneyReports();">Money &amp; leaks</button>
+    <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('expenses-tab'); loadExpenses(); if (typeof loadTillMovementHistory === 'function') loadTillMovementHistory();">Expenses</button>
+    <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('payables-tab'); loadPayables();">Supplier payables</button>
+  </div></section>
+  <section class="nav-group is-open" data-group="Formulation"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Formulation <span>▾</span></button><div class="nav-group-subnav">
+    <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('factory-tab')">Factory</button>
+    <button class="tab-btn" data-roles="admin,accountant,factory" onclick="showTab('matrix-tab'); labInit();">Formulation Lab</button>
+  </div></section>
+  <section class="nav-group is-open" data-group="Reports"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Reports <span>▾</span></button><div class="nav-group-subnav">
+    <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('sales-tab')">Sales history</button>
+    <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('insights-tab'); loadInsights();">Insights</button>
+    <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('report-tab'); loadDailyReport();">Daily report</button>
+  </div></section>
+  <section class="nav-group is-open" data-group="Inventory"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Inventory <span>▾</span></button><div class="nav-group-subnav">
+    <button class="tab-btn" onclick="showTab('stock-tab'); loadStock();">Stock on hand</button>
+    <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">Purchasing &amp; GRN</button>
+    <button class="tab-btn" data-roles="admin" onclick="showTab('pricing-tab'); loadPrices();">Retail pricing</button>
+    <button class="tab-btn" data-roles="admin" onclick="showTab('bags-tab'); loadBagPrices();">Bag prices</button>
+  </div></section>
 </div>
+  <div class="app-sidebar-footer"><div><span class="sidebar-status-dot"></span><span id="app-sidebar-user">Cashier</span></div><div id="app-sidebar-location">Current outlet</div><div id="till-state-mirror">Till status loading…</div></div>
+</aside>
+<main class="app-main">
+<div class="app-page-heading"><div><span id="module-heading-kicker">RETAIL OPERATIONS</span><h1 id="module-heading-title">Dashboard</h1></div><p id="module-heading-subtitle">Your branch operations at a glance</p></div>
 
 <!-- INCLUDED TAB COMPONENTS (ONLY CALLED ONCE) -->
+{% include "tabs/dashboard_tab.html" %}
 {% include "tabs/pos_tab.html" %}
+{% include "tabs/till_tab.html" %}
 {% include "tabs/po_tab.html" %}
 {% include "tabs/sales_tab.html" %}
 {% include "tabs/formulator_tab.html" %}
 {% include "tabs/factory_tab.html" %}
 {% include "tabs/retail_tab.html" %}
+{% include "tabs/insights_tab.html" %}
 {% include "tabs/bagprices_tab.html" %}
 {% include "tabs/payables_tab.html" %}
 
 <!-- ==================== SCRIPTS ==================== -->
-<script src="/static/js/main.js?v=12"></script>
-<script src="/static/js/pos.js?v=21"></script>
+<script src="/static/js/main.js?v={{ asset_v("js/main.js") }}"></script>
+<script src="/static/js/pos.js?v={{ asset_v("js/pos.js") }}"></script>
 <script src="/static/js/factory.js?v=18"></script>
 <script src="/static/js/nutrition.js?v=2"></script>
 <script src="/static/js/reports.js?v=4"></script>
+</main>
+</div>
 {% endblock %}
+

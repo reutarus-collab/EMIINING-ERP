@@ -1,0 +1,12 @@
+EMINING ERP — WUFFDA/SID import patch
+
+Upload this ZIP to /home/REUTARUS/EMIINING-ERP and run:
+  cd ~/EMIINING-ERP
+  unzip -o ~/EMINING-ERP-wuffda-sid-import.zip -d ~/EMIINING-ERP
+
+Then open the PythonAnywhere Web tab and Reload the web app.
+
+The Formulation Lab ingredient importer reads the WUFFDA Ingredients sheet;
+the requirement importer reads Nutrients, lets you choose Current or a saved
+specification, and previews mapped limits before saving. Bare amino acid
+headings map to SID; explicit Total headings remain total.

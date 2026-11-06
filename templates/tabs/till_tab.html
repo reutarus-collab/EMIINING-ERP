@@ -1,0 +1,36 @@
+<div id="till-tab" class="tab-content">
+  <div class="app-page-heading">
+    <div><span>RETAIL OPERATIONS</span><h1>Till Management</h1></div>
+    <p>Open and close your till, track cash movements, and reconcile the drawer.</p>
+  </div>
+  <section class="card till-manager-card" aria-labelledby="till-manager-title">
+    <div class="pos-section-heading">
+      <div><span class="pos-kicker">CASHIER SESSION</span><h2 id="till-manager-title">Current till</h2><p>Outlet: <strong id="till-location-label">Current outlet</strong></p></div>
+      <button type="button" class="pos-utility-btn" onclick="showTab('pos-tab')">Back to Quick POS</button>
+    </div>
+    <details id="till-panel" class="till-panel" open>
+      <summary><span>Open / close till</span><span id="till-state">Loading till status…</span></summary>
+      <div class="card till-session-controls">
+        <label>Opening cash (KSh) <input id="till-opening-cash" type="number" min="0" step="0.01" value="0"></label>
+        <button class="btn-sm btn-success" id="till-open-btn" onclick="openTill()">Open till</button>
+        <button class="btn-sm btn-warning" id="till-close-btn" onclick="closeTill()" style="display:none">Close till</button>
+      </div>
+    </details>
+  </section>
+  <section class="card till-manager-card" id="cash-movement-card">
+    <div class="pos-section-heading"><div><span class="pos-kicker">DRAWER ACTIVITY</span><h2>Cash in / out</h2><p>Use expenses for business costs; these entries record cash movement to or from the till.</p></div></div>
+    <div class="till-movement-fields">
+      <label>Movement<select id="till-movement-type"><option value="PAID_OUT">Remove cash from till</option><option value="MPESA_DEPOSIT">Deposit cash to M-Pesa</option><option value="PAID_IN">Add float to till</option></select></label>
+      <label>Amount (KSh)<input id="till-movement-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Amount"></label>
+      <label>Reason<input id="till-movement-reason" maxlength="200" placeholder="e.g. float top-up or deposit"></label>
+      <button class="btn-sm btn-primary" onclick="recordTillMovement()">Record movement</button>
+    </div>
+    <div id="till-movement-message" role="status" style="margin-top:8px"></div>
+    <h3>Recent till movements</h3>
+    <div id="till-movement-history" class="till-movement-history">No cash movements loaded.</div>
+  </section>
+  <section class="card till-manager-card">
+    <div class="pos-section-heading"><div><span class="pos-kicker">RECONCILIATION</span><h2>End-of-shift close</h2><p>Close Till records counted cash and variance to the ledger.</p></div></div>
+    <button type="button" class="pos-utility-btn" onclick="showTab('report-tab'); loadDailyReport();">Open daily till report</button>
+  </section>
+</div>
