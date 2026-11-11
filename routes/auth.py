@@ -9,7 +9,7 @@ from services.models import db, User, Location
 
 auth_bp = Blueprint('auth', __name__)
 
-OPEN_PATHS = ('/login', '/manifest.json', '/sw.js')
+OPEN_PATHS = ('/login', '/manifest.json', '/sw.js', '/service-worker.js')
 FAILS = {}
 MAX_FAILS = 5
 WINDOW = 600  # seconds
@@ -46,6 +46,19 @@ LOGIN_HTML = """<!doctype html>
  autocomplete="current-password" required style="width:100%;padding:10px;margin:6px 0"><br>
 <button style="width:100%;padding:10px">Log in</button>
 </form>
+<script>
+/* Signing in must never expose the previous cashier's cached customers. Unsynced sales are kept. */
+try {
+  const req = indexedDB.open('emining-pos-offline-v1');
+  req.onsuccess = () => {
+    const db = req.result;
+    if (db.objectStoreNames.contains('cache')) {
+      const tx = db.transaction('cache', 'readwrite'); tx.objectStore('cache').clear();
+      tx.oncomplete = tx.onerror = tx.onabort = () => db.close();
+    } else { db.close(); }
+  };
+} catch (_) {}
+</script>
 </body>"""
 
 

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from services.db import db
 from services.models import FeedIngredient, Customer, OrderHeader, OrderLine, PaymentSplit, StockMovement, ItemPrice, TillSession, IdempotencyKey
 from services.inventory import location_stock, change_stock
@@ -28,7 +28,26 @@ def _num(value, name):
     if not math.isfinite(v):
         raise ValueError(f"Invalid {name}.")
     return v
+def _offline_sold_at(value):
+    """Optional time a phone rang up the sale while disconnected. Stored for audit only; it never re-dates the books."""
+    if value in (None, ''):
+        return None
+    try:
+        when = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        raise ValueError('The offline sale time is not valid.')
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc).replace(tzinfo=None)
+    now = datetime.utcnow()
+    if when > now + timedelta(minutes=10):
+        raise ValueError('The offline sale time is in the future. Check the phone clock.')
+    if when < now - timedelta(days=7):
+        raise ValueError('This offline sale is more than 7 days old. Ask an administrator to record it.')
+    return when
+
+
 def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, created_by=None):
+    offline_sold_at = _offline_sold_at(data.get('offline_sold_at'))
     customer_id = data.get('customer_id')
     discount_amount = round(_num(data.get('discount_amount', 0.0), 'discount amount'), 2)
     if discount_amount < 0:
@@ -80,6 +99,10 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
             if available < total_kg_for_item:
                 raise ValueError(f"Insufficient stock at this outlet for {ingredient.name}. Available: {available}kg")
         unit_price = _unit_price(ingredient, bag_size_kg)
+        if item.get('expected_unit_price') is not None:
+            expected_price = round(_num(item.get('expected_unit_price'), 'expected unit price'), 2)
+            if abs(unit_price - expected_price) > 0.01:
+                raise ValueError(f'Price changed for {ingredient.name}. Review the pending sale and the amount collected before syncing it.')
         subtotal = qty * unit_price
         unit_type = ('KG SERVICE' if is_service else
                      ('KG' if abs(bag_size_kg - 1.0) < 0.0005 else ('%g' % bag_size_kg) + 'KG BAG'))
@@ -113,6 +136,10 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
         if total_bill > 0 and discount_amount > total_bill * rcpt.APPROVAL_ABOVE_PCT / 100.0 + 0.01 and not discount_approver:
             raise ValueError(f'A discount above {rcpt.APPROVAL_ABOVE_PCT:g}% needs the name of the person who approved it.')
     final_due = round(max(0.0, total_bill - discount_amount), 2)
+    if data.get('expected_total_amount') is not None:
+        expected_total = round(_num(data.get('expected_total_amount'), 'expected sale total'), 2)
+        if abs(final_due - expected_total) > 0.01:
+            raise ValueError('The sale total changed. Review the pending sale and the amount collected before syncing it.')
     if final_due + 0.01 < total_cost:
         raise ValueError(f"Sale is below the cost of the goods (KSh {final_due:.2f} vs cost KSh {total_cost:.2f}). Reduce the discount.")
     
@@ -174,7 +201,8 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
         paid_amount=total_paid,
         change_due=change_due,
         credit_amount=credit_amount,
-        status='COMPLETED', location_id=location_id, till_session_id=till_session_id
+        status='COMPLETED', location_id=location_id, till_session_id=till_session_id,
+        offline_sold_at=offline_sold_at
     )
     db.session.add(order)
     db.session.flush() 
@@ -253,6 +281,7 @@ def process_full_pos_checkout(data, idempotency_key=None, request_hash=None, cre
         "location_name": data.get('location_name') or '',
         "cashier_name": data.get('cashier_name') or getattr(g.user, 'username', ''),
         "completed_at": datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+        "offline_sold_at": (offline_sold_at.isoformat(timespec='seconds') + 'Z') if offline_sold_at else None,
         "payments": [{
             "method": p.get('payment_method'),
             "amount": round(float(p.get('amount', 0.0) or 0.0), 2),

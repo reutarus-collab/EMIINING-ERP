@@ -32,6 +32,8 @@ async function initOutletTill() {
     if (typeof loadProductionRuns === 'function') loadProductionRuns();
     if (typeof loadStock === 'function') loadStock();
     if (typeof loadDailyReport === 'function') loadDailyReport();
+    await syncOfflineSales();
+    await renderOfflineSales();
   } catch (e) {
     const state = document.getElementById('till-state');
     if (state) state.textContent = 'Outlet setup required: assign this user to a valid location.';
@@ -514,14 +516,22 @@ async function completeCheckout() {
     if (!isValid) return alert('Negative payments are strictly prohibited.');
     if (feeTooBig) return alert('M-Pesa/bank deduction cannot be more than the amount paid on that line.');
     if (totalEntered < totalDue - 0.01) return alert(`Payment incomplete! You are short by KSh ${(totalDue - totalEntered).toFixed(2)}.`);
-    const cartPayload = cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg}));
+    const cartPayload = cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg, expected_unit_price:Number(c.unit_price.toFixed(2))}));
+    const cartFingerprint = JSON.stringify(cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg})));
     attempt = {key:newCheckoutUuid(), owner:window.currentUsername,
-      cartFingerprint:JSON.stringify(cartPayload), payload:{customer_id:custId ? parseInt(custId) : null,
+      cartFingerprint:cartFingerprint, payload:{customer_id:custId ? parseInt(custId) : null,
         location_id:activeLocationId, discount_amount:absoluteDisc, discount_reason:discReason, discount_approver:discApprover,
-        customer_phone:newPhone, customer_name:newPhone ? document.getElementById('new-cust-name').value.trim() : '', cart:cartPayload, payments}};
+        expected_total_amount:Number(totalDue.toFixed(2)), customer_phone:newPhone,
+        customer_name:newPhone ? document.getElementById('new-cust-name').value.trim() : '', cart:cartPayload, payments}};
     pendingCheckoutAttempt = attempt;
     try { sessionStorage.setItem('pendingCheckoutAttempt', JSON.stringify(attempt)); } catch (_) {}
   }
+  if (!navigator.onLine) {
+    await saveOfflineCheckout(attempt);
+    return;
+  }
+  attempt.sentOnce = true;      // once a request may have reached the server its payload must never change (idempotency hash)
+  try { sessionStorage.setItem('pendingCheckoutAttempt', JSON.stringify(attempt)); } catch (_) {}
   checkoutInFlight = true;
   try {
       const res = await fetch('/api/pos/checkout', {
@@ -555,9 +565,82 @@ async function completeCheckout() {
           alert('Sale failed: ' + data.message + (res.status === 409 ? ' Keep this tab open and contact an administrator before retrying.' : ''));
       }
   } catch(err) {
-      alert('Online only: no connection or response. The sale may have reached the server. Keep this tab open and retry before re-entering the sale; the same checkout key will prevent duplicates.');
+      await saveOfflineCheckout(attempt, true);
   } finally { checkoutInFlight = false; }
 }
+async function saveOfflineCheckout(attempt, uncertain) {
+  try {
+    if (!uncertain && !attempt.sentOnce && !attempt.payload.offline_sold_at) attempt.payload.offline_sold_at = new Date().toISOString();
+    await OfflineStore.enqueue({key:attempt.key, owner:attempt.owner, createdAt:new Date().toISOString(), payload:attempt.payload, uncertain:!!uncertain});
+    if (pendingCheckoutAttempt && pendingCheckoutAttempt.key === attempt.key) {
+      pendingCheckoutAttempt = null;
+      try { sessionStorage.removeItem('pendingCheckoutAttempt'); } catch (_) {}
+      clearCart(); resetSaleForm();
+    }
+    await renderOfflineSales();
+    alert((uncertain ? 'The server response was lost. ' : '') + 'Sale saved on this phone as PENDING. It is not yet posted or an official receipt. Reconnect and sign in as ' + attempt.owner + ' to sync it.');
+  } catch (e) {
+    alert('This phone could not save the offline sale. Do not re-enter it after an uncertain response. Record it on paper and contact the administrator.');
+  }
+}
+async function renderOfflineSales() {
+  const panel = document.getElementById('offline-sales-panel'); if (!panel || !window.OfflineStore) return;
+  const rows = await OfflineStore.list().catch(() => []);
+  panel.style.display = rows.length || offlineSyncNotice ? '' : 'none';
+  const list = document.getElementById('offline-sales-list');
+  if (!list) return;
+  list.innerHTML = (offlineSyncNotice ? `<div style="padding:8px 0">${escHtml(offlineSyncNotice)}</div>` : '') + rows.map(s => {
+    const total = Number(s.payload.expected_total_amount || 0);
+    return `<div style="padding:8px 0;border-top:1px solid #ddd"><b>PENDING · KSh ${Math.max(0,total).toFixed(2)}</b> · ${escHtml(new Date(s.createdAt).toLocaleString())} · ${escHtml(s.owner)}${s.error ? `<br><span>${escHtml(s.error)}</span>` : ''}${s.error && s.status === 400 ? `<br><button type="button" onclick="syncOfflineSales()">Retry</button> <button type="button" onclick="discardOfflineSale('${escHtml(s.key)}')">Discard…</button>` : ''}</div>`;
+  }).join('');
+  const button = document.getElementById('offline-sync-button');
+  if (button) { button.disabled = !navigator.onLine || !rows.length; button.style.display = rows.length ? '' : 'none'; }
+}
+async function discardOfflineSale(key) {
+  // Only a sale the server explicitly refused (HTTP 400) can be discarded. A lost-response or conflict sale may already be posted.
+  const sale = (await OfflineStore.list()).find(s => s.key === key);
+  if (!sale || sale.status !== 400) return alert('Only a sale the server rejected can be discarded. Retry it, or contact an administrator.');
+  const total = Number(sale.payload.expected_total_amount || 0).toFixed(2);
+  const reason = (prompt(`Discard this pending sale of KSh ${total}?\nServer said: ${sale.error}\n\nThe goods and any cash/M-Pesa collected must be reconciled by hand. Type the reason (min 5 characters):`) || '').trim();
+  if (reason.length < 5) return;
+  await OfflineStore.logDiscard({key:sale.key, owner:sale.owner, soldAt:sale.createdAt, total:Number(total), error:sale.error, reason:reason, discardedAt:new Date().toISOString()});
+  await OfflineStore.remove(sale.key);
+  await renderOfflineSales();
+  alert('Sale discarded on this phone. Write it in the paper record now and tell the administrator.');
+}
+let offlineSyncRunning = false;
+let offlineSyncNotice = '';
+async function syncOfflineSales() {
+  if (offlineSyncRunning || !navigator.onLine || !window.currentUsername || !window.OfflineStore) return;
+  offlineSyncRunning = true;
+  try {
+    let confirmed = 0;
+    const rows = (await OfflineStore.list()).sort((a,b) => a.createdAt.localeCompare(b.createdAt));
+    for (const sale of rows) {
+      if (sale.owner !== window.currentUsername) continue;
+      try {
+        const res = await fetch('/api/pos/checkout', {method:'POST', credentials:'same-origin',
+          headers:{'Content-Type':'application/json','Idempotency-Key':sale.key}, body:JSON.stringify(sale.payload)});
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.status === 'success') {
+          await OfflineStore.remove(sale.key);
+          confirmed += 1;
+        } else {
+          sale.error = data.message || `Server rejected sale (${res.status}).`;
+          sale.status = res.status;
+          await OfflineStore.enqueue(sale);
+          if (res.status === 401 || res.status === 403 || res.status >= 500) break;
+        }
+      } catch (_) { break; }
+    }
+    if (confirmed) offlineSyncNotice = `${confirmed} saved sale${confirmed === 1 ? '' : 's'} confirmed by the server. Check Sales History for receipts.`;
+  } finally {
+    offlineSyncRunning = false;
+    await renderOfflineSales();
+  }
+}
+window.addEventListener('online', syncOfflineSales);
+window.addEventListener('online', renderOfflineSales);
 function renderReceipt(data, payload) {
   const completedAt = data.completed_at ? new Date(data.completed_at) : new Date();
   document.getElementById('r-date').textContent = Number.isNaN(completedAt.getTime()) ? new Date().toLocaleString() : completedAt.toLocaleString();

@@ -152,6 +152,7 @@ class OrderHeader(db.Model):
     discount_reason = db.Column(db.String(20))
     discount_approver = db.Column(db.String(100))
     balance_after = db.Column(db.Float)                    # customer's balance owed straight after this sale
+    offline_sold_at = db.Column(db.DateTime)               # when the cashier rang it up on a disconnected phone (UTC); books still post at sync time
 
 class OrderLine(db.Model):
     __tablename__ = 'order_lines'

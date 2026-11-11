@@ -69,7 +69,8 @@ def _migrate_location_schema():
         },
         'locations': {'phone': 'VARCHAR(30)', 'receipt_width': 'INTEGER DEFAULT 80'},
         'order_headers': {'receipt_seq': 'INTEGER', 'receipt_no': 'VARCHAR(30)', 'discount_reason': 'VARCHAR(20)',
-                          'discount_approver': 'VARCHAR(100)', 'balance_after': 'FLOAT'},
+                          'discount_approver': 'VARCHAR(100)', 'balance_after': 'FLOAT',
+                          'offline_sold_at': 'DATETIME'},
         'order_lines': {'qty_kg': 'FLOAT'},
     }
     if db.engine.dialect.name != 'sqlite':

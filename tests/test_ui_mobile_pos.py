@@ -57,7 +57,7 @@ class MobilePosUiTests(unittest.TestCase):
             self.assertIn(needle, css)
 
     def test_online_only_policy_text_is_kept(self):
-        self.assertIn('record the sale on paper', self.html)
+        self.assertIn('Sale saved on this phone as PENDING', open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'pos.js'), encoding='utf-8').read())
 
     def test_sticky_bar_does_not_call_checkout(self):
         js = open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'ui-mobile.js'), encoding='utf-8').read()

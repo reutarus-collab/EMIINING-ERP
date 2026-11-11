@@ -7,9 +7,14 @@ window.escHtml = window.escHtml || function (s) {
 </script>
 <div id="pos-tab" class="tab-content">
   <details class="pos-online-note" role="alert">
-    <summary>Online only: checkout needs a live server connection</summary>
-    <p>Online only: checkout requires a live server connection. If the connection is down, record the sale on paper and enter it after service returns. An unanswered checkout must be retried in this tab before entering it again.</p>
+    <summary>Offline sales sync when this phone reconnects</summary>
+    <p>Products and customers must be loaded while online before an outage. Offline sales are saved on this phone and are pending until the server confirms them. Keep this phone safe, reconnect and sign in as the same cashier to sync. The server checks current stock, till, prices, and permissions before posting.</p>
   </details>
+  <section class="card" id="offline-sales-panel" aria-live="polite" style="display:none">
+    <strong id="offline-sales-heading">Offline sales</strong>
+    <div id="offline-sales-list"></div>
+    <button type="button" id="offline-sync-button" onclick="syncOfflineSales()">Sync saved sales</button>
+  </section>
   <div class="pos-pagebar">
     <div><span class="pos-kicker">POINT OF SALE</span><h1>New Sale</h1><p id="pos-context-line">Choose products, build the cart, and take payment.</p></div>
     <div class="pos-page-actions">

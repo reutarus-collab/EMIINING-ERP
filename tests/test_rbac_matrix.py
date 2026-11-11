@@ -10,7 +10,7 @@ from services.db import db
 from services.models import FeedIngredient, Location, LocationStock, PurchaseOrderHeader, Supplier, User
 
 ROLES = ('admin', 'accountant', 'sales', 'warehouse', 'factory')
-OPEN_RULES = {'/login', '/logout'}
+OPEN_RULES = {'/login', '/logout', '/service-worker.js'}
 
 
 class RBACMatrixTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 import os
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_migrate import Migrate
 
 from services.db import db, init_db
@@ -63,6 +63,12 @@ def create_app(config=None):
     app.register_blueprint(receipts_bp)
     init_auth(app)
 
+    @app.route('/service-worker.js')
+    def service_worker_script():
+        response = send_from_directory(app.static_folder, 'service-worker.js', mimetype='application/javascript')
+        response.headers['Service-Worker-Allowed'] = '/'
+        return response
+
     @app.route('/')
     @roles_required(*ALL_STAFF)
     def dashboard():
@@ -99,4 +105,11 @@ def create_app(config=None):
 app = create_app()
 
 if __name__ == '__main__':
-    app.run(debug=os.environ.get('FLASK_DEBUG') == '1', host='127.0.0.1')
+    # Bind on the LAN by default so staff devices can reach a local ERP server
+    # when the internet connection is down. Restrict HOST in deployments that
+    # should only accept local connections.
+    app.run(
+        debug=os.environ.get('FLASK_DEBUG') == '1',
+        host=os.environ.get('HOST', '0.0.0.0'),
+        port=int(os.environ.get('PORT', '5000')),
+    )

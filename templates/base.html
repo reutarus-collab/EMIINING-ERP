@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EMINING ERP - Online</title>
+  <title>EMINING ERP</title>
   <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#0f4d34">
   <style>
@@ -26,21 +26,29 @@
     <h2>EMINING FEEDS <small style="font-size:.72em;font-weight:500;opacity:.82">ERP</small></h2>
     <nav>
       <a href="/">Dashboard</a>
-      <span id="network-status" class="status-badge online" aria-live="polite">ONLINE · SERVER REQUIRED</span>
+      <span id="network-status" class="status-badge online" aria-live="polite">ONLINE · SYNC READY</span>
     </nav>
   </header>
   <div class="container">
     {% block content %}{% endblock %}
   </div>
   <script>
-    if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(reg => reg.unregister()));
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(reg => {
+        const script = reg.active && reg.active.scriptURL || reg.waiting && reg.waiting.scriptURL || reg.installing && reg.installing.scriptURL || '';
+        if (script && !script.endsWith('/service-worker.js')) reg.unregister();
+      })).catch(() => {});
+      navigator.serviceWorker.register('/service-worker.js', {scope: '/'}).then(() => navigator.serviceWorker.ready).then(() => {
+        if (navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('CACHE_AUTHENTICATED_SHELL');
+      }).catch(() => {});
+    }
     function updateStatus() {
       const badge = document.getElementById('network-status');
       if (navigator.onLine) {
-        badge.textContent = 'ONLINE · SERVER REQUIRED';
+        badge.textContent = 'ONLINE · SYNC READY';
         badge.className = 'status-badge online';
       } else {
-        badge.textContent = 'OFFLINE · RECORD ON PAPER';
+        badge.textContent = 'OFFLINE · SALES SAVED ON THIS PHONE';
         badge.className = 'status-badge offline';
       }
     }
