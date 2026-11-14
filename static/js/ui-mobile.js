@@ -137,7 +137,8 @@
 
 /* ---- Bottom nav: built from the existing tab buttons the user's role can see ---- */
 (function () {
-  var PRIMARY = [['dashboard-tab', 'Home', '⌂'], ['pos-tab', 'Sell', '▣'], ['stock-tab', 'Inventory', '▧'], ['report-tab', 'Reports', '▥']];
+  var PRIMARY = [['dashboard-tab', 'Home', 'home'], ['pos-tab', 'Sell', 'cart'], ['stock-tab', 'Stock', 'box'], ['report-tab', 'Reports', 'chart']];
+  function icon(name) { return '<svg class="ico" aria-hidden="true"><use href="#i-' + name + '"/></svg>'; }
   function visibleButtons() {
     return Array.prototype.filter.call(document.querySelectorAll('.nav-tabs .tab-btn'), function (b) { return b.style.display !== 'none'; });
   }
@@ -155,13 +156,13 @@
       var orig = byId[p[0]]; if (!orig) return;
       used[p[0]] = 1;
       var b = document.createElement('button'); b.type = 'button';
-      b.innerHTML = '<span class="ui-nav-icon" aria-hidden="true">' + p[2] + '</span><span>' + p[1] + '</span>';
+      b.innerHTML = '<span class="ui-nav-icon" aria-hidden="true">' + icon(p[2]) + '</span><span>' + p[1] + '</span>';
       b.addEventListener('click', function () { close(); orig.click(); });
       nav.appendChild(b); items.push([b, orig]);
     });
     var rest = btns.filter(function (b) { return !used[tabId(b)]; });
     if (rest.length) {
-      var more = document.createElement('button'); more.type = 'button'; more.innerHTML = '<span class="ui-nav-icon" aria-hidden="true">⋯</span><span>More</span>';
+      var more = document.createElement('button'); more.type = 'button'; more.innerHTML = '<span class="ui-nav-icon" aria-hidden="true">' + icon('more') + '</span><span>More</span>';
       more.addEventListener('click', function () { sheet.classList.add('open'); scrim.classList.add('open'); });
       nav.appendChild(more); items.push([more, null]);
       var lastGroup = '';

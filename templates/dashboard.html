@@ -1,9 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-  .nav-tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #ccc; padding-bottom: 5px; overflow-x: auto; }
-  .tab-btn { background: #e9ecef; color: #495057; border: none; padding: 10px 20px; font-weight: bold; border-radius: 5px 5px 0 0; cursor: pointer; white-space: nowrap; }
-  .tab-btn.active { background: #007bff; color: white; }
   .tab-content { display: none; }
   .tab-content.active { display: block; }
   .pos-grid { display: grid; grid-template-columns: 1fr 440px; gap: 20px; font-family: sans-serif; }
@@ -34,7 +31,7 @@
   .split-row { display: flex; gap: 5px; margin-bottom: 5px; }
   .receipt-box { background: #fff; border: 1px dashed #333; padding: 15px; font-family: monospace; font-size: 0.85rem; }
   .credit-info-box { background: #eef6ff; border: 1px solid #b6d4fe; padding: 10px; border-radius: 6px; margin-top: 8px; font-size: 0.85rem; }
-  
+
 /* Normal-sized boxes, readable text, native browser rendering */
 input, select, textarea {
     font-size: 16px !important; /* Forces the dropdown list text to be readable */
@@ -58,8 +55,6 @@ input, select, textarea {
   button, .btn-sm { min-height: 44px; }
   .split-row { flex-wrap: wrap; }
   h2 { font-size: 1.35rem; line-height: 1.3; }
-  .nav-tabs { position: sticky; top: 0; z-index: 10; gap: 6px; margin: 0 -8px 12px; padding: 8px; border-bottom: 1px solid #ddd; background: #fff; }
-  .tab-btn { min-height: 44px; padding: 10px 13px; }
   .pos-grid { grid-template-columns: minmax(0, 1fr); }
   .card { padding: 12px; }
   #money-tab .money-controls, #money-tab .money-fields { align-items: stretch; flex-direction: column; }
@@ -79,28 +74,27 @@ input, select, textarea {
 </style>
 <div class="app-shell">
 <aside class="app-sidebar" aria-label="Main navigation">
-  <div class="app-brand"><span class="app-brand-mark" aria-hidden="true">EF</span><div><strong>EMINING FEEDS</strong><small>Perfect feed for perfect farmers</small></div></div>
 <div class="nav-tabs" aria-label="Business modules">
-  <button class="tab-btn active" onclick="showTab('dashboard-tab')">▦ Dashboard</button>
-  <button class="tab-btn" onclick="showTab('pos-tab')">▣ Quick POS</button>
-  <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('till-tab'); refreshTill(); loadTillMovementHistory();">▤ Till Management</button>
-  <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('customers-tab'); loadCustAdmin();">👥 Customers</button>
-  <section class="nav-group is-open" data-group="Financial"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Financial <span>▾</span></button><div class="nav-group-subnav">
+  <button class="tab-btn active" onclick="showTab('dashboard-tab')"><svg class="ico" aria-hidden="true"><use href="#i-home"/></svg> Dashboard</button>
+  <button class="tab-btn" onclick="showTab('pos-tab')"><svg class="ico" aria-hidden="true"><use href="#i-cart"/></svg> Quick POS</button>
+  <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('till-tab'); refreshTill(); loadTillMovementHistory();"><svg class="ico" aria-hidden="true"><use href="#i-till"/></svg> Till</button>
+  <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('customers-tab'); loadCustAdmin();"><svg class="ico" aria-hidden="true"><use href="#i-users"/></svg> Customers</button>
+  <section class="nav-group" data-group="Financial"><button type="button" class="nav-category-toggle" aria-expanded="false" onclick="toggleNavGroup(this)">Financial <span>▾</span></button><div class="nav-group-subnav">
     <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('money-tab'); initMoneyReports();">Money &amp; leaks</button>
     <button class="tab-btn" data-roles="admin,accountant,sales,warehouse,factory" onclick="showTab('expenses-tab'); loadExpenses(); if (typeof loadTillMovementHistory === 'function') loadTillMovementHistory();">Expenses</button>
     <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('payables-tab'); loadPayables();">Supplier payables</button>
   </div></section>
-  <section class="nav-group is-open" data-group="Formulation"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Formulation <span>▾</span></button><div class="nav-group-subnav">
+  <section class="nav-group" data-group="Formulation"><button type="button" class="nav-category-toggle" aria-expanded="false" onclick="toggleNavGroup(this)">Formulation <span>▾</span></button><div class="nav-group-subnav">
     <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('factory-tab')">Factory</button>
     <button class="tab-btn" data-roles="admin,accountant,factory" onclick="showTab('matrix-tab'); labInit();">Formulation Lab</button>
   </div></section>
-  <section class="nav-group is-open" data-group="Reports"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Reports <span>▾</span></button><div class="nav-group-subnav">
+  <section class="nav-group" data-group="Reports"><button type="button" class="nav-category-toggle" aria-expanded="false" onclick="toggleNavGroup(this)">Reports <span>▾</span></button><div class="nav-group-subnav">
     <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('sales-tab')">Sales history</button>
     <button class="tab-btn" data-roles="admin,accountant" onclick="showTab('insights-tab'); loadInsights();">Insights</button>
     <button class="tab-btn" data-roles="admin,accountant,sales,factory" onclick="showTab('report-tab'); loadDailyReport();">Daily report</button>
   </div></section>
-  <section class="nav-group is-open" data-group="Inventory"><button type="button" class="nav-category-toggle" aria-expanded="true" onclick="toggleNavGroup(this)">Inventory <span>▾</span></button><div class="nav-group-subnav">
-    <button class="tab-btn" onclick="showTab('stock-tab'); loadStock();">Stock on hand</button>
+  <section class="nav-group" data-group="Inventory"><button type="button" class="nav-category-toggle" aria-expanded="false" onclick="toggleNavGroup(this)">Inventory <span>▾</span></button><div class="nav-group-subnav">
+    <button class="tab-btn" onclick="showTab('stock-tab'); loadStock();">Stock</button>
     <button class="tab-btn" data-roles="admin,accountant,warehouse,factory" onclick="showTab('po-tab'); if(typeof initPOModule === 'function') initPOModule();">Purchasing &amp; GRN</button>
     <button class="tab-btn" data-roles="admin" onclick="showTab('pricing-tab'); loadPrices();">Retail pricing</button>
     <button class="tab-btn" data-roles="admin" onclick="showTab('bags-tab'); loadBagPrices();">Bag prices</button>
@@ -109,7 +103,7 @@ input, select, textarea {
   <div class="app-sidebar-footer"><div><span class="sidebar-status-dot"></span><span id="app-sidebar-user">Cashier</span></div><div id="app-sidebar-location">Current outlet</div><div id="till-state-mirror">Till status loading…</div></div>
 </aside>
 <main class="app-main">
-<div class="app-page-heading"><div><span id="module-heading-kicker">RETAIL OPERATIONS</span><h1 id="module-heading-title">Dashboard</h1></div><p id="module-heading-subtitle">Your branch operations at a glance</p></div>
+<div class="app-page-heading"><div><h1 id="module-heading-title">Dashboard</h1></div><p id="module-heading-subtitle">Your branch operations at a glance</p></div>
 
 <!-- INCLUDED TAB COMPONENTS (ONLY CALLED ONCE) -->
 {% include "tabs/dashboard_tab.html" %}
@@ -128,6 +122,7 @@ input, select, textarea {
 <script src="/static/js/offline-store.js?v={{ asset_v("js/offline-store.js") }}"></script>
 <script src="/static/js/main.js?v={{ asset_v("js/main.js") }}"></script>
 <script src="/static/js/pos.js?v={{ asset_v("js/pos.js") }}"></script>
+<script src="/static/js/customer_statement.js?v=1"></script>
 <script src="/static/js/factory.js?v=18"></script>
 <script src="/static/js/nutrition.js?v=2"></script>
 <script src="/static/js/reports.js?v=4"></script>

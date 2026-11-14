@@ -157,6 +157,32 @@ def daily_report():
         cash_to_mpesa=round(sum(m.amount or 0 for m in till_movements if m.movement_type == 'MPESA_DEPOSIT'), 2))
 
 
+@retail_bp.route('/api/dashboard/trend')
+@roles_required(*SALES_FLOOR_STAFF)
+def dashboard_trend():
+    """Last 7 days (Nairobi time, today last) of completed sales and credit issued, for the dashboard sparkline."""
+    try:
+        location = resolve_location(request.args.get('location_id'))
+    except ValueError as exc:
+        return error_response(exc)
+    offset = timedelta(hours=3)
+    today = (datetime.utcnow() + offset).date()
+    first = today - timedelta(days=6)
+    start = datetime.combine(first, datetime.min.time()) - offset
+    rows = (db.session.query(OrderHeader.created_at, OrderHeader.total_amount, OrderHeader.credit_amount)
+            .filter(OrderHeader.location_id == location.id, OrderHeader.status == 'COMPLETED',
+                    OrderHeader.created_at >= start).all())
+    days = {first + timedelta(days=i): [0.0, 0.0] for i in range(7)}
+    for created, total, credit in rows:
+        bucket = days.get((created + offset).date())
+        if bucket is not None:
+            bucket[0] += total or 0.0
+            bucket[1] += credit or 0.0
+    return jsonify(location_id=location.id, days=[
+        {'date': day.isoformat(), 'sales': round(v[0], 2), 'credit': round(v[1], 2)}
+        for day, v in sorted(days.items())])
+
+
 @retail_bp.route('/api/admin/customers/<int:customer_id>/credit-limit', methods=['POST'])
 @roles_required('admin')
 def set_credit_limit(customer_id):

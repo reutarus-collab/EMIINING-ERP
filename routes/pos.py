@@ -243,6 +243,276 @@ def customer_debt_statement(customer_id):
                                  amount=round(x['amount'], 2), note=x['note'], by=x['by']) for x in events[:300]])
 
 
+# ---------------------------------------------------------------------------------------------
+# Customer statement (bank-statement style), purchases history, and a shareable PDF.
+# Read-only: nothing here moves money or stock. Visible to every staff role, same outlet rule
+# as the debt screen (non-owners see only their own outlet's customers).
+# ---------------------------------------------------------------------------------------------
+def _eat(dt):
+    """Stored timestamps are UTC; staff read Kenya time (UTC+3)."""
+    return dt + timedelta(hours=3) if dt else None
+
+
+def _line_kg(unit_type, qty):
+    """'70KG BAG' x2 -> 140 kg; 'KG' / 'KG SERVICE' x25 -> 25 kg."""
+    import re
+    m = re.match(r'^\s*([0-9]*\.?[0-9]+)\s*KG\s*BAG', str(unit_type or '').upper())
+    return round((qty or 0.0) * (float(m.group(1)) if m else 1.0), 3)
+
+
+def _items_by_order(order_ids):
+    """{order_id: [ {name, unit, qty, kg, amount}, ... ]} in one query, not one per sale."""
+    out = {}
+    if not order_ids:
+        return out
+    names = {i.id: i.name for i in FeedIngredient.query.all()}
+    for ln in OrderLine.query.filter(OrderLine.order_id.in_(order_ids)).order_by(OrderLine.id).all():
+        out.setdefault(ln.order_id, []).append({
+            'name': names.get(ln.ingredient_id, 'Item #%s' % ln.ingredient_id),
+            'unit': ln.unit_type or 'KG', 'qty': round(ln.qty_entered or 0.0, 3),
+            'kg': _line_kg(ln.unit_type, ln.qty_entered), 'amount': round(ln.subtotal or 0.0, 2)})
+    return out
+
+
+def _fmt_item(it):
+    unit = it['unit']
+    if unit.endswith('BAG'):
+        return '%s x %g (%s)' % (it['name'], it['qty'], unit.lower())
+    return '%s %g kg' % (it['name'], it['kg'])
+
+
+def _viewable_customer(customer_id):
+    """(customer, None) or (None, error response) using the same outlet rule as the debt screen."""
+    cust = db.session.get(Customer, customer_id)
+    if not cust:
+        return None, (jsonify(status='error', message='Customer not found.'), 404)
+    if g.user.role not in ('admin', 'accountant') and cust.location_id != getattr(g.user, 'location_id', None):
+        return None, (jsonify(status='error', message='This customer belongs to another outlet.'), 403)
+    return cust, None
+
+
+def _parse_day(text):
+    try:
+        return datetime.strptime(str(text or '')[:10], '%Y-%m-%d').date() if text else None
+    except ValueError:
+        raise ValueError('Dates must look like 2026-11-30.')
+
+
+def _build_statement(cust, d_from=None, d_to=None):
+    """Chronological ledger with a running balance, like a bank statement.
+    Charges (old debt, credit sales) raise the balance; repayments lower it. If the stored balance
+    does not equal the sum of recorded entries, the gap is shown as a first line so the statement
+    always ends on the balance the till uses."""
+    raw = []
+    for e in CustomerDebtEntry.query.filter_by(customer_id=cust.id).all():
+        raw.append(dict(at=e.created_at, kind='OLD DEBT', ref=e.reference, debit=e.amount or 0.0, credit=0.0,
+                        desc=(e.note or 'Balance from before the system'), by=e.created_by or '', order_id=None))
+    credit_orders = OrderHeader.query.filter(OrderHeader.customer_id == cust.id, OrderHeader.credit_amount > 0).all()
+    items = _items_by_order([o.id for o in credit_orders])
+    for o in credit_orders:
+        lines = items.get(o.id, [])
+        desc = 'Credit sale: ' + ', '.join(_fmt_item(i) for i in lines) if lines else 'Credit sale'
+        raw.append(dict(at=o.created_at, kind='CREDIT SALE', ref=o.sale_id or '', debit=o.credit_amount or 0.0,
+                        credit=0.0, desc=desc, by='', order_id=o.id))
+    for p in CustomerPayment.query.filter_by(customer_id=cust.id).all():
+        raw.append(dict(at=p.created_at, kind='REPAYMENT', ref=p.reference, debit=0.0, credit=p.amount or 0.0,
+                        desc='Payment received (%s)' % (p.payment_method or '').title().replace('Mpesa', 'M-Pesa'),
+                        by=p.created_by or '', order_id=None))
+    raw.sort(key=lambda r: (r['at'] or datetime.min, 0 if r['credit'] == 0 else 1, r['ref']))
+
+    stored = round(float(cust.current_balance or 0.0), 2)
+    recorded = round(sum(r['debit'] - r['credit'] for r in raw), 2)
+    bf = round(stored - recorded, 2)
+    running = bf
+    rows = []
+    for r in raw:
+        running = round(running + r['debit'] - r['credit'], 2)
+        r['balance'] = running
+        r['day'] = _eat(r['at']).date() if r['at'] else None
+        rows.append(r)
+
+    opening = bf
+    if d_from:
+        opening = bf
+        for r in rows:
+            if r['day'] and r['day'] < d_from:
+                opening = r['balance']
+    shown = [r for r in rows if (not d_from or (r['day'] and r['day'] >= d_from))
+             and (not d_to or (r['day'] and r['day'] <= d_to))]
+    closing = shown[-1]['balance'] if shown else opening
+    if d_to and not shown:
+        closing = opening
+    return dict(rows=shown, opening=round(opening, 2), closing=round(closing, 2),
+                brought_forward_gap=bf, stored_balance=stored,
+                total_charges=round(sum(r['debit'] for r in shown), 2),
+                total_payments=round(sum(r['credit'] for r in shown), 2))
+
+
+def _statement_payload(cust, d_from, d_to):
+    st = _build_statement(cust, d_from, d_to)
+    limit, bal = float(cust.credit_limit or 0.0), st['stored_balance']
+    return dict(
+        status='success', id=cust.id, name=cust.name, phone=cust.phone or '', outlet_id=cust.location_id,
+        balance=round(bal, 2), credit_limit=round(limit, 2), available_credit=round(limit - bal, 2),
+        period_from=d_from.isoformat() if d_from else '', period_to=d_to.isoformat() if d_to else '',
+        opening_balance=st['opening'], closing_balance=st['closing'],
+        total_charges=st['total_charges'], total_payments=st['total_payments'],
+        unreconciled_gap=st['brought_forward_gap'],
+        entries=[dict(date=_eat(r['at']).strftime('%Y-%m-%d %H:%M') if r['at'] else '', kind=r['kind'], ref=r['ref'],
+                      description=r['desc'], debit=round(r['debit'], 2), credit=round(r['credit'], 2),
+                      balance=r['balance'], by=r['by']) for r in st['rows']])
+
+
+@pos_bp.route('/api/customers/<int:customer_id>/statement', methods=['GET'])
+@roles_required(*ALL_STAFF)
+def customer_statement(customer_id):
+    cust, err = _viewable_customer(customer_id)
+    if err:
+        return err
+    try:
+        d_from, d_to = _parse_day(request.args.get('from')), _parse_day(request.args.get('to'))
+    except ValueError as exc:
+        return error_response(exc)
+    return jsonify(_statement_payload(cust, d_from, d_to))
+
+
+@pos_bp.route('/api/customers/<int:customer_id>/statement.pdf', methods=['GET'])
+@roles_required(*ALL_STAFF)
+def customer_statement_pdf(customer_id):
+    """Shareable account statement: dated lines, running balance, closing balance."""
+    import io
+    import re
+    from flask import Response
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    cust, err = _viewable_customer(customer_id)
+    if err:
+        return err
+    try:
+        d_from, d_to = _parse_day(request.args.get('from')), _parse_day(request.args.get('to'))
+    except ValueError as exc:
+        return error_response(exc)
+    data = _statement_payload(cust, d_from, d_to)
+    now_eat = _eat(datetime.utcnow())
+
+    def money(v):
+        return '{:,.2f}'.format(v)
+
+    def esc(s):
+        return str(s or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    styles = getSampleStyleSheet()
+    title = ParagraphStyle('t', parent=styles['Title'], fontSize=20, spaceAfter=0, alignment=0)
+    sub = ParagraphStyle('s', parent=styles['Normal'], textColor=colors.HexColor('#555555'), fontSize=9)
+    cell = ParagraphStyle('c', parent=styles['Normal'], fontSize=8.5, leading=10.5)
+    norm = ParagraphStyle('n', parent=styles['Normal'], fontSize=10, leading=13)
+    period = ('%s to %s' % (d_from or 'start', d_to or now_eat.date().isoformat())) if (d_from or d_to) else 'All activity'
+
+    head = Table([[Paragraph('EMINING FEEDS', title), Paragraph('<b>ACCOUNT STATEMENT</b>', ParagraphStyle(
+        'r', parent=norm, alignment=2, fontSize=13))],
+        [Paragraph('Emining, Baringo, Kenya', sub), Paragraph('Statement date: %s' % now_eat.strftime('%d %b %Y'),
+                                                             ParagraphStyle('r2', parent=sub, alignment=2))]],
+        colWidths=[(A4[0] - 36 * mm) * 0.55, (A4[0] - 36 * mm) * 0.45])
+    head.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'BOTTOM'), ('LINEBELOW', (0, 1), (-1, 1), 1, colors.HexColor('#1f6f3f')),
+                              ('BOTTOMPADDING', (0, 1), (-1, 1), 6)]))
+    who = Paragraph('<b>%s</b><br/>%s<br/>Period: %s' % (esc(cust.name), esc(cust.phone or 'No phone on file'), esc(period)), norm)
+    summary = Table([
+        ['Opening balance', money(data['opening_balance'])],
+        ['Charges (credit sales, old debt)', money(data['total_charges'])],
+        ['Payments received', money(data['total_payments'])],
+        ['Closing balance', money(data['closing_balance'])]],
+        colWidths=[52 * mm, 30 * mm])
+    summary.setStyle(TableStyle([('FONTSIZE', (0, 0), (-1, -1), 9), ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                                 ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                                 ('LINEABOVE', (0, -1), (-1, -1), 0.8, colors.black),
+                                 ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f2f6f3'))]))
+    top = Table([[who, summary]], colWidths=[(A4[0] - 36 * mm) - 84 * mm, 84 * mm])
+    top.setStyle(TableStyle([('VALIGN', (0, 0), (-1, -1), 'TOP')]))
+
+    rows = [['Date', 'Ref', 'Description', 'Charge (KSh)', 'Paid (KSh)', 'Balance (KSh)']]
+    rows.append(['', '', Paragraph('<b>Opening balance</b>', cell), '', '', money(data['opening_balance'])])
+    for e in data['entries']:
+        rows.append([e['date'][:10], Paragraph(esc(e['ref']), cell), Paragraph(esc(e['description']), cell),
+                     money(e['debit']) if e['debit'] else '', money(e['credit']) if e['credit'] else '', money(e['balance'])])
+    rows.append(['', '', Paragraph('<b>Closing balance</b>', cell), money(data['total_charges']),
+                 money(data['total_payments']), money(data['closing_balance'])])
+    usable = A4[0] - 36 * mm
+    widths = [20 * mm, 24 * mm, usable - (20 + 24 + 27 + 27 + 29) * mm, 27 * mm, 27 * mm, 29 * mm]
+    table = Table(rows, colWidths=widths, repeatRows=1)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f6f3f')), ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+        ('ALIGN', (3, 0), (-1, -1), 'RIGHT'), ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f7f9f8')]),
+        ('LINEBELOW', (0, 0), (-1, -1), 0.3, colors.HexColor('#d0d7d2')),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f2f6f3')), ('FONTNAME', (3, -1), (-1, -1), 'Helvetica-Bold'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4)]))
+
+    notes = [Paragraph('<b>Amount now due: KSh %s</b> &nbsp;|&nbsp; Credit limit: KSh %s &nbsp;|&nbsp; Available credit: KSh %s'
+                       % (money(data['balance']), money(data['credit_limit']), money(data['available_credit'])), norm)]
+    if abs(data['unreconciled_gap']) >= 0.01:
+        notes.append(Paragraph('Note: the balance includes KSh %s that is not itemised below (recorded before this statement '
+                               'format). Please ask us for the details.' % money(data['unreconciled_gap']), sub))
+    notes.append(Paragraph('Thank you for your business. Pay by M-Pesa, bank or cash and quote this statement.', sub))
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=14 * mm,
+                            bottomMargin=14 * mm, title='Statement - %s' % cust.name)
+    doc.build([head, Spacer(1, 6 * mm), top, Spacer(1, 6 * mm), table, Spacer(1, 6 * mm)] + notes)
+    safe = re.sub(r'[^A-Za-z0-9]+', '_', cust.name or 'customer').strip('_') or 'customer'
+    return Response(buf.getvalue(), mimetype='application/pdf', headers={
+        'Content-Disposition': 'inline; filename=Emining_Statement_%s_%s.pdf' % (safe, now_eat.strftime('%Y-%m-%d'))})
+
+
+@pos_bp.route('/api/customers/<int:customer_id>/purchases', methods=['GET'])
+@roles_required(*ALL_STAFF)
+def customer_purchases(customer_id):
+    """Everything this customer bought (cash and credit), with items, newest first."""
+    cust, err = _viewable_customer(customer_id)
+    if err:
+        return err
+    try:
+        d_from, d_to = _parse_day(request.args.get('from')), _parse_day(request.args.get('to'))
+    except ValueError as exc:
+        return error_response(exc)
+    try:
+        limit = max(1, min(int(request.args.get('limit', 50)), 200))
+        offset = max(0, int(request.args.get('offset', 0)))
+    except ValueError:
+        return error_response(ValueError('limit and offset must be whole numbers.'))
+    q = OrderHeader.query.filter(OrderHeader.customer_id == cust.id, OrderHeader.status == 'COMPLETED')
+    if d_from:
+        q = q.filter(OrderHeader.created_at >= datetime.combine(d_from, time.min) - timedelta(hours=3))
+    if d_to:
+        q = q.filter(OrderHeader.created_at < datetime.combine(d_to + timedelta(days=1), time.min) - timedelta(hours=3))
+    total_orders = q.count()
+    page = q.order_by(OrderHeader.created_at.desc(), OrderHeader.id.desc()).limit(limit).offset(offset).all()
+    items = _items_by_order([o.id for o in page])
+    # Totals and top items cover the whole period, not just this page.
+    all_orders = q.all()
+    all_items = _items_by_order([o.id for o in all_orders])
+    by_item = {}
+    for o in all_orders:
+        for it in all_items.get(o.id, []):
+            row = by_item.setdefault(it['name'], {'name': it['name'], 'kg': 0.0, 'amount': 0.0})
+            row['kg'] = round(row['kg'] + it['kg'], 3)
+            row['amount'] = round(row['amount'] + it['amount'], 2)
+    top = sorted(by_item.values(), key=lambda r: r['amount'], reverse=True)[:5]
+    return jsonify(
+        status='success', id=cust.id, name=cust.name, total_orders=total_orders,
+        total_spent=round(sum(o.total_amount or 0.0 for o in all_orders), 2),
+        total_on_credit=round(sum(o.credit_amount or 0.0 for o in all_orders), 2),
+        top_items=top, limit=limit, offset=offset,
+        sales=[dict(date=_eat(o.created_at).strftime('%Y-%m-%d %H:%M') if o.created_at else '', sale_id=o.sale_id,
+                    total=round(o.total_amount or 0.0, 2), discount=round(o.discount_amount or 0.0, 2),
+                    paid=round(o.paid_amount or 0.0, 2), credit=round(o.credit_amount or 0.0, 2),
+                    items=items.get(o.id, [])) for o in page])
+
+
 @pos_bp.route('/api/customers/debt-entries', methods=['GET'])
 @roles_required('admin', 'accountant')
 def list_customer_debt_entries():
