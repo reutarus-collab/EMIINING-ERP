@@ -3,12 +3,18 @@ service and goods receiving cannot disagree.
 
   KG   -> always 1 kg per unit
   TON  -> always 1000 kg per unit (metric)
-  BAG  -> FIXED: the item's kg-per-bag (must be above 1), or VARIABLE: weighed on delivery
+  BAG, BALE, TIN, CARTON -> counted units. FIXED: the item's kg per unit (must be above 1), or
+                            VARIABLE: the delivery is weighed on arrival
+  PACKET -> counted unit that may weigh under 1 kg (e.g. a 0.5 kg premix sachet): kg per unit must be above 0
+
+Stock, cost and sales are always in kg. The unit only exists on the purchase order and goods receipt.
 """
 import math
 
 KG_PER_UOM = {'KG': 1.0, 'TON': 1000.0}
-VALID_UOMS = ('BAG', 'KG', 'TON')
+COUNTED_UOMS = ('BAG', 'BALE', 'PACKET', 'TIN', 'CARTON')
+VALID_UOMS = COUNTED_UOMS + ('KG', 'TON')
+MIN_KG_EXCLUSIVE = {'PACKET': 0.0}   # every other counted unit must weigh more than 1 kg
 PRICE_BAND = 3.0          # a price per kg more than 3x above or below the current cost needs confirming
 
 
@@ -19,7 +25,7 @@ class PriceCheckError(ValueError):
 def normalise_rule(uom, ctype, factor, item_name='this item'):
     uom = str(uom or 'KG').strip().upper()
     if uom not in VALID_UOMS:
-        raise ValueError(f'{item_name} has an unknown purchase unit "{uom}". Use BAG, KG or TON.')
+        raise ValueError(f'{item_name} has an unknown purchase unit "{uom}". Use {", ".join(VALID_UOMS)}.')
     if uom in KG_PER_UOM:
         return uom, 'FIXED', KG_PER_UOM[uom]
     ctype = str(ctype or 'FIXED').strip().upper()
@@ -31,9 +37,9 @@ def normalise_rule(uom, ctype, factor, item_name='this item'):
         factor = float(factor)
     except (TypeError, ValueError):
         factor = 0.0
-    if not math.isfinite(factor) or factor <= 1.0:
-        raise ValueError(f'{item_name} is bought by the BAG but its kg per bag is not set (it is {factor:g}). '
-                         f'Open the Item Master, press "Unit" on this item and enter the kg in one bag.')
+    if not math.isfinite(factor) or factor <= MIN_KG_EXCLUSIVE.get(uom, 1.0):
+        raise ValueError(f'{item_name} is bought by the {uom} but its kg per {uom.lower()} is not set (it is {factor:g}). '
+                         f'Open the Item Master, press "Unit" on this item and enter the kg in one {uom.lower()}.')
     return uom, 'FIXED', factor
 
 

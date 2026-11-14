@@ -114,7 +114,7 @@
             <input type="number" id="po-cost" min="0" step="any" inputmode="decimal" placeholder="Unit price" style="flex:1;" oninput="po_updateLineHint()">
       <button type="button" class="btn btn-secondary" onclick="addToPOCart()">Add Item</button>
         </div>
-        <div id="po-line-hint" class="po-hint" style="min-height:1.2em">Pick an item. Quantity and price are per the unit it is bought in (BAG, KG or TON).</div>
+        <div id="po-line-hint" class="po-hint" style="min-height:1.2em">Pick an item. Quantity and price are per the unit it is bought in (BAG, BALE, PACKET, TIN, CARTON, KG or TON).</div>
         <table class="cart-table">
             <thead><tr><th>Item</th><th>Qty</th><th>Price per unit</th><th>Subtotal</th><th></th></tr></thead>
             <tbody id="po-cart-body"></tbody>
@@ -180,6 +180,10 @@
                 <label style="font-size:12px; color:#666;">Purchase UOM</label>
                 <select id="new-item-puom" style="width:100%; padding:8px;" onchange="po_newItemUomChanged()">
                     <option value="BAG">BAG</option>
+                    <option value="BALE">BALE</option>
+                    <option value="PACKET">PACKET</option>
+                    <option value="TIN">TIN</option>
+                    <option value="CARTON">CARTON</option>
                     <option value="KG">KG</option>
                     <option value="TON">TON</option>
                 </select>
@@ -192,7 +196,7 @@
                 </select>
             </div>
             <div style="flex:1;">
-                <label style="font-size:12px; color:#666;">Kg per BAG</label>
+                <label style="font-size:12px; color:#666;">Kg per unit</label>
                 <input type="number" id="new-item-conv" placeholder="e.g. 70" style="width:100%; padding:8px;">
             </div>
             <div style="flex:1;">
@@ -289,13 +293,13 @@
         <p class="po-hint">Orders already placed keep the unit they were written with. This only affects new orders.</p>
         <label>Bought by
             <select id="unit-uom" style="width:100%; padding:8px; margin-bottom:8px;" onchange="po_unitChanged()">
-                <option value="BAG">BAG</option><option value="KG">KG</option><option value="TON">TON (1000 kg)</option>
+                <option value="BAG">BAG</option><option value="BALE">BALE</option><option value="PACKET">PACKET</option><option value="TIN">TIN</option><option value="CARTON">CARTON</option><option value="KG">KG</option><option value="TON">TON (1000 kg)</option>
             </select></label>
         <label id="unit-type-wrap">Weight
             <select id="unit-type" style="width:100%; padding:8px; margin-bottom:8px;" onchange="po_unitChanged()">
-                <option value="FIXED">Fixed kg per bag</option><option value="VARIABLE">Weighed on delivery</option>
+                <option value="FIXED">Fixed kg per unit</option><option value="VARIABLE">Weighed on delivery</option>
             </select></label>
-        <label id="unit-factor-wrap">Kg in one bag
+        <label id="unit-factor-wrap">Kg in one unit
             <input type="number" id="unit-factor" min="1.01" step="any" inputmode="decimal" style="width:100%; padding:8px; margin-bottom:8px;"></label>
         <span id="unit-msg" class="po-warn" role="status"></span>
         <div class="po-modal-actions">
@@ -472,7 +476,7 @@
         const qtyBox = po_el('po-qty'), costBox = po_el('po-cost');
         if (!o || !o.value) {
             qtyBox.placeholder = 'Qty'; costBox.placeholder = 'Unit price';
-            hint.className = 'po-hint'; hint.textContent = 'Pick an item. Quantity and price are per the unit it is bought in (BAG, KG or TON).';
+            hint.className = 'po-hint'; hint.textContent = 'Pick an item. Quantity and price are per the unit it is bought in (BAG, BALE, PACKET, TIN, CARTON, KG or TON).';
             return;
         }
         const uom = o.dataset.uom || 'KG', factor = parseFloat(o.dataset.factor) || 0, ctype = o.dataset.ctype;
@@ -531,7 +535,7 @@
             const catCell = canEdit
                 ? `<select aria-label="Category of ${escHtml(i.name)}" onchange="po_setCategory(${i.id}, this.value)">${catOptions.map(c => `<option ${c === i.category ? 'selected' : ''}>${escHtml(c)}</option>`).join('')}</select>`
                 : escHtml(i.category);
-            const unitLabel = i.conversion_type === 'VARIABLE' ? `${escHtml(i.purchase_uom)} (weighed)` : (i.purchase_uom === 'BAG' ? `BAG (${po_num(i.conversion_factor)} kg)` : escHtml(i.purchase_uom));
+            const unitLabel = i.conversion_type === 'VARIABLE' ? `${escHtml(i.purchase_uom)} (weighed)` : (po_isCounted(i.purchase_uom) ? `${escHtml(i.purchase_uom)} (${po_num(i.conversion_factor)} kg)` : escHtml(i.purchase_uom));
             const unitCell = (i.unit_problem ? `<span class="po-warn" title="${escHtml(i.unit_problem)}">&#9888; </span>` : '') + unitLabel +
                 (canEdit ? ` <button type="button" class="btn-sm" onclick="po_openUnit(${i.id})">Unit</button>` : '');
             html += `<tr>
@@ -558,6 +562,8 @@
         refreshItemViews();
     }
 
+    const PO_COUNTED = ['BAG','BALE','PACKET','TIN','CARTON'];
+    function po_isCounted(u) { return PO_COUNTED.includes(u); }
     // ---------- purchase unit of an item ----------
     let po_unitItemId = null;
     function po_openUnit(id) {
@@ -567,21 +573,21 @@
         po_el('unit-title').textContent = 'Purchase unit: ' + i.name;
         po_el('unit-uom').value = i.purchase_uom;
         po_el('unit-type').value = i.conversion_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED';
-        po_el('unit-factor').value = i.conversion_type === 'FIXED' && i.purchase_uom === 'BAG' ? i.conversion_factor : (i.bag_size_kg || '');
+        po_el('unit-factor').value = i.conversion_type === 'FIXED' && po_isCounted(i.purchase_uom) ? i.conversion_factor : (i.bag_size_kg || '');
         po_el('unit-msg').textContent = '';
         po_unitChanged();
         po_el('unit-modal').style.display = 'block';
     }
     function po_unitChanged() {
         const uom = po_el('unit-uom').value, variable = po_el('unit-type').value === 'VARIABLE';
-        po_el('unit-type-wrap').style.display = uom === 'BAG' ? '' : 'none';
-        po_el('unit-factor-wrap').style.display = (uom === 'BAG' && !variable) ? '' : 'none';
+        po_el('unit-type-wrap').style.display = po_isCounted(uom) ? '' : 'none';
+        po_el('unit-factor-wrap').style.display = (po_isCounted(uom) && !variable) ? '' : 'none';
     }
     async function po_saveUnit() {
         const uom = po_el('unit-uom').value, variable = po_el('unit-type').value === 'VARIABLE';
         const factor = parseFloat(po_el('unit-factor').value);
-        const body = {purchase_uom: uom, conversion_type: uom === 'BAG' && variable ? 'VARIABLE' : 'FIXED', conversion_factor: (uom === 'BAG' && !variable) ? factor : null};
-        if (uom === 'BAG' && !variable) body.bag_size_kg = factor;
+        const body = {purchase_uom: uom, conversion_type: po_isCounted(uom) && variable ? 'VARIABLE' : 'FIXED', conversion_factor: (po_isCounted(uom) && !variable) ? factor : null};
+        if (po_isCounted(uom) && !variable) body.bag_size_kg = factor;
         try {
             const res = await fetch('/api/po/inventory/' + po_unitItemId + '/uom', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
             const data = await res.json().catch(() => ({}));
@@ -1040,8 +1046,8 @@
             bag_size_kg: parseFloat(po_el('new-item-bag').value) || 50,
             cost_per_kg: parseFloat(po_el('new-item-cost').value) || 0,
             purchase_uom: puom, stock_uom: po_el('new-item-suom').value,
-            conversion_type: puom === 'BAG' ? convType : 'FIXED',
-            conversion_factor: (puom === 'BAG' && convType === 'FIXED') ? (parseFloat(po_el('new-item-conv').value) || 0) : null
+            conversion_type: po_isCounted(puom) ? convType : 'FIXED',
+            conversion_factor: (po_isCounted(puom) && convType === 'FIXED') ? (parseFloat(po_el('new-item-conv').value) || 0) : null
         };
         try {
             const res = await fetch('/api/po/inventory/add', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
@@ -1056,7 +1062,7 @@
         } catch (err) { alert("System error adding item."); }
     }
     function po_newItemUomChanged() {
-        const bag = po_el('new-item-puom').value === 'BAG';
+        const bag = po_isCounted(po_el('new-item-puom').value);
         po_el('new-item-conv-type').disabled = !bag;
         if (!bag) { po_el('new-item-conv').value = ''; po_el('new-item-conv').disabled = true; po_el('new-item-conv').placeholder = 'N/A'; }
         else toggleConvFactor();
