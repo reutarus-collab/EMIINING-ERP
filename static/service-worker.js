@@ -1,5 +1,5 @@
-const CACHE = 'emining-pos-shell-v1';
-const SHELL = ['/static/js/offline-store.js', '/static/js/main.js', '/static/js/pos.js', '/static/js/idem.js', '/static/js/ui-mobile.js', '/static/css/ui-mobile.css', '/static/manifest.json'];
+const CACHE = 'emining-pos-shell-v2';
+const SHELL = ['/static/js/offline-store.js', '/static/js/main.js', '/static/js/pos.js', '/static/js/idem.js', '/static/js/ui-mobile.js', '/static/css/ui-mobile.css', '/static/css/pos-redesign.css', '/static/manifest.json'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });

@@ -1,0 +1,97 @@
+/* Emining POS redesign, phase 1: Sell, cart sheet, pay sheet, hold, toasts.
+   Loaded after ui-mobile.css. Colours reuse --ui-* tokens from ui-mobile.css. */
+
+/* ---------- shared (all widths) ---------- */
+.pos-sync-line{margin:6px 0 8px}
+.pos-sync-line summary{list-style:none;cursor:pointer;padding:7px 10px;border-radius:8px;background:#eef2ef;color:var(--ui-muted);font-size:.78rem;line-height:1.3}
+.pos-sync-line summary::-webkit-details-marker{display:none}
+.pos-sync-line p{margin:6px 2px 0;font-size:.8rem;color:var(--ui-muted)}
+
+.pos-topline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}
+.pos-topline .pos-outlet-select{flex:1 1 140px;min-width:0;margin:0}
+.pos-topline select{width:100%;min-height:40px;font-size:.9rem}
+.pos-tag{min-height:36px;padding:0 12px;border:1px solid var(--ui-border);border-radius:999px;background:#fff;color:var(--ui-green-900);font-size:.8rem;font-weight:600}
+.pos-tag[hidden]{display:none}
+.pos-tag.is-warn{background:#fff4d6;border-color:#e3c16a;color:#7a5200}
+
+.fav-head{display:flex;align-items:center;justify-content:space-between;margin:2px 0 6px;font-size:.8rem;font-weight:600;color:var(--ui-muted)}
+.link-btn{background:transparent;border:0;padding:6px 4px;color:var(--ui-accent);font-size:.85rem;font-weight:600;min-height:36px}
+.link-btn.danger{color:#b42318}
+#quick-card.pos-fav{background:transparent;border:0;box-shadow:none;padding:0;margin:0 0 8px}
+#quick-card .quick-grid{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+#quick-card .quick-btn{flex:0 0 auto;min-width:112px;min-height:52px;padding:6px 10px;font-size:.85rem}
+
+.product-card-note,.product-category,.pack-add-mark{display:none}
+.pos-product-card{min-height:0!important;padding:10px!important;gap:6px!important}
+.pos-product-card h3{min-height:0!important;font-size:.95rem}
+.pos-product-card .product-card-meta{margin:0}
+.product-pack-options{grid-template-columns:1fr!important;gap:6px!important}
+.pack-btn{flex-direction:column!important;align-items:flex-start!important;justify-content:center!important;gap:1px;padding:7px 10px!important;min-height:52px;text-align:left}
+.pack-btn span{font-size:.8rem;color:var(--ui-muted);white-space:nowrap}
+.pack-btn strong{font-size:.95rem;white-space:nowrap}
+.pack-btn.in-cart{border:2px solid var(--ui-accent)!important;background:#e8f5ee!important}
+.pack-btn.is-out{opacity:.45}
+
+.cart-list{display:block}
+.cart-empty{padding:18px 4px;text-align:center;color:#6b7a70}
+.cart-row{display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--ui-border)}
+.cart-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cart-row-main b{font-size:1rem;line-height:1.25}
+.cart-pack-select{width:auto!important;min-width:0!important;min-height:34px!important;padding:0 !important;border:0!important;background:transparent!important;color:var(--ui-muted);font-size:.85rem}
+.cart-x{width:44px;height:44px;border:0;background:transparent;color:#b42318;font-size:1.5rem;line-height:1;padding:0}
+.cart-row .qty-step{grid-column:1}
+.cart-row-total{grid-column:2;text-align:right;font-weight:700;font-size:1.05rem}
+.cart-actions{display:flex;align-items:center;justify-content:space-between;margin:6px 0 4px}
+
+.pos-payment-note{padding:8px 10px;border-radius:8px;background:#fff4d6;color:#7a5200;font-size:.8rem;margin:6px 0}
+.pos-payment-note[hidden]{display:none}
+.pos-other-pay,.pos-walkin{margin:8px 0}
+.pos-other-pay>summary,.pos-walkin>summary{cursor:pointer;color:var(--ui-accent);font-weight:600;font-size:.9rem;padding:8px 0}
+.fee-toggle{background:transparent;border:0;color:var(--ui-accent);font-size:.8rem;font-weight:600;padding:6px 2px;min-height:36px}
+.split-row:not(.show-fee) .p-fee{display:none!important}
+
+.pos-toast{position:fixed;left:12px;right:12px;bottom:calc(78px + env(safe-area-inset-bottom,0px));z-index:200;background:#17211b;color:#fff;border-radius:10px;padding:12px 14px;font-size:.95rem;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.pos-toast[hidden]{display:none}
+.pos-modal{position:fixed;inset:0;z-index:150;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.45)}
+.pos-modal[hidden]{display:none}
+.pos-modal-box{width:100%;max-width:520px;max-height:85vh;overflow:auto;background:#fff;border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px))}
+.pos-modal-box h3{margin:0 0 10px;font-size:1.1rem}
+.pos-modal-box label{display:block;font-size:.8rem;color:var(--ui-muted)}
+.pos-modal-box input{width:100%;min-height:48px;margin-top:4px;font-size:1rem}
+.pos-note{font-size:.8rem;color:var(--ui-muted);margin:8px 0 12px}
+.pos-modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pos-modal-actions button{min-height:48px;font-size:1rem}
+.held-row{border:1px solid var(--ui-border);border-radius:12px;padding:10px;margin-bottom:8px}
+.held-row.is-old{border-color:#e3c16a;background:#fff9e8}
+.held-row .held-top,.held-row .held-mid{display:flex;justify-content:space-between;gap:8px}
+.held-row .held-mid{color:var(--ui-muted);font-size:.85rem;margin:2px 0 8px}
+.held-row .held-actions{display:grid;grid-template-columns:2fr 1fr;gap:8px}
+.cust-pick>summary{display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;list-style:none;min-height:44px}
+.cust-pick>summary::-webkit-details-marker{display:none}
+.cust-pick .cust-label{font-weight:600}
+.cust-pick .cust-change{color:var(--ui-accent);font-size:.85rem;font-weight:600}
+
+/* ---------- phone ---------- */
+@media (max-width:700px){
+  header{padding:.55rem .9rem!important;text-align:left!important}
+  header h2{font-size:1rem;margin:0}
+  header .header-sell{display:none}
+  .status-badge{font-size:.7rem!important;padding:2px 8px!important}
+
+  .search-results-box.is-product-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;overflow:visible!important;max-height:none!important}
+  .pos-catalog-card .pos-section-heading,.pos-category-field{display:none!important}
+  .pos-category-chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
+  .pos-sticky-bar .lbl{cursor:pointer}
+  /* cart, payment and receipt are their own screens (ui-mobile.css); hide the Sell-only strip there */
+  #pos-tab[data-pos-stage="cart"] .pos-sync-line,#pos-tab[data-pos-stage="payment"] .pos-sync-line,#pos-tab[data-pos-stage="receipt"] .pos-sync-line,
+  #pos-tab[data-pos-stage="cart"] .pos-topline,#pos-tab[data-pos-stage="payment"] .pos-topline,#pos-tab[data-pos-stage="receipt"] .pos-topline{display:none!important}
+
+  .pos-checkout .pos-section-heading .pos-kicker,.pos-checkout h2{display:none}
+  .pos-total-box{display:flex;align-items:baseline;justify-content:space-between;padding:8px 0}
+  .pos-total-box strong{font-size:1.9rem}
+  .tender-bar{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tender-btn{min-height:56px}
+  #pos-tab[data-pos-stage="payment"] .pos-checkout-submit{background:#fff}
+  #complete-sale-button{min-height:54px;font-size:1.1rem}
+  .pos-new-sale{min-height:60px;font-size:1.15rem}
+}

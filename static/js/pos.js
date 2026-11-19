@@ -56,6 +56,7 @@ async function refreshTill() {
   const r = await fetch('/api/till/current' + q);
   const d = await r.json();
   currentTill = d.session;
+  window.tillChecked = true;
   document.getElementById('till-state').textContent = currentTill
     ? `${d.location_name} · Open till #${currentTill.id} · Expected cash KSh ${Number(currentTill.expected_cash).toFixed(2)}`
     : `${d.location_name || 'Outlet'} · Till closed`;
@@ -204,11 +205,12 @@ function searchProducts() {
     const smallestPack = packOptions.reduce((smallest, o) => Math.min(smallest, o.pack_kg), Infinity);
     const lowStock = !i.is_service && !noStock && Number.isFinite(smallestPack) && stock < smallestPack;
     let btns;
+    const inCart = o => cart.filter(c => c.id === i.id && Math.abs(c.bag_size_kg - o.pack_kg) < 0.0005).reduce((sum, c) => sum + c.qty, 0);
     if (!i.priced) btns = '<button class="btn-sm" disabled>No price</button>';
-    else if (noStock) btns = '<button class="btn-sm" disabled>Out of stock</button>';
-    else btns = packOptions.map(o => `<button type="button" class="pack-btn" aria-label="Add ${escHtml(i.name)}, ${escHtml(o.label)}, KSh ${kes(o.price)}" onclick="addToCart(${i.id}, ${o.pack_kg})"><span>${escHtml(o.label)}</span><strong>KSh ${kes(o.price)}</strong><span class="pack-add-mark" aria-hidden="true">+</span></button>`).join('');
+    else if (noStock) btns = packOptions.map(o => `<button type="button" class="pack-btn is-out" aria-disabled="true" data-name="${escHtml(i.name)}" onclick="posToast(this.dataset.name + ' is out of stock')"><span>${escHtml(o.label)}</span><strong>KSh ${kes(o.price)}</strong></button>`).join('') || '<button class="btn-sm" disabled>Out of stock</button>';
+    else btns = packOptions.map(o => { const n = inCart(o); return `<button type="button" class="pack-btn${n ? ' in-cart' : ''}" aria-label="Add ${escHtml(i.name)}, ${escHtml(o.label)}, KSh ${kes(o.price)}" onclick="addToCart(${i.id}, ${o.pack_kg})"><span>${escHtml(o.label)}${n ? ' ×' + kes(n) : ''}</span><strong>KSh ${kes(o.price)}</strong><span class="pack-add-mark" aria-hidden="true">+</span></button>`; }).join('');
     return `<article class="pos-product-card">
-      <div class="product-card-meta"><span class="product-category">${escHtml(i.category)}</span><span class="product-stock ${noStock ? 'is-out' : (lowStock ? 'is-low' : 'is-ok')}">${i.is_service ? 'Service' : (noStock ? 'Out of stock' : `${stock.toFixed(2)} kg available`)}</span></div>
+      <div class="product-card-meta"><span class="product-category">${escHtml(i.category)}</span><span class="product-stock ${noStock ? 'is-out' : (lowStock ? 'is-low' : 'is-ok')}">${i.is_service ? 'Service' : (noStock ? 'Out of stock' : `${kes(Math.round(stock))} kg`)}</span></div>
       <h3>${escHtml(i.name)}</h3>
       <p class="product-card-note">${i.is_service ? 'Charged per kilogram; customer grain is not company stock.' : (lowStock ? 'Low stock · less than one configured pack remains.' : 'Choose a configured pack size.')}</p>
       <div class="product-pack-options">${btns}</div></article>`;
@@ -339,11 +341,12 @@ function renderCart() {
   tbody.innerHTML = '';
   let subtotal = 0;
   if (cart.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #888; padding: 20px;">Cart is empty.</td></tr>';
+    tbody.innerHTML = '<div class="cart-empty">Cart is empty.</div>';
     document.getElementById('cart-total').textContent = '0.00';
     const sticky = document.getElementById('sticky-total'); if (sticky) sticky.textContent = '0.00';
     calculateChange();
     renderTenderBar();
+    refreshProductBadges();
     return;
   }
   cart.forEach((c, idx) => {
@@ -351,16 +354,12 @@ function renderCart() {
     subtotal += lineTotal;
     const opts = c.options.map(o =>
       `<option value="${o.pack_kg}" ${o.pack_kg === c.bag_size_kg ? 'selected' : ''}>${escHtml(o.label)}</option>`).join('');
-    tbody.innerHTML += `<tr>
-      <td><b>${escHtml(c.name)}</b></td>
-      <td><div class="qty-step"><button type="button" aria-label="Decrease ${escHtml(c.name)} quantity" onclick="bumpQty(${idx}, -1)">−</button><input type="number" aria-label="${escHtml(c.name)} quantity" inputmode="decimal" value="${c.qty}" step="any" min="0.1" onchange="cart[${idx}].qty=Math.max(0.1, parseFloat(this.value)||1); renderCart()" /><button type="button" aria-label="Increase ${escHtml(c.name)} quantity" onclick="bumpQty(${idx}, 1)">+</button></div></td>
-      <td>
-        <select onchange="updateCartUnit(${idx}, this.value)" style="height: 50px; font-size: 16px; width: 100%; min-width: 120px;">${opts}</select>
-      </td>
-      <td style="font-size: 16px;">${c.unit_price.toFixed(2)}</td>
-      <td style="font-size: 16px;"><b>${lineTotal.toFixed(2)}</b></td>
-      <td><button class="btn-sm btn-danger cart-remove" aria-label="Remove ${escHtml(c.name)}" onclick="cart.splice(${idx}, 1); renderCart()">Remove</button></td>
-    </tr>`;
+    tbody.innerHTML += `<div class="cart-row">
+      <div class="cart-row-main"><b>${escHtml(c.name)}</b><select class="cart-pack-select" aria-label="Pack size for ${escHtml(c.name)}" onchange="updateCartUnit(${idx}, this.value)">${opts}</select></div>
+      <button type="button" class="cart-x" aria-label="Remove ${escHtml(c.name)}" onclick="cart.splice(${idx}, 1); renderCart()">×</button>
+      <div class="qty-step"><button type="button" aria-label="Decrease ${escHtml(c.name)} quantity" onclick="bumpQty(${idx}, -1)">−</button><input type="number" aria-label="${escHtml(c.name)} quantity" inputmode="decimal" value="${c.qty}" step="any" min="0.1" onchange="cart[${idx}].qty=Math.max(0.1, parseFloat(this.value)||1); renderCart()" /><button type="button" aria-label="Increase ${escHtml(c.name)} quantity" onclick="bumpQty(${idx}, 1)">+</button></div>
+      <div class="cart-row-total">${kes(lineTotal)}</div>
+    </div>`;
   });
   let discVal = parseFloat(document.getElementById('discount-val').value) || 0;
   let discType = document.getElementById('discount-type').value;
@@ -369,6 +368,7 @@ function renderCart() {
   const sticky = document.getElementById('sticky-total'); if (sticky) sticky.textContent = document.getElementById('cart-total').textContent;
   calculateChange();
   renderTenderBar();
+  refreshProductBadges();
 }
 function clearCart() { 
     cart = []; 
@@ -377,31 +377,106 @@ function clearCart() {
     calculateChange();
 }
 
-function holdCart() { 
-    if(cart.length === 0) return alert("Cart is empty"); 
-    heldCart = [...cart]; 
-    clearCart(); 
-    document.getElementById('btn-hold').style.display = 'none';
-    document.getElementById('btn-restore').style.display = 'inline-block';
+// ---- Toast, sheet, hold (device only), pay guard ----
+let posToastTimer = null;
+function posToast(msg) {
+  let t = document.getElementById('pos-toast');
+  if (!t) { t = document.createElement('div'); t.id = 'pos-toast'; t.className = 'pos-toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(posToastTimer); posToastTimer = setTimeout(() => { t.hidden = true; }, 2600);
 }
-
-function restoreCart() { 
-    if(heldCart.length === 0) return alert("No held sale found."); 
-    cart = [...heldCart]; 
-    heldCart = []; 
-    renderCart(); 
-    document.getElementById('btn-hold').style.display = 'inline-block';
-    document.getElementById('btn-restore').style.display = 'none';
+function posModal(html) {
+  const m = document.getElementById('pos-modal'); if (!m) return;
+  m.innerHTML = `<div class="pos-modal-box" role="dialog" aria-modal="true">${html}</div>`; m.hidden = false;
 }
+function posModalClose() { const m = document.getElementById('pos-modal'); if (m) { m.hidden = true; m.innerHTML = ''; } }
+function refreshProductBadges() {
+  if (typeof catalogLoadedAt !== 'undefined' && catalogLoadedAt && document.getElementById('search-results')) searchProducts();
+}
+function updatePaymentNote() {
+  const n = document.querySelector('.pos-payment-note'); if (!n) return;
+  n.hidden = !Array.from(document.querySelectorAll('.p-method')).some(sel => sel.value === 'MPESA');
+}
+function customerLabel() {
+  const sel = document.getElementById('customer-select');
+  if (!sel || !sel.value) return 'Walk-in';
+  const t = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '';
+  return t.split(' · ')[0] || 'Customer';
+}
+function updateCustomerLabel() { const e = document.getElementById('cust-label'); if (e) e.textContent = customerLabel(); }
+function posTillClosedSheet() {
+  posModal(`<h3>Till is closed</h3><p class="pos-note">Open the till before taking payment.</p><div class="pos-modal-actions"><button type="button" class="btn-sm" onclick="posModalClose()">Not now</button><button type="button" class="btn-primary" onclick="posModalClose(); showTab('till-tab')">Open till</button></div>`);
+}
+function posGoPay() {
+  if (cart.length === 0) return posToast('Cart is empty');
+  if (navigator.onLine && window.tillChecked && !currentTill) return posTillClosedSheet();
+  setPosStage('payment');
+}
+const HELD_KEY = 'emining_held_sales_v1';
+function heldSales() { try { const l = JSON.parse(localStorage.getItem(HELD_KEY) || '[]'); return Array.isArray(l) ? l : []; } catch (_) { return []; } }
+function saveHeldSales(list) { try { localStorage.setItem(HELD_KEY, JSON.stringify(list)); return true; } catch (_) { posToast('Could not save the held sale on this phone.'); return false; } }
+function refreshHeldBadge() { const b = document.getElementById('pos-held-btn'); if (!b) return; const n = heldSales().length; b.hidden = n === 0; b.textContent = 'Held ' + n; }
+function holdCart() {
+  if (cart.length === 0) return posToast('Cart is empty');
+  posModal(`<h3>Hold this sale</h3><label>Label (optional)<input id="hold-label" maxlength="40" placeholder="e.g. Mzee Kiprono" autocomplete="off" value="${escHtml(customerLabel() === 'Walk-in' ? '' : customerLabel())}"></label><p class="pos-note">Held sales do not reserve stock. Stock is checked again when you resume and pay. Held on this phone only.</p><div class="pos-modal-actions"><button type="button" class="btn-sm" onclick="posModalClose()">Cancel</button><button type="button" class="btn-primary" onclick="confirmHoldCart()">Hold sale</button></div>`);
+  const i = document.getElementById('hold-label'); if (i) i.focus();
+}
+function confirmHoldCart() {
+  const label = ((document.getElementById('hold-label') || {}).value || '').trim() || 'Walk-in';
+  const list = heldSales();
+  list.push({id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), label: label, ts: Date.now(),
+             customer_id: document.getElementById('customer-select').value || '', location_id: activeLocationId,
+             owner: window.currentUsername || '', cart: JSON.parse(JSON.stringify(cart))});
+  if (!saveHeldSales(list)) return;
+  posModalClose(); cancelSale(); setPosStage('products'); refreshHeldBadge(); posToast('Sale held on this phone');
+}
+function heldTotal(h) { return h.cart.reduce((sum, c) => sum + c.qty * c.unit_price, 0); }
+function showHeldSales() {
+  const list = heldSales(), today = new Date().toDateString();
+  const rows = list.length ? list.map(h => {
+    const when = new Date(h.ts), old = when.toDateString() !== today;
+    const n = h.cart.reduce((sum, c) => sum + (Number(c.qty) || 0), 0);
+    return `<div class="held-row${old ? ' is-old' : ''}"><div class="held-top"><b>${escHtml(h.label)}</b><span>${old ? when.toLocaleDateString() + ' ' : ''}${when.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}</span></div>
+      <div class="held-mid"><span>${n} ${n === 1 ? 'item' : 'items'}</span><b>KSh ${kes(heldTotal(h))}</b></div>
+      <div class="held-actions"><button type="button" class="btn-primary" onclick="resumeHeld('${h.id}')">Resume</button><button type="button" class="btn-sm" style="color:#b42318" onclick="deleteHeld('${h.id}')">Delete</button></div></div>`;
+  }).join('') : '<p class="pos-note">No held sales.</p>';
+  posModal(`<h3>Held sales (${list.length})</h3>${rows}<p class="pos-note">Held on this phone only. Clearing browser data removes them.</p><div class="pos-modal-actions" style="grid-template-columns:1fr"><button type="button" class="btn-sm" onclick="posModalClose()">Close</button></div>`);
+}
+function refreshCartPrices() {   // after resuming: use today's prices and drop items that are gone
+  const gone = [];
+  cart = cart.filter(line => {
+    const item = catalogCache.find(i => i.id === line.id);
+    if (!item) return true;      // catalogue not loaded yet: keep, the server re-checks price and stock
+    const opts = buildPackOptions(item), o = opts.find(p => Math.abs(p.pack_kg - line.bag_size_kg) < 0.0005);
+    if (!o) { gone.push(line.name); return false; }
+    line.options = opts; line.unit_price = o.price; return true;
+  });
+  if (gone.length) posToast('No longer available: ' + gone.join(', '));
+}
+function resumeHeld(id) {
+  const list = heldSales(), h = list.find(x => x.id === id); if (!h) return;
+  if (cart.length && !confirm('Replace the sale you are building now?')) return;
+  cart = h.cart;
+  const sel = document.getElementById('customer-select');
+  if (sel && h.customer_id && Array.from(sel.options).some(o => o.value === String(h.customer_id))) { sel.value = h.customer_id; updateCustomerDetails(); }
+  saveHeldSales(list.filter(x => x.id !== id));
+  refreshCartPrices(); posModalClose(); refreshHeldBadge(); renderCart(); posToast('Resumed ' + h.label);
+}
+function deleteHeld(id) { if (!confirm('Delete this held sale?')) return; saveHeldSales(heldSales().filter(x => x.id !== id)); refreshHeldBadge(); showHeldSales(); }
+function restoreCart() { showHeldSales(); }
+document.addEventListener('DOMContentLoaded', refreshHeldBadge);
+refreshHeldBadge();
 
 function paymentRowHtml() {
-    return `<div class="split-row" style="margin-bottom: 10px; flex-wrap: wrap;"><select class="p-method" onchange="onPayMethodChange(this)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="number" min="0" step="0.01" class="p-fee" placeholder="Deduction (KSh)" title="M-Pesa / bank charge deducted from this payment" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /></div>`;
+    return `<div class="split-row" style="margin-bottom: 10px; flex-wrap: wrap;"><select class="p-method" onchange="onPayMethodChange(this)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="number" min="0" step="0.01" class="p-fee" placeholder="Deduction (KSh)" title="M-Pesa / bank charge deducted from this payment" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><button type="button" class="fee-toggle" style="display:none" onclick="this.closest('.split-row').classList.toggle('show-fee')">Add deduction</button></div>`;
 }
 function onPayMethodChange(select) {
     const fee = select.closest('.split-row').querySelector('.p-fee');
     const show = select.value === 'MPESA' || select.value === 'BANK';
     fee.style.display = show ? '' : 'none';
     if (!show) fee.value = '';
+    const ft = select.closest('.split-row').querySelector('.fee-toggle'); if (ft) ft.style.display = show ? '' : 'none';
+    updatePaymentNote();
     const ref = select.closest('.split-row').querySelector('.p-ref');
     ref.style.display = show ? '' : 'none';
     ref.placeholder = show ? 'M-Pesa / bank code' : 'Ref (Optional)';
@@ -430,10 +505,12 @@ function quickTender(method, amount) {
   row.querySelector('.p-amount').value = amount;
   tenderState = {method: method, amount: amount};
   calculateChange(); renderTenderBar();
-  if (method === 'MPESA' || method === 'BANK') row.querySelector('.p-ref').focus();
+  if (method === 'MPESA' || method === 'BANK') { const od = document.getElementById('pos-other-pay'); if (od) od.open = true; row.querySelector('.p-ref').focus(); }
 }
 function resetPaymentLines() {
     document.getElementById('payment-lines').innerHTML = paymentRowHtml();
+    const op = document.getElementById('pos-other-pay'); if (op) op.open = false;
+    updatePaymentNote();
     calculateChange();
 }
 function addPaymentLine() {
@@ -586,6 +663,7 @@ async function saveOfflineCheckout(attempt, uncertain) {
 async function renderOfflineSales() {
   const panel = document.getElementById('offline-sales-panel'); if (!panel || !window.OfflineStore) return;
   const rows = await OfflineStore.list().catch(() => []);
+  const tag = document.getElementById('pos-pending-tag'); if (tag) { tag.hidden = !rows.length; tag.textContent = rows.length + ' waiting'; }
   panel.style.display = rows.length || offlineSyncNotice ? '' : 'none';
   const list = document.getElementById('offline-sales-list');
   if (!list) return;
@@ -785,6 +863,7 @@ function renderCustomerOptions(selectedId) {
   if (query && !matches.length) html += '<option disabled>No customers match this search</option>';
   sel.innerHTML = html;
   if (selectedId) sel.value = selectedId;
+  updateCustomerLabel();
 }
 function filterCustomerOptions() {
   const selectedId = document.getElementById('customer-select')?.value || '';
@@ -792,6 +871,7 @@ function filterCustomerOptions() {
 }
 
 function updateCustomerDetails() {
+  updateCustomerLabel();
   if (typeof renderTenderBar === 'function') renderTenderBar();
   const selId = document.getElementById('customer-select').value;
   const card = document.getElementById('customer-credit-card');

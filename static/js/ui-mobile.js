@@ -25,7 +25,7 @@
   if (stageGo) stageGo.addEventListener('click', function () {
     var stage = pos && pos.dataset.posStage || 'products';
     if (stage === 'products') window.setPosStage('cart');
-    else if (stage === 'cart') window.setPosStage('payment');
+    else if (stage === 'cart') { if (window.posGoPay) window.posGoPay(); else window.setPosStage('payment'); }
     else if (stage === 'payment') {
       var submit = $('complete-sale-button');
       if (submit) { submit.scrollIntoView({behavior:'smooth', block:'center'}); submit.focus({preventScroll:true}); }

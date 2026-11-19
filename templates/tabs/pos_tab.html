@@ -6,7 +6,7 @@ window.escHtml = window.escHtml || function (s) {
 };
 </script>
 <div id="pos-tab" class="tab-content">
-  <details class="pos-online-note" role="alert">
+  <details class="pos-sync-line" role="note">
     <summary>Offline sales sync when this phone reconnects</summary>
     <p>Products and customers must be loaded while online before an outage. Offline sales are saved on this phone and are pending until the server confirms them. Keep this phone safe, reconnect and sign in as the same cashier to sync. The server checks current stock, till, prices, and permissions before posting.</p>
   </details>
@@ -15,27 +15,23 @@ window.escHtml = window.escHtml || function (s) {
     <div id="offline-sales-list"></div>
     <button type="button" id="offline-sync-button" onclick="syncOfflineSales()">Sync saved sales</button>
   </section>
-  <div class="pos-pagebar">
-    <div><span class="pos-kicker">POINT OF SALE</span><h1>New Sale</h1><p id="pos-context-line">Choose products, build the cart, and take payment.</p></div>
-    <div class="pos-page-actions">
-      <label class="pos-outlet-select">Outlet <select id="pos-location" onchange="changePosLocation()"></select></label>
-      <button type="button" class="pos-utility-btn" onclick="showTab('sales-tab'); if(typeof loadSalesHistory==='function') loadSalesHistory();">Returns &amp; Sales History</button>
-      <button type="button" class="pos-utility-btn" id="pos-shortcuts-toggle" aria-expanded="false" aria-controls="pos-shortcuts-panel">Keyboard shortcuts</button>
-    </div>
-  </div>
-  <div id="pos-shortcuts-panel" class="pos-shortcuts-panel" hidden>
-    <strong>Keyboard shortcuts</strong><span>F2 Search</span><span>F4 Customer</span><span>F6 Cart</span><span>F8 Payment</span><span>Esc Close this panel</span>
+  <div id="pos-modal" class="pos-modal" hidden></div>
+  <div class="pos-topline">
+    <label class="pos-outlet-select"><span class="sr-only">Outlet</span><select id="pos-location" onchange="changePosLocation()" aria-label="Outlet"></select></label>
+    <button type="button" id="pos-pending-tag" class="pos-tag is-warn" hidden onclick="var p=document.getElementById('offline-sales-panel'); if(p) p.scrollIntoView({behavior:'smooth',block:'start'})">0 waiting</button>
+    <button type="button" id="pos-held-btn" class="pos-tag" hidden onclick="showHeldSales()">Held 0</button>
+    <button type="button" class="pos-tag" onclick="showTab('sales-tab'); if(typeof loadSalesHistory==='function') loadSalesHistory();">Returns</button>
   </div>
   <nav class="pos-view-tabs" aria-label="POS steps">
     <button type="button" data-pos-stage="products" onclick="setPosStage('products')">1&nbsp; Products</button>
     <button type="button" data-pos-stage="cart" onclick="setPosStage('cart')">2&nbsp; Cart <span id="pos-cart-count">0</span></button>
-    <button type="button" data-pos-stage="payment" onclick="setPosStage('payment')">3&nbsp; Payment</button>
+    <button type="button" data-pos-stage="payment" onclick="posGoPay()">3&nbsp; Payment</button>
     <button type="button" data-pos-stage="receipt" onclick="setPosStage('receipt')" hidden>4&nbsp; Receipt</button>
   </nav>
   <div class="pos-workspace">
     <section id="pos-catalog" class="pos-catalog" aria-label="Product catalogue">
-      <div class="card" id="quick-card">
-        <div class="pos-section-heading"><div><span class="pos-kicker">FAST ACCESS</span><h2>Quick items</h2></div><button type="button" class="pos-utility-btn" onclick="toggleQuickEditor()">Edit Quick items</button></div>
+      <div class="pos-fav" id="quick-card">
+        <div class="fav-head"><span>Favourites</span><button type="button" class="link-btn" onclick="toggleQuickEditor()">Edit</button></div>
         <div id="quick-items" class="quick-grid"></div>
         <div id="quick-items-editor" hidden>
           <p>Choose up to 12 items and their pack size for this outlet. Your choices are saved on this device.</p>
@@ -62,12 +58,10 @@ window.escHtml = window.escHtml || function (s) {
     </section>
     <aside id="pos-checkout" class="pos-checkout" aria-label="Cart and checkout">
       <div class="card pos-customer-card" id="pos-customer-card">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div><span class="pos-kicker">CUSTOMER</span><h2 style="margin:4px 0 0;">Who is this sale for?</h2></div>
-            <button class="btn-sm btn-primary" onclick="document.getElementById('new-cust-form').style.display='block'">+ Add</button>
-        </div>
-        
-        <div id="new-cust-form" style="display:none; margin-top:10px; margin-bottom:10px; border: 1px solid #ddd; padding:15px; border-radius: 6px; background: #f8f9fa;">
+        <details class="cust-pick" id="cust-pick">
+          <summary><span><small>Customer</small> <span class="cust-label" id="cust-label">Walk-in</span></span><span class="cust-change">Change</span></summary>
+          <div style="margin:8px 0"><button type="button" class="btn-sm btn-primary" onclick="document.getElementById('new-cust-form').style.display='block'">+ Add customer</button></div>
+          <div id="new-cust-form" style="display:none; margin-top:10px; margin-bottom:10px; border: 1px solid #ddd; padding:15px; border-radius: 6px; background: #f8f9fa;">
             <input type="text" id="nc-name" placeholder="Full Name" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
             <input type="text" id="nc-phone" placeholder="Phone Number" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
             <input type="text" id="nc-location" placeholder="Location / Town" style="width:100%; margin-bottom:10px; height: 45px; font-size: 16px; padding: 10px;" />
@@ -82,6 +76,7 @@ window.escHtml = window.escHtml || function (s) {
         <select id="customer-select" aria-label="Select customer" onchange="updateCustomerDetails()">
           <option value="">CASH CUSTOMER (Walk-In)</option>
         </select>
+        </details>
         
         <div id="customer-credit-card" class="credit-info-box" style="display: none; font-size: 16px; padding: 15px;">
           <strong>Credit Limit:</strong> KSh <span id="c-limit">0.00</span> | 
@@ -108,42 +103,32 @@ window.escHtml = window.escHtml || function (s) {
       </div>
 
       <div class="card pos-cart-card" id="pos-cart-card">
-        <div class="pos-section-heading"><div><span class="pos-kicker">CURRENT SALE</span><h2>Cart <span class="pos-cart-total-items" id="pos-cart-count-desktop">0 items</span></h2></div><button type="button" class="pos-text-danger" onclick="cancelSale()">Clear cart</button></div>
-        <div style="overflow-x: auto;">
-          <table class="cart-table" style="font-size: 16px;">
-            <thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Price</th><th>Total</th><th></th></tr></thead>
-            <tbody id="cart-body"><tr><td colspan="6" style="text-align: center; color: #888; padding: 20px;">Cart is empty.</td></tr></tbody>
-          </table>
-        </div>
-        <br/>
-        <div style="display: flex; gap: 10px;">
-            <button class="btn-sm btn-danger" onclick="cancelSale()">Cancel Sale</button>
-            <button id="btn-hold" class="btn-sm btn-warning" style="height: 40px; font-size: 16px;" onclick="holdCart()">Hold Sale</button>
-            <button id="btn-restore" class="btn-sm btn-info" style="height: 40px; font-size: 16px; display: none;" onclick="restoreCart()">Restore Sale</button>
-        </div>
-        <button type="button" class="pos-cart-continue" onclick="setPosStage('payment')">Continue to payment <span aria-hidden="true">→</span></button>
+        <div class="cart-actions"><strong>Cart <span class="pos-cart-total-items" id="pos-cart-count-desktop">0 items</span></strong><button type="button" class="link-btn danger" onclick="if(cart.length && confirm('Clear this sale?')) cancelSale()">Clear cart</button></div>
+        <div id="cart-body" class="cart-list"><div class="cart-empty">Cart is empty.</div></div>
+        <div class="cart-actions"><button type="button" id="btn-hold" class="link-btn" onclick="holdCart()">Hold sale</button><button type="button" id="btn-restore" class="link-btn" onclick="showHeldSales()">Held sales</button></div>
+        <button type="button" class="pos-cart-continue" onclick="posGoPay()">Continue to payment <span aria-hidden="true">→</span></button>
       </div>
       <div class="card" id="checkout-card">
-        <div class="pos-section-heading"><div><span class="pos-kicker">PAYMENT</span><h2>Checkout</h2></div></div>
         <div class="pos-total-box">
             <span>Total due</span><strong>KSh <span id="cart-total">0.00</span></strong>
             <div class="pos-change-row"><span>Change</span><b>KSh <span id="change-due">0.00</span></b></div>
         </div>
-        <label class="pos-field-label"><strong>Choose a payment method</strong></label>
-        <p class="pos-payment-note">M-Pesa is not verified by this app. Confirm the payment on the customer’s phone before completing the sale.</p>
+        <p class="pos-payment-note" hidden>M-Pesa is not verified by this app. Confirm the payment on the customer’s phone before completing the sale.</p>
         <div id="tender-bar" class="tender-bar"></div>
 
-        <div id="payment-lines"></div>
-        <button class="btn-sm pos-split-button" onclick="addPaymentLine()">+ Split payment</button>
+        <details class="pos-other-pay" id="pos-other-pay"><summary>Other amount or split payment</summary>
+          <div id="payment-lines"></div>
+          <button class="btn-sm pos-split-button" onclick="addPaymentLine()">+ Split payment</button>
+        </details>
 
-        <div id="walkin-capture" style="margin-bottom:16px;">
+        <details class="pos-walkin"><summary>Save walk-in phone (optional)</summary><div id="walkin-capture" style="margin-bottom:16px;">
           <label><strong>Walk-in customer details (optional)</strong><small>Save a phone number to help find this customer next time.</small></label>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <input type="tel" id="new-cust-phone" inputmode="tel" maxlength="20" placeholder="0712 345 678" style="flex:1 1 150px; height:46px; font-size:16px;">
             <input type="text" id="new-cust-name" maxlength="100" placeholder="Name (optional)" style="flex:1 1 150px; height:46px; font-size:16px;">
           </div>
         </div>
-
+</details>
         <details class="more-opts" id="discount-details" style="margin-bottom: 16px;">
           <summary style="cursor:pointer; font-weight:600;">Discount (optional)</summary>
         <div style="display: flex; gap: 10px; margin-bottom: 20px; margin-top: 8px;">
@@ -196,7 +181,7 @@ window.escHtml = window.escHtml || function (s) {
     </aside>
   </div>
   <div class="pos-sticky-bar" aria-label="Sale total">
-    <div><div class="lbl"><span id="sticky-count">0 items</span> · Total due</div><div class="amt">KSh <span id="sticky-total">0.00</span></div></div>
+    <div><div class="lbl" onclick="setPosStage('cart')"><span id="sticky-count">0 items</span> · Total due</div><div class="amt">KSh <span id="sticky-total">0.00</span></div></div>
     <button type="button" id="sticky-go">View cart</button>
   </div>
 </div>

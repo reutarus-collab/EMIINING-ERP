@@ -354,18 +354,29 @@ def formula_data_hash(recipe_pct, lines, table, bounds=None):
 
 
 def rdp_rup_warnings(ids, nutrients, names):
-    """RDP + RUP as % of CP should be close to 100 for an ingredient. Warn (never block) when they are not."""
+    """RDP + RUP as % of CP should be close to 100 for an ingredient. Warn (never block) when they are not.
+    An ingredient with no protein (CP stored as 0: lime, salt, DCP, premix) has nothing to split, so it is skipped."""
     if 'RDP' not in nutrients or 'RUP' not in nutrients:
         return []
     rows = IngredientNutrient.query.filter(IngredientNutrient.ingredient_id.in_(list(ids)),
-                                           IngredientNutrient.nutrient_code.in_(['RDP', 'RUP'])).all()
+                                           IngredientNutrient.nutrient_code.in_(['RDP', 'RUP', 'CP'])).all()
     by = {}
     for r in rows:
         by.setdefault(r.ingredient_id, {})[r.nutrient_code] = r.value
     out = []
     for iid, d in by.items():
-        if 'RDP' in d and 'RUP' in d and abs(d['RDP'] + d['RUP'] - 100.0) > 2.0:
-            out.append(f'{names.get(iid, iid)}: RDP + RUP = {d["RDP"] + d["RUP"]:.2f}% of CP (expected about 100%). '
+        if 'RDP' not in d or 'RUP' not in d:
+            continue
+        if d.get('CP') == 0:
+            continue
+        total = d['RDP'] + d['RUP']
+        if abs(total - 100.0) <= 2.0:
+            continue
+        if total == 0:
+            out.append(f'{names.get(iid, iid)}: RDP and RUP are both stored as 0. If that is a placeholder, clear them '
+                       f'(blank = unknown); otherwise enter the real split.')
+        else:
+            out.append(f'{names.get(iid, iid)}: RDP + RUP = {total:.2f}% of CP (expected about 100%). '
                        f'Check the degradability data, or an undigestible fraction is missing.')
     return out
 

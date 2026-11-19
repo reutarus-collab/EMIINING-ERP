@@ -1,22 +1,71 @@
 ﻿<div id="stock-tab" class="tab-content">
+  <style>
+    .st-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:8px 0 12px}
+    .st-tile{border:1px solid #dee2e6;border-radius:10px;padding:8px 10px;background:#fff;text-align:left;font:inherit;cursor:pointer}
+    .st-tile b{display:block;font-size:1.25rem;line-height:1.2}.st-tile span{font-size:.78rem;color:#555}
+    .st-tile.is-bad b{color:#b00020}.st-tile.is-warn b{color:#b26a00}
+    .st-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+    .st-bar input[type=search],.st-bar select{padding:10px;min-width:0}
+    .st-bar input[type=search]{flex:1 1 180px;max-width:320px}
+    .st-chip{border:1px solid #ced4da;background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer}
+    .st-chip.on{background:#174b32;border-color:#174b32;color:#fff}
+    .st-pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:.75rem;font-weight:700;white-space:nowrap}
+    .st-pill.out{background:#fde2e4;color:#b00020}.st-pill.low{background:#fff0d1;color:#8a5200}
+    .st-pill.ok{background:#dff3e6;color:#17633a}.st-pill.idle{background:#eceff1;color:#546e7a}
+    .st-sub{display:block;font-size:.75rem;color:#6c757d}
+    .st-num{font-variant-numeric:tabular-nums}.st-bad{color:#b00020;font-weight:700}
+    #stock-tab details.st-sec{border:1px solid #dee2e6;border-radius:10px;padding:8px 12px;margin:0 0 10px;background:#fff}
+    #stock-tab details.st-sec>summary{cursor:pointer;font-weight:700;padding:4px 0}
+    #stock-tab details.st-sec[open]>summary{margin-bottom:8px}
+    .st-flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .st-flex label{display:flex;flex-direction:column;font-size:.78rem;color:#555;gap:2px}
+  </style>
   <div class="card">
     <h3>Stock on Hand</h3>
     <p>Outlet: <b id="stock-location-name">Current outlet</b></p>
-    <div data-roles="admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <input id="new-location-name" placeholder="New outlet name"><input id="new-location-code" placeholder="Outlet code">
-      <select id="new-location-type"><option value="BRANCH_STORE">Retail outlet</option><option value="FACTORY">Factory</option><option value="WAREHOUSE">Warehouse</option></select>
-      <button class="btn-sm btn-primary" onclick="createLocation()">Add outlet</button>
+    <div id="stock-tiles" class="st-tiles"></div>
+    <div class="st-bar">
+      <input id="stock-filter" type="search" aria-label="Filter items" placeholder="Filter items..." oninput="renderStock()">
+      <select id="stock-group" aria-label="Item group" onchange="renderStock()"><option value="">All groups</option></select>
+      <select id="stock-sort" aria-label="Sort by" onchange="renderStock()">
+        <option value="urgency">Sort: most urgent</option><option value="sales">Sort: best sellers</option>
+        <option value="value">Sort: stock value</option><option value="name">Sort: A to Z</option></select>
     </div>
-    <div data-roles="admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <select id="outlet-user"></select><select id="outlet-user-location"></select>
-      <button class="btn-sm btn-primary" onclick="assignUserOutlet()">Assign staff outlet</button>
+    <div class="st-bar" id="stock-chips" role="group" aria-label="Stock filters">
+      <button type="button" class="st-chip on" data-f="all" onclick="setStockFilter('all')">All</button>
+      <button type="button" class="st-chip" data-f="restock" onclick="setStockFilter('restock')">Needs restock</button>
+      <button type="button" class="st-chip" data-f="instock" onclick="setStockFilter('instock')">In stock</button>
+      <button type="button" class="st-chip" data-f="active" onclick="setStockFilter('active')">Sold in 30 days</button>
+      <button type="button" class="st-chip" data-f="idle" onclick="setStockFilter('idle')">Idle stock</button>
     </div>
-    <div data-roles="admin,warehouse" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <select id="stock-adjust-item"></select><input id="stock-adjust-qty" type="number" step="0.01" placeholder="Adjustment kg (+/-)">
-      <input id="stock-adjust-reason" placeholder="Reason"><button class="btn-sm btn-primary" onclick="adjustStock()">Adjust stock</button>
-    </div>
-    <div data-roles="admin,warehouse" style="border:1px solid #dee2e6;border-radius:8px;padding:10px;margin:10px 0">
-      <b>Transfer stock to another outlet (one or many items)</b>
+    <table class="data-table m-stack">
+      <thead><tr><th>Item</th><th>Status</th><th>Stock (kg)</th><th>Bags</th><th>Cover (days)</th><th>Sold (30d kg)</th><th>Retail / kg</th><th class="stock-cost-col">Outlet cost / kg</th><th class="stock-cost-col">Outlet value (KSh)</th><th class="stock-act-col"></th></tr></thead>
+      <tbody id="stock-body"><tr><td colspan="10">Loading...</td></tr></tbody>
+    </table>
+    <p id="stock-count" style="font-size:.8rem;color:#6c757d;margin:6px 0 0"></p>
+  </div>
+  <div class="card">
+    <details class="st-sec" id="incoming-details">
+      <summary>Incoming stock transfers <span id="incoming-count" class="st-pill idle">0</span></summary>
+      <p>Receive factory or warehouse dispatches into this outlet. Partial receipts remain open until the balance is received.</p>
+    <button type="button" class="btn-sm btn-success" onclick="receiveAllTransfers()" style="margin-bottom:6px">Receive everything shown (full remaining quantities)</button>
+    <table class="data-table"><thead><tr><th>Transfer</th><th>From</th><th>Item</th><th>Dispatched</th><th>Received</th><th>Remaining</th><th>Receive now (kg)</th><th>Note</th><th>Actions</th></tr></thead>
+      <tbody id="incoming-transfer-body"><tr><td colspan="9">Loading incoming transfers…</td></tr></tbody></table>
+    </details>
+    <details class="st-sec" id="adjust-details" data-roles="admin,warehouse">
+      <summary>Adjust stock (count correction, wastage)</summary>
+      <div class="st-flex">
+        <label>Item<select id="stock-adjust-item" onchange="stockAdjustHint()"></select></label>
+        <label>Change in kg (+/-)<input id="stock-adjust-qty" type="number" step="0.01" placeholder="e.g. -2.5"></label>
+        <label>Reason<input id="stock-adjust-reason" list="stock-reasons" placeholder="Pick or type a reason"></label>
+        <button class="btn-sm btn-primary" onclick="adjustStock()">Adjust stock</button>
+      </div>
+      <datalist id="stock-reasons"><option value="Stock count correction"><option value="Spillage / wastage"><option value="Moisture loss"><option value="Damaged / expired"><option value="Opening stock"><option value="Other"></datalist>
+      <p id="stock-adjust-current" style="margin:6px 0 0;font-size:.85rem;color:#555"></p>
+    </details>
+    <details class="st-sec" data-roles="admin,warehouse">
+      <summary>Transfer stock to another outlet</summary>
+      <div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
         <label>To <select id="transfer-to"></select></label>
         <select id="transfer-item" aria-label="Item to transfer"></select>
@@ -31,17 +80,19 @@
       </div>
       <div id="transfer-msg" role="status" style="margin-top:6px"></div>
     </div>
-    <h3>Incoming stock transfers</h3>
-    <p>Receive factory or warehouse dispatches into this outlet. Partial receipts remain open until the balance is received.</p>
-    <button type="button" class="btn-sm btn-success" onclick="receiveAllTransfers()" style="margin-bottom:6px">Receive everything shown (full remaining quantities)</button>
-    <table class="data-table"><thead><tr><th>Transfer</th><th>From</th><th>Item</th><th>Dispatched</th><th>Received</th><th>Remaining</th><th>Receive now (kg)</th><th>Note</th><th>Actions</th></tr></thead>
-      <tbody id="incoming-transfer-body"><tr><td colspan="9">Loading incoming transfers…</td></tr></tbody></table>
-    <input id="stock-filter" placeholder="Filter items..." oninput="renderStock()"
-           style="padding:10px;width:100%;max-width:320px;margin-bottom:10px">
-    <table class="data-table">
-      <thead><tr><th>Item</th><th>Category</th><th>Sold (30d kg)</th><th>Stock (kg)</th><th>Bag (kg)</th><th>Retail / kg</th><th class="stock-cost-col">Outlet cost / kg</th><th class="stock-cost-col">Outlet value (KSh)</th></tr></thead>
-      <tbody id="stock-body"><tr><td colspan="8">Loading...</td></tr></tbody>
-    </table>
+    </details>
+    <details class="st-sec" data-roles="admin">
+      <summary>Outlet setup (admin)</summary>
+      <div data-roles="admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <input id="new-location-name" placeholder="New outlet name"><input id="new-location-code" placeholder="Outlet code">
+      <select id="new-location-type"><option value="BRANCH_STORE">Retail outlet</option><option value="FACTORY">Factory</option><option value="WAREHOUSE">Warehouse</option></select>
+      <button class="btn-sm btn-primary" onclick="createLocation()">Add outlet</button>
+    </div>
+    <div data-roles="admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <select id="outlet-user"></select><select id="outlet-user-location"></select>
+      <button class="btn-sm btn-primary" onclick="assignUserOutlet()">Assign staff outlet</button>
+    </div>
+    </details>
   </div>
 </div>
 <div id="expenses-tab" class="tab-content">
@@ -160,7 +211,7 @@ async function loadStock() {
     dest.innerHTML = locations.filter(l => String(l.id) !== String(activeLocationId)).map(l => `<option value="${l.id}">${retailEsc(l.name)}</option>`).join('');
   }
   if (window.currentRole === 'admin') await loadOutletUsers();
-  renderStock();
+  renderStock(); stockAdjustHint();
   await loadIncomingTransfers();
 }
 async function loadIncomingTransfers() {
@@ -175,6 +226,9 @@ async function loadIncomingTransfers() {
     <td><input type="number" min="0.01" max="${Number(t.remaining_quantity_kg)}" step="0.01" id="transfer-receive-qty-${t.id}" value="${Number(t.remaining_quantity_kg)}" style="width:110px"></td>
     <td><input id="transfer-receive-note-${t.id}" maxlength="200" placeholder="Optional note" style="width:130px"></td>
     <td><button class="btn-sm btn-success" onclick="receiveTransfer(${t.id})">Receive</button> <button class="btn-sm btn-danger" onclick="closeTransferShort(${t.id}, ${Number(t.remaining_quantity_kg)})">Close short</button></td></tr>`).join('') || '<tr><td colspan="9">No stock transfers are waiting for receipt.</td></tr>';
+  const cnt = document.getElementById('incoming-count'), det = document.getElementById('incoming-details');
+  if (cnt) { cnt.textContent = rows.length; cnt.className = 'st-pill ' + (rows.length ? 'low' : 'idle'); }
+  if (det && rows.length) det.open = true;
 }
 async function receiveTransfer(id) {
   const body = {quantity_kg:document.getElementById('transfer-receive-qty-' + id).value,
@@ -314,19 +368,95 @@ function stockGroup(cat) {
   if (c.includes('packag')) return [4, 'Packaging'];
   return [5, 'Other'];
 }
+const STOCK_LOW_COVER_DAYS = 7;   // an item selling out in under this many days is flagged LOW
+let stockFilter = 'all';
+const stockNum = (x, max = 2) => Number(x || 0).toLocaleString('en-KE', {maximumFractionDigits: max});
+function stockInfo(i) {
+  const stock = Number(i.stock_kg || 0), sold = Number(i.sold_kg_30d || 0);
+  const cover = sold > 0 ? stock / (sold / 30) : null;
+  let status = 'idle', label = 'No sales', rank = 3;
+  if (sold > 0 && stock <= 0) { status = 'out'; label = 'OUT'; rank = 0; }
+  else if (sold > 0 && cover < STOCK_LOW_COVER_DAYS) { status = 'low'; label = 'LOW'; rank = 1; }
+  else if (sold > 0) { status = 'ok'; label = 'OK'; rank = 2; }
+  else if (stock <= 0) { label = 'Empty'; rank = 4; }
+  return {stock, sold, cover, status, label, rank};
+}
+function stockBags(stock, bag) {
+  bag = Number(bag || 0);
+  if (!(bag > 0) || stock <= 0) return '<span class="st-sub">&mdash;</span>';
+  const full = Math.floor(stock / bag + 1e-9), rem = Math.round((stock - full * bag) * 100) / 100;
+  if (!full) return `${stockNum(rem)} kg <span class="st-sub">of ${stockNum(bag)} kg bag</span>`;
+  return `${full} bag${full > 1 ? 's' : ''}${rem > 0 ? ' + ' + stockNum(rem) + ' kg' : ''} <span class="st-sub">${stockNum(bag)} kg bags</span>`;
+}
+function setStockFilter(f) { stockFilter = f; renderStock(); }
+function stockQuickAdjust(id) {
+  const det = document.getElementById('adjust-details'), sel = document.getElementById('stock-adjust-item');
+  if (!det || !sel) return;
+  det.open = true; sel.value = String(id); stockAdjustHint();
+  det.scrollIntoView({behavior: 'smooth', block: 'center'});
+  setTimeout(() => document.getElementById('stock-adjust-qty').focus(), 250);
+}
+function stockAdjustHint() {
+  const el = document.getElementById('stock-adjust-current'), sel = document.getElementById('stock-adjust-item');
+  if (!el || !sel) return;
+  const row = stockRows.find(r => String(r.id) === String(sel.value));
+  el.textContent = row ? `System stock now: ${stockNum(row.stock_kg)} kg. Enter a negative number to remove stock.` : '';
+}
 function renderStock() {
   const words = (document.getElementById('stock-filter').value || '').toLowerCase().split(/\s+/).filter(Boolean);
-  const rows = stockRows.filter(i => words.every(w => ((i.name || '') + ' ' + (i.category || '')).toLowerCase().includes(w)))
-    .sort((a, b) => Number(b.sold_kg_30d || 0) - Number(a.sold_kg_30d || 0) || String(a.name).localeCompare(String(b.name), undefined, {sensitivity: 'base'}));
   const showCost = ['admin','accountant','warehouse'].includes(window.currentRole);
+  const canAdjust = ['admin','warehouse'].includes(window.currentRole);
   document.querySelectorAll('.stock-cost-col').forEach(el => el.style.display = showCost ? '' : 'none');
-  const cols = showCost ? 8 : 6;
+  document.querySelectorAll('.stock-act-col').forEach(el => el.style.display = canAdjust ? '' : 'none');
+  const cols = 6 + (showCost ? 2 : 0) + (canAdjust ? 1 : 0) + 1;
+  // group dropdown (rebuilt from the items actually present, selection preserved)
+  const gSel = document.getElementById('stock-group'), gKeep = gSel.value;
+  const groups = {};
+  stockRows.forEach(i => { const [rk, name] = stockGroup(i.category); groups[rk] = name; });
+  gSel.innerHTML = '<option value="">All groups</option>' + Object.keys(groups).sort().map(k => `<option value="${k}">${retailEsc(groups[k])}</option>`).join('');
+  gSel.value = gKeep in groups ? gKeep : '';
+  // summary tiles use the whole outlet, not the filtered view
+  const all = stockRows.map(i => ({i, x: stockInfo(i)}));
+  const nOut = all.filter(r => r.x.status === 'out').length, nLow = all.filter(r => r.x.status === 'low').length;
+  const idle = all.filter(r => r.x.status === 'idle' && r.x.stock > 0);
+  const val = r => Number(r.i.stock_value || 0);
+  const tiles = [];
+  if (showCost) tiles.push(`<div class="st-tile"><b>KSh ${stockNum(all.reduce((t, r) => t + val(r), 0), 0)}</b><span>Stock value</span></div>`);
+  tiles.push(`<button type="button" class="st-tile ${nOut ? 'is-bad' : ''}" onclick="setStockFilter('restock')"><b>${nOut}</b><span>Selling items OUT</span></button>`);
+  tiles.push(`<button type="button" class="st-tile ${nLow ? 'is-warn' : ''}" onclick="setStockFilter('restock')"><b>${nLow}</b><span>LOW (under ${STOCK_LOW_COVER_DAYS} days cover)</span></button>`);
+  tiles.push(`<button type="button" class="st-tile" onclick="setStockFilter('idle')"><b>${showCost ? 'KSh ' + stockNum(idle.reduce((t, r) => t + val(r), 0), 0) : idle.length}</b><span>Idle stock (no sales 30d)</span></button>`);
+  document.getElementById('stock-tiles').innerHTML = tiles.join('');
+  document.querySelectorAll('#stock-chips .st-chip').forEach(c => c.classList.toggle('on', c.dataset.f === stockFilter));
+  const grp = gSel.value;
+  let rows = all.filter(r => words.every(w => ((r.i.name || '') + ' ' + (r.i.category || '')).toLowerCase().includes(w)))
+    .filter(r => !grp || String(stockGroup(r.i.category)[0]) === grp)
+    .filter(r => stockFilter === 'all' ? true
+      : stockFilter === 'restock' ? (r.x.status === 'out' || r.x.status === 'low')
+      : stockFilter === 'instock' ? r.x.stock > 0
+      : stockFilter === 'active' ? r.x.sold > 0
+      : (r.x.status === 'idle' && r.x.stock > 0));
+  const byName = (a, b) => String(a.i.name).localeCompare(String(b.i.name), undefined, {sensitivity: 'base'});
+  const mode = document.getElementById('stock-sort').value;
+  rows.sort(mode === 'name' ? byName
+    : mode === 'value' ? (a, b) => val(b) - val(a) || byName(a, b)
+    : mode === 'sales' ? (a, b) => b.x.sold - a.x.sold || byName(a, b)
+    : (a, b) => a.x.rank - b.x.rank || ((a.x.cover ?? 1e9) - (b.x.cover ?? 1e9)) || b.x.sold - a.x.sold || byName(a, b));
   let html = '';
-  rows.forEach(i => {
-    html += `<tr><td>${retailEsc(i.name)}</td><td>${retailEsc(i.category)}</td><td>${Number(i.sold_kg_30d || 0).toFixed(2)}</td><td>${i.stock_kg}</td><td>${i.bag_size_kg}</td><td>${
-      i.priced ? Number(i.retail_price_per_kg).toFixed(2) : '<span style="color:#b00;font-weight:bold">NO PRICE</span>'}</td>${showCost ? `<td>${Number(i.unit_cost_per_kg || 0).toFixed(4)}</td><td>${Number(i.stock_value || 0).toFixed(2)}</td>` : ''}</tr>`;
+  rows.forEach(({i, x}) => {
+    const cost = Number(i.unit_cost_per_kg || 0);
+    const costCell = cost > 0 ? stockNum(cost) : (x.stock > 0 ? '<span class="st-bad">NO COST</span>' : '&mdash;');
+    html += `<tr><td>${retailEsc(i.name)}<span class="st-sub">${retailEsc(i.category)}</span></td>`
+      + `<td><span class="st-pill ${x.status}">${x.label}</span></td>`
+      + `<td class="st-num">${stockNum(x.stock)}</td><td>${stockBags(x.stock, i.bag_size_kg)}</td>`
+      + `<td class="st-num ${x.status === 'low' || x.status === 'out' ? 'st-bad' : ''}">${x.cover == null ? '&mdash;' : (x.cover > 365 ? '365+' : stockNum(x.cover, 1))}</td>`
+      + `<td class="st-num">${stockNum(x.sold)}</td>`
+      + `<td class="st-num">${i.priced ? stockNum(i.retail_price_per_kg) : '<span class="st-bad">NO PRICE</span>'}</td>`
+      + (showCost ? `<td class="st-num">${costCell}</td><td class="st-num">${stockNum(i.stock_value, 0)}</td>` : '')
+      + (canAdjust ? `<td><button type="button" class="btn-sm" onclick="stockQuickAdjust(${Number(i.id)})">Adjust</button></td>` : '')
+      + '</tr>';
   });
-  document.getElementById('stock-body').innerHTML = html || `<tr><td colspan="${cols}">No items.</td></tr>`;
+  document.getElementById('stock-body').innerHTML = html || `<tr><td colspan="${cols}">No items match.</td></tr>`;
+  document.getElementById('stock-count').textContent = `Showing ${rows.length} of ${all.length} items`;
 }
 async function loadDailyReport() {
   const box = document.getElementById('rep-body');

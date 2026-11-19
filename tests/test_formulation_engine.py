@@ -293,6 +293,17 @@ class VerifyTests(EngineBase):
         self.assertEqual(len(w), 1)
         self.assertIn('91.55', w[0])
 
+    def test_rdp_rup_skips_ingredients_without_protein(self):
+        lime = self.add('Lime', 6, CP=0, RDP=0, RUP=0)
+        w = fe.rdp_rup_warnings([lime.id], self.nut, {lime.id: 'Lime'})
+        self.assertEqual(w, [])
+
+    def test_rdp_rup_zero_placeholder_message(self):
+        y = self.add('Yeast', 30, CP=40, RDP=0, RUP=0)
+        w = fe.rdp_rup_warnings([y.id], self.nut, {y.id: 'Yeast'})
+        self.assertEqual(len(w), 1)
+        self.assertIn('placeholder', w[0])
+
 
 if __name__ == '__main__':
     unittest.main()
