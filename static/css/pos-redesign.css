@@ -2,14 +2,13 @@
    Loaded after ui-mobile.css. Colours reuse --ui-* tokens from ui-mobile.css. */
 
 /* ---------- shared (all widths) ---------- */
-.pos-sync-line{margin:6px 0 8px}
-.pos-sync-line summary{list-style:none;cursor:pointer;padding:7px 10px;border-radius:8px;background:#eef2ef;color:var(--ui-muted);font-size:.78rem;line-height:1.3}
-.pos-sync-line summary::-webkit-details-marker{display:none}
-.pos-sync-line p{margin:6px 2px 0;font-size:.8rem;color:var(--ui-muted)}
-
 .pos-topline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 8px}
 .pos-topline .pos-outlet-select{flex:1 1 140px;min-width:0;margin:0}
-.pos-topline select{width:100%;min-height:40px;font-size:.9rem}
+.pos-topline:not(:has(.pos-tag:not([hidden]))){display:none}
+.dash-outlet{display:flex;align-items:center;gap:10px;margin:0 0 12px}
+.dash-outlet span{font-size:.8rem;font-weight:600;color:var(--ui-muted)}
+.dash-outlet select{flex:1;min-width:0;min-height:44px;font-size:.95rem}
+.pos-view-row{display:flex;align-items:center;justify-content:space-between;margin:2px 0 6px;font-size:.8rem;font-weight:600;color:var(--ui-muted)}
 .pos-tag{min-height:36px;padding:0 12px;border:1px solid var(--ui-border);border-radius:999px;background:#fff;color:var(--ui-green-900);font-size:.8rem;font-weight:600}
 .pos-tag[hidden]{display:none}
 .pos-tag.is-warn{background:#fff4d6;border-color:#e3c16a;color:#7a5200}
@@ -80,10 +79,14 @@
 
   .search-results-box.is-product-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;overflow:visible!important;max-height:none!important}
   .pos-catalog-card .pos-section-heading,.pos-category-field{display:none!important}
+  .search-results-box.is-product-list{grid-template-columns:1fr!important;gap:6px!important}
+  .is-product-list .pos-product-card{display:grid!important;grid-template-columns:minmax(0,1fr) auto;column-gap:8px;align-items:center;padding:8px 10px!important}
+  .is-product-list .pos-product-card h3{order:1;margin:0}
+  .is-product-list .product-card-meta{order:2}
+  .is-product-list .product-pack-options{order:3;grid-column:1 / -1;grid-template-columns:repeat(auto-fit,minmax(96px,1fr))!important}
   .pos-category-chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
   .pos-sticky-bar .lbl{cursor:pointer}
   /* cart, payment and receipt are their own screens (ui-mobile.css); hide the Sell-only strip there */
-  #pos-tab[data-pos-stage="cart"] .pos-sync-line,#pos-tab[data-pos-stage="payment"] .pos-sync-line,#pos-tab[data-pos-stage="receipt"] .pos-sync-line,
   #pos-tab[data-pos-stage="cart"] .pos-topline,#pos-tab[data-pos-stage="payment"] .pos-topline,#pos-tab[data-pos-stage="receipt"] .pos-topline{display:none!important}
 
   .pos-checkout .pos-section-heading .pos-kicker,.pos-checkout h2{display:none}

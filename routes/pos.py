@@ -82,6 +82,10 @@ def top_items():
         location = resolve_location(request.args.get('location_id'))
     except ValueError as exc:
         return error_response(exc)
+    try:
+        limit = min(max(int(request.args.get('limit', 12)), 1), 100)
+    except (TypeError, ValueError):
+        limit = 12
     since = datetime.utcnow() - timedelta(days=30)
     rows = (db.session.query(OrderLine.ingredient_id, OrderLine.unit_type, db.func.count(OrderLine.id).label('n'))
             .join(OrderHeader, OrderHeader.id == OrderLine.order_id)
@@ -95,7 +99,7 @@ def top_items():
             e[1], e[2] = unit_type, n
     out = []
     volume = sales_rank(location.id)
-    for ing_id, (total, unit_type, _) in sorted(best.items(), key=lambda kv: (-volume.get(kv[0], 0.0), -kv[1][0]))[:12]:
+    for ing_id, (total, unit_type, _) in sorted(best.items(), key=lambda kv: (-volume.get(kv[0], 0.0), -kv[1][0]))[:limit]:
         ut = (unit_type or 'KG').upper()
         pack = 1.0
         if ut.endswith('KG BAG'):

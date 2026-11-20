@@ -19,6 +19,14 @@ class FastSaleTests(tp.POSCheckoutTests):
         self.assertEqual(r.json[0]['sales'], 3)
         self.assertEqual(r.json[0]['pack_kg'], 1.0)
 
+    def test_top_items_limit_is_optional_and_bad_values_fall_back(self):
+        self.assertEqual(self._sell(1).status_code, 200)
+        base = f'/api/pos/top-items?location_id={self.branch.id}'
+        self.assertEqual(len(self.client.get(base).json), 1)
+        self.assertEqual(len(self.client.get(base + '&limit=1').json), 1)
+        self.assertEqual(self.client.get(base + '&limit=abc').status_code, 200)
+        self.assertEqual(self.client.get(base + '&limit=-5').status_code, 200)
+
     def test_top_items_empty_for_outlet_with_no_sales(self):
         r = self.client.get(f'/api/pos/top-items?location_id={self.branch.id}')
         self.assertEqual((r.status_code, r.json), (200, []))

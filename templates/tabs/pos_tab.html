@@ -6,10 +6,6 @@ window.escHtml = window.escHtml || function (s) {
 };
 </script>
 <div id="pos-tab" class="tab-content">
-  <details class="pos-sync-line" role="note">
-    <summary>Offline sales sync when this phone reconnects</summary>
-    <p>Products and customers must be loaded while online before an outage. Offline sales are saved on this phone and are pending until the server confirms them. Keep this phone safe, reconnect and sign in as the same cashier to sync. The server checks current stock, till, prices, and permissions before posting.</p>
-  </details>
   <section class="card" id="offline-sales-panel" aria-live="polite" style="display:none">
     <strong id="offline-sales-heading">Offline sales</strong>
     <div id="offline-sales-list"></div>
@@ -17,10 +13,8 @@ window.escHtml = window.escHtml || function (s) {
   </section>
   <div id="pos-modal" class="pos-modal" hidden></div>
   <div class="pos-topline">
-    <label class="pos-outlet-select"><span class="sr-only">Outlet</span><select id="pos-location" onchange="changePosLocation()" aria-label="Outlet"></select></label>
     <button type="button" id="pos-pending-tag" class="pos-tag is-warn" hidden onclick="var p=document.getElementById('offline-sales-panel'); if(p) p.scrollIntoView({behavior:'smooth',block:'start'})">0 waiting</button>
     <button type="button" id="pos-held-btn" class="pos-tag" hidden onclick="showHeldSales()">Held 0</button>
-    <button type="button" class="pos-tag" onclick="showTab('sales-tab'); if(typeof loadSalesHistory==='function') loadSalesHistory();">Returns</button>
   </div>
   <nav class="pos-view-tabs" aria-label="POS steps">
     <button type="button" data-pos-stage="products" onclick="setPosStage('products')">1&nbsp; Products</button>
@@ -31,10 +25,10 @@ window.escHtml = window.escHtml || function (s) {
   <div class="pos-workspace">
     <section id="pos-catalog" class="pos-catalog" aria-label="Product catalogue">
       <div class="pos-fav" id="quick-card">
-        <div class="fav-head"><span>Favourites</span><button type="button" class="link-btn" onclick="toggleQuickEditor()">Edit</button></div>
+        <div class="fav-head"><span id="fav-title">Favourites</span><button type="button" class="link-btn" onclick="toggleQuickEditor()">Edit</button></div>
         <div id="quick-items" class="quick-grid"></div>
         <div id="quick-items-editor" hidden>
-          <p>Choose up to 12 items and their pack size for this outlet. Your choices are saved on this device.</p>
+          <p>Favourites fill automatically from this outlet's best sellers in each category. Pin up to 12 items here to keep them first. Pins are saved on this device.</p>
           <div id="quick-items-editor-list"></div>
           <div style="display:flex;gap:8px;margin-top:10px"><button type="button" class="btn-sm btn-primary" onclick="saveQuickItems()">Save Quick items</button><button type="button" class="btn-sm" onclick="toggleQuickEditor(false)">Cancel</button><button type="button" class="btn-sm" onclick="resetQuickItems()">Use best sellers</button></div>
           <div id="quick-items-editor-message" role="status"></div>
@@ -43,7 +37,7 @@ window.escHtml = window.escHtml || function (s) {
       <div class="card pos-catalog-card">
         <div class="pos-section-heading">
           <div><span class="pos-kicker">CATALOGUE</span><h2>Find a product</h2><p>Search by product name or category, then choose its configured pack size.</p></div>
-          <div class="pos-catalog-tools"><div class="pos-view-toggle" role="group" aria-label="Product catalogue layout"><button id="catalog-grid-btn" type="button" aria-pressed="true" onclick="setCatalogView('grid')">Grid</button><button id="catalog-list-btn" type="button" aria-pressed="false" onclick="setCatalogView('list')">List</button></div><a class="pos-utility-btn" href="/api/price-list.pdf" target="_blank" rel="noopener">Price list PDF</a></div>
+          
         </div>
         <div class="pos-search-row">
           <label class="pos-search-field"><span class="sr-only">Search products</span><span aria-hidden="true">⌕</span><input type="search" id="search-input" autocomplete="off" placeholder="Search feed, category, or service…" oninput="searchProductsSoon()" /></label>
@@ -51,6 +45,7 @@ window.escHtml = window.escHtml || function (s) {
             <option value="">All Categories</option>
           </select></label>
         </div>
+        <div class="pos-view-row"><span>View</span><div class="pos-view-toggle" role="group" aria-label="Product catalogue layout"><button id="catalog-grid-btn" type="button" aria-pressed="true" onclick="setCatalogView('grid')">Grid</button><button id="catalog-list-btn" type="button" aria-pressed="false" onclick="setCatalogView('list')">List</button></div></div>
         <div id="pos-category-chips" class="pos-category-chips" aria-label="Product categories"></div>
         <div id="search-results" class="search-results-box" aria-live="polite" aria-busy="false"></div>
       </div>

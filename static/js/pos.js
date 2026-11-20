@@ -2,7 +2,7 @@ let cart = [];
 let heldCart = [];
 let customersCache = [];
 let searchResultsCache = [];
-let catalogViewMode = 'grid';
+let catalogViewMode = (function () { try { return localStorage.getItem('emining_catalog_view') === 'list' ? 'list' : 'grid'; } catch (_) { return 'grid'; } })();
 let activeLocationId = '';
 let currentTill = null;
 let pendingCheckoutAttempt = null;
@@ -126,7 +126,7 @@ function reloadCatalog() {
     try {
       const [res, topRes] = await Promise.all([
         fetch(`/api/products/search?location_id=${loc}`, { credentials: 'same-origin' }),
-        fetch(`/api/pos/top-items?location_id=${loc}`, { credentials: 'same-origin' }).catch(() => null)
+        fetch(`/api/pos/top-items?location_id=${loc}&limit=100`, { credentials: 'same-origin' }).catch(() => null)
       ]);
       const items = await res.json();
       if (!res.ok || !Array.isArray(items)) throw new Error((items && items.message) || 'Could not load items');
@@ -176,6 +176,7 @@ function choosePosCategory(category) {
 }
 function setCatalogView(mode) {
   catalogViewMode = mode === 'list' ? 'list' : 'grid';
+  try { localStorage.setItem('emining_catalog_view', catalogViewMode); } catch (_) {}
   const box = document.getElementById('search-results');
   const gridButton = document.getElementById('catalog-grid-btn');
   const listButton = document.getElementById('catalog-list-btn');
@@ -217,22 +218,39 @@ function searchProducts() {
   }).join('') + (items.length > shown.length ? `<div style="padding:8px;font-size:.85rem;color:#666;">Showing ${shown.length} of ${items.length}. Type more to narrow.</div>` : '');
   div.classList.add('is-product-grid');
   div.classList.toggle('is-product-list', catalogViewMode === 'list');
+  renderQuickItems();
+}
+// Favourites follow sales automatically: best sellers of the last 30 days at this outlet,
+// filtered to the category being viewed. Items pinned in "Edit" always come first.
+const FAV_LIMIT = 8;
+function favouriteLines() {
+  const sel = document.getElementById('category-filter');
+  const cat = (sel && sel.value || '').trim().toLowerCase();
+  const seen = new Set(), out = [];
+  const take = (id, packKg, pinned) => {
+    const i = catalogCache.find(x => x.id === Number(id));
+    if (!i || !i.priced || seen.has(i.id)) return;
+    if (cat && (i.category || '').toLowerCase() !== cat) return;
+    if (!i.is_service && Number(i.available_stock_kg || 0) <= 0) return;
+    if (!pinned && out.length >= FAV_LIMIT) return;
+    const opts = buildPackOptions(i); if (!opts.length) return;
+    const o = opts.find(p => Math.abs(p.pack_kg - Number(packKg)) < 0.0005) || opts[0];
+    seen.add(i.id); out.push({item: i, pack: o});
+  };
+  if (Array.isArray(quickItemPrefs)) quickItemPrefs.forEach(t => take(t.id, t.pack_kg, true));
+  topItemsCache.forEach(t => take(t.ingredient_id, t.pack_kg, false));
+  return out;
 }
 function renderQuickItems() {
   const box = document.getElementById('quick-items'), card = document.getElementById('quick-card');
   if (!box) return;
-  const selected = Array.isArray(quickItemPrefs) ? quickItemPrefs : topItemsCache.map(t => ({id:t.ingredient_id, pack_kg:t.pack_kg}));
-  const btns = [];
-  selected.forEach(t => {
-    const i = catalogCache.find(x => x.id === Number(t.id));
-    if (!i || !i.priced) return;
-    if (!i.is_service && Number(i.available_stock_kg || 0) <= 0) return;
-    const opts = buildPackOptions(i); if (!opts.length) return;
-    const o = opts.find(p => Math.abs(p.pack_kg - Number(t.pack_kg)) < 0.0005) || opts[0];
-    btns.push(`<button class="quick-btn" onclick="addToCart(${i.id}, ${o.pack_kg})">${escHtml(i.name)}<small>${escHtml(o.label)} · KSh ${kes(o.price)}</small></button>`);
-  });
-  if (card) card.style.display = '';
-  box.innerHTML = btns.length ? btns.join('') : '<p>No quick items selected yet. Use Edit Quick items to choose products.</p>';
+  const sel = document.getElementById('category-filter');
+  const catLabel = sel && sel.value && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
+  const title = document.getElementById('fav-title'); if (title) title.textContent = catLabel ? `Favourites · ${catLabel}` : 'Favourites';
+  const lines = favouriteLines();
+  box.innerHTML = lines.map(({item, pack}) => `<button class="quick-btn" onclick="addToCart(${item.id}, ${pack.pack_kg})">${escHtml(item.name)}<small>${escHtml(pack.label)} · KSh ${kes(pack.price)}</small></button>`).join('')
+    || (catLabel ? '' : '<p>Favourites appear here after your first sales.</p>');
+  if (card) card.style.display = lines.length || !catLabel ? '' : 'none';   // a category with no sales yet hides the strip
 }
 
 function toggleQuickEditor(force) {
