@@ -67,7 +67,7 @@
     return `<div id="cs-repay" style="background:#f4f9f5;border:1px solid #b7d9bf;border-radius:8px;padding:10px;margin:8px 0">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <input id="cs-amt" type="number" inputmode="decimal" min="1" step="0.01" placeholder="Amount (KSh)" style="flex:2;min-width:130px;height:44px;font-size:16px;padding:8px">
-        <select id="cs-method" style="flex:1;min-width:100px;height:44px"><option value="MPESA">M-Pesa</option><option value="CASH">Cash</option><option value="BANK">Bank</option></select>
+        <select id="cs-method" style="flex:1;min-width:100px;height:44px"><option value="MPESA">M-Pesa</option><option value="CASH">Cash</option><option value="BANK">Paybill</option></select>
         <button class="btn-sm btn-info" style="height:44px" onclick="document.getElementById('cs-amt').value='${d.balance.toFixed(2)}'">Full ${kes(d.balance)}</button>
         <button id="cs-pay" class="btn-sm btn-success" style="height:44px;flex:1" onclick="csRepay()">Record payment</button></div>
       <small style="color:#555">Cash goes into your open till. Open a till first if you take cash.</small><div id="cs-repay-msg" style="margin-top:6px"></div></div>`;

@@ -117,6 +117,7 @@ async function recordTillMovement() {
 let catalogCache = [], catalogLoadedAt = 0, catalogLoading = null, catalogSeq = 0, topItemsCache = [], quickItemPrefs = null;
 const CATALOG_STALE_MS = 120000;
 const SEARCH_ROW_LIMIT = 30;
+function payLabel(m) { const k = String(m || '').toUpperCase(); return k === 'BANK' ? 'Paybill' : String(m || '').replace('_', ' '); }
 function kes(n) { return Number(n || 0).toLocaleString('en-US', {maximumFractionDigits: 2}); }
 function searchProductsSoon() { searchProducts(); }   // local filtering is instant; no debounce needed
 function reloadCatalog() {
@@ -163,16 +164,21 @@ async function loadCategories() {
     renderPosCategoryChips();
   } catch (e) { /* keep whatever options are already in the page */ }
 }
+const FAV_CHIP = '__favourites__';
+let favMode = false;
 function renderPosCategoryChips() {
   const box = document.getElementById('pos-category-chips'), sel = document.getElementById('category-filter');
   if (!box || !sel) return;
-  const active = sel.value || '';
-  const values = Array.from(sel.options).map(o => ({value:o.value, label:o.textContent}));
+  const active = favMode ? FAV_CHIP : (sel.value || '');
+  const values = [{value:FAV_CHIP, label:'★ Favourites'}].concat(Array.from(sel.options).map(o => ({value:o.value, label:o.textContent})));
   box.innerHTML = values.map(o => `<button type="button" class="pos-category-chip ${o.value === active ? 'is-active' : ''}" aria-pressed="${o.value === active}" data-category="${escHtml(o.value)}" onclick="choosePosCategory(this.dataset.category)">${escHtml(o.label)}</button>`).join('');
+  if (favMode) box.insertAdjacentHTML('beforeend', '<button type="button" class="link-btn fav-edit" onclick="toggleQuickEditor(true)">Edit pins</button>');
 }
 function choosePosCategory(category) {
   const select = document.getElementById('category-filter'); if (!select) return;
-  select.value = category; renderPosCategoryChips(); searchProducts();
+  favMode = category === FAV_CHIP;
+  select.value = favMode ? '' : category;
+  renderPosCategoryChips(); searchProducts();
 }
 function setCatalogView(mode) {
   catalogViewMode = mode === 'list' ? 'list' : 'grid';
@@ -191,13 +197,12 @@ function searchProducts() {
   const words = (document.getElementById('search-input').value || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   const cat = (document.getElementById('category-filter').value || '').trim().toLowerCase();
   renderPosCategoryChips();
-  const items = catalogCache.filter(i => {
-    if (cat && (i.category || '').toLowerCase() !== cat) return false;
-    const hay = ((i.name || '') + ' ' + (i.category || '')).toLowerCase();
-    return words.every(w => hay.includes(w));
-  });
+  const matches = i => words.every(w => ((i.name || '') + ' ' + (i.category || '')).toLowerCase().includes(w));
+  const items = favMode
+    ? favouriteItems().filter(matches)                       // keeps pinned-first, best-seller order
+    : catalogCache.filter(i => (!cat || (i.category || '').toLowerCase() === cat) && matches(i));
   searchResultsCache = items;
-  if (items.length === 0) { div.innerHTML = '<div style="padding:10px;">No items match.</div>'; return; }
+  if (items.length === 0) { div.innerHTML = `<div style="padding:10px;">${favMode && !words.length ? 'No favourites yet. They fill in after your first sales, or pin items with Edit pins.' : 'No items match.'}</div>`; return; }
   const shown = items.slice(0, SEARCH_ROW_LIMIT);
   div.innerHTML = shown.map(i => {
     const stock = Number(i.available_stock_kg || 0);
@@ -220,37 +225,27 @@ function searchProducts() {
   div.classList.toggle('is-product-list', catalogViewMode === 'list');
   renderQuickItems();
 }
-// Favourites follow sales automatically: best sellers of the last 30 days at this outlet,
-// filtered to the category being viewed. Items pinned in "Edit" always come first.
-const FAV_LIMIT = 8;
-function favouriteLines() {
-  const sel = document.getElementById('category-filter');
-  const cat = (sel && sel.value || '').trim().toLowerCase();
+// Favourites is the first category chip. Pinned items (Edit pins) come first, then this outlet's
+// best sellers of the last 30 days across all categories. Out-of-stock items are skipped.
+const FAV_LIMIT = 24;
+function favouriteItems() {
   const seen = new Set(), out = [];
-  const take = (id, packKg, pinned) => {
+  const take = (id, pinned) => {
     const i = catalogCache.find(x => x.id === Number(id));
     if (!i || !i.priced || seen.has(i.id)) return;
-    if (cat && (i.category || '').toLowerCase() !== cat) return;
     if (!i.is_service && Number(i.available_stock_kg || 0) <= 0) return;
     if (!pinned && out.length >= FAV_LIMIT) return;
-    const opts = buildPackOptions(i); if (!opts.length) return;
-    const o = opts.find(p => Math.abs(p.pack_kg - Number(packKg)) < 0.0005) || opts[0];
-    seen.add(i.id); out.push({item: i, pack: o});
+    if (!buildPackOptions(i).length) return;
+    seen.add(i.id); out.push(i);
   };
-  if (Array.isArray(quickItemPrefs)) quickItemPrefs.forEach(t => take(t.id, t.pack_kg, true));
-  topItemsCache.forEach(t => take(t.ingredient_id, t.pack_kg, false));
+  if (Array.isArray(quickItemPrefs)) quickItemPrefs.forEach(t => take(t.id, true));
+  topItemsCache.forEach(t => take(t.ingredient_id, false));
   return out;
 }
+// The old favourites strip is gone; #quick-card now only holds the pin editor and shows while it is open.
 function renderQuickItems() {
-  const box = document.getElementById('quick-items'), card = document.getElementById('quick-card');
-  if (!box) return;
-  const sel = document.getElementById('category-filter');
-  const catLabel = sel && sel.value && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
-  const title = document.getElementById('fav-title'); if (title) title.textContent = catLabel ? `Favourites · ${catLabel}` : 'Favourites';
-  const lines = favouriteLines();
-  box.innerHTML = lines.map(({item, pack}) => `<button class="quick-btn" onclick="addToCart(${item.id}, ${pack.pack_kg})">${escHtml(item.name)}<small>${escHtml(pack.label)} · KSh ${kes(pack.price)}</small></button>`).join('')
-    || (catLabel ? '' : '<p>Favourites appear here after your first sales.</p>');
-  if (card) card.style.display = lines.length || !catLabel ? '' : 'none';   // a category with no sales yet hides the strip
+  const card = document.getElementById('quick-card'), editor = document.getElementById('quick-items-editor');
+  if (card) card.style.display = (editor && !editor.hidden) ? '' : 'none';
 }
 
 function toggleQuickEditor(force) {
@@ -258,7 +253,8 @@ function toggleQuickEditor(force) {
   if (!editor) return;
   const open = force === undefined ? editor.hidden : !!force;
   editor.hidden = !open;
-  if (open) renderQuickItemEditor();
+  renderQuickItems();
+  if (open) { renderQuickItemEditor(); const c = document.getElementById('quick-card'); if (c) c.scrollIntoView({block:'nearest'}); }
 }
 function renderQuickItemEditor() {
   const box = document.getElementById('quick-items-editor-list');
@@ -279,12 +275,12 @@ function saveQuickItems() {
   quickItemPrefs = rows.map(check => ({id:Number(check.value), pack_kg:Number(document.querySelector(`.quick-editor-pack[data-item-id="${check.value}"]`)?.value || 1)}));
   try { localStorage.setItem(`eminingQuickItems:${activeLocationId}`, JSON.stringify(quickItemPrefs)); }
   catch (_) { if (msg) msg.textContent = 'Could not save on this device. Check browser storage settings.'; return; }
-  renderQuickItems(); toggleQuickEditor(false);
+  toggleQuickEditor(false); if (favMode) searchProducts();
 }
 function resetQuickItems() {
   quickItemPrefs = null;
   try { localStorage.removeItem(`eminingQuickItems:${activeLocationId}`); } catch (_) {}
-  renderQuickItems(); renderQuickItemEditor();
+  renderQuickItemEditor(); if (favMode) searchProducts();
 }
 
 function buildPackOptions(item) {
@@ -486,7 +482,7 @@ document.addEventListener('DOMContentLoaded', refreshHeldBadge);
 refreshHeldBadge();
 
 function paymentRowHtml() {
-    return `<div class="split-row" style="margin-bottom: 10px; flex-wrap: wrap;"><select class="p-method" onchange="onPayMethodChange(this)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="number" min="0" step="0.01" class="p-fee" placeholder="Deduction (KSh)" title="M-Pesa / bank charge deducted from this payment" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><button type="button" class="fee-toggle" style="display:none" onclick="this.closest('.split-row').classList.toggle('show-fee')">Add deduction</button></div>`;
+    return `<div class="split-row" style="margin-bottom: 10px; flex-wrap: wrap;"><select class="p-method" onchange="onPayMethodChange(this)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px;"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Paybill</option><option value="CREDIT">Credit</option></select><input type="number" min="0" class="p-amount" placeholder="Enter amount paid..." oninput="calculateChange()" style="flex: 2; height: 50px; font-size: 18px; padding: 10px;" /><input type="number" min="0" step="0.01" class="p-fee" placeholder="Deduction (KSh)" title="M-Pesa / bank charge deducted from this payment" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><input type="text" class="p-ref" placeholder="Ref (Optional)" style="flex: 1; height: 50px; font-size: 16px; padding: 10px; display: none;" /><button type="button" class="fee-toggle" style="display:none" onclick="this.closest('.split-row').classList.toggle('show-fee')">Add deduction</button></div>`;
 }
 function onPayMethodChange(select) {
     const fee = select.closest('.split-row').querySelector('.p-fee');
@@ -497,7 +493,7 @@ function onPayMethodChange(select) {
     updatePaymentNote();
     const ref = select.closest('.split-row').querySelector('.p-ref');
     ref.style.display = show ? '' : 'none';
-    ref.placeholder = show ? 'M-Pesa / bank code' : 'Ref (Optional)';
+    ref.placeholder = show ? 'M-Pesa / Paybill code' : 'Ref (Optional)';
     if (!show) ref.value = '';
 }
 // ---- One-tap payment buttons: fill the payment row so the cashier only presses Complete Sale. ----
@@ -513,6 +509,7 @@ function renderTenderBar() {
   let html = `<button type="button" class="tender-btn${on('CASH', total)}" onclick="quickTender('CASH', ${total})">Exact cash<br/><small>KSh ${kes(total)}</small></button>`;
   notes.slice(0, 3).forEach(n => { html += `<button type="button" class="tender-btn${on('CASH', n)}" onclick="quickTender('CASH', ${n})">Cash ${kes(n)}<br/><small>change ${kes(n - total)}</small></button>`; });
   html += `<button type="button" class="tender-btn mpesa${on('MPESA', total)}" onclick="quickTender('MPESA', ${total})">M-Pesa<br/><small>KSh ${kes(total)}</small></button>`;
+  html += `<button type="button" class="tender-btn paybill${on('BANK', total)}" onclick="quickTender('BANK', ${total})">Paybill<br/><small>KSh ${kes(total)}</small></button>`;
   if (document.getElementById('customer-select').value) html += `<button type="button" class="tender-btn credit${on('CREDIT', total)}" onclick="quickTender('CREDIT', ${total})">On credit<br/><small>KSh ${kes(total)}</small></button>`;
   bar.innerHTML = html;
 }
@@ -607,9 +604,9 @@ async function completeCheckout() {
         totalEntered += amt;
       }
     });
-    if (negativeFee) return alert('M-Pesa/bank deduction cannot be negative.');
+    if (negativeFee) return alert('M-Pesa/Paybill deduction cannot be negative.');
     if (!isValid) return alert('Negative payments are strictly prohibited.');
-    if (feeTooBig) return alert('M-Pesa/bank deduction cannot be more than the amount paid on that line.');
+    if (feeTooBig) return alert('M-Pesa/Paybill deduction cannot be more than the amount paid on that line.');
     if (totalEntered < totalDue - 0.01) return alert(`Payment incomplete! You are short by KSh ${(totalDue - totalEntered).toFixed(2)}.`);
     const cartPayload = cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg, expected_unit_price:Number(c.unit_price.toFixed(2))}));
     const cartFingerprint = JSON.stringify(cart.map(c => ({ingredient_id:c.id, unit_type:c.unit_type, qty:c.qty, bag_size_kg:c.bag_size_kg})));
@@ -770,7 +767,7 @@ function renderReceipt(data, payload) {
   const paymentDiv = document.getElementById('r-payments');
   paymentDiv.innerHTML = '';
   (data.payments || []).forEach(payment => {
-    const method = escHtml(String(payment.method || '').replace('_', ' '));
+    const method = escHtml(payLabel(payment.method));
     const reference = payment.reference ? ` · Ref ${escHtml(payment.reference)}` : '';
     const fee = Number(payment.fee || 0);
     const feeText = fee > 0 ? ` (fee KSh ${fee.toFixed(2)})` : '';
@@ -1046,7 +1043,7 @@ async function loadSalesHistory(append) {
   salesOffset += history.length;
   if (history.length === 0 && !append) { tbody.innerHTML = '<tr><td colspan="9">No sales match this filter.</td></tr>'; return; }
   const rowsHtml = history.map(s => {
-    const refundDetails = (s.refunds || []).map(r => `<small>${escHtml(r.reference)} · ${escHtml(r.payment_method)} KSh ${Number(r.amount).toFixed(2)} · ${escHtml(r.reason)} · ${escHtml(r.created_by)}</small>`).join('<br>');
+    const refundDetails = (s.refunds || []).map(r => `<small>${escHtml(r.reference)} · ${escHtml(payLabel(r.payment_method))} KSh ${Number(r.amount).toFixed(2)} · ${escHtml(r.reason)} · ${escHtml(r.created_by)}</small>`).join('<br>');
     return `<tr><td><small>${escHtml(s.created_at)}</small></td><td><b>${escHtml(s.sale_id)}</b></td><td>${escHtml(s.customer_name)}</td><td><b>KSh ${Number(s.total_amount).toFixed(2)}</b></td><td>KSh ${Number(s.paid_amount).toFixed(2)}</td><td>${s.credit_amount > 0 ? '<span style="color:#dc3545; font-weight:bold;">KSh '+Number(s.credit_amount).toFixed(2)+'</span>' : 'KSh 0.00'}</td><td><small>${(s.payments || []).map(p => `${escHtml(p.method)}: KSh${Number(p.amount).toFixed(2)}`).join(', ') || 'CASH'}</small></td><td>KSh ${Number(s.refunded_amount || 0).toFixed(2)}${refundDetails ? '<br>' + refundDetails : ''}</td><td style="white-space:nowrap"><button class="btn-sm btn-info" onclick="showSaleReceipt(${s.order_id})">Receipt</button> <button class="btn-sm btn-warning" onclick="refundSale(${s.order_id}, ${Number(s.refundable_amount || 0)})" ${Number(s.refundable_amount || 0) <= 0 ? 'disabled' : ''}>Refund</button></td></tr>`;
   });
   tbody.insertAdjacentHTML('beforeend', rowsHtml.join(''));
@@ -1054,7 +1051,7 @@ async function loadSalesHistory(append) {
 }
 function saleReceiptHtml(s) {
   const lines = (s.items || []).map(i => `<div class="r-row"><span>${escHtml(i.qty_entered)} ${escHtml(i.unit || '')} x ${escHtml(i.name)}</span><span>KSh ${Number(i.subtotal || 0).toFixed(2)}</span></div>`).join('');
-  const pays = (s.payments || []).map(p => `<div class="r-row"><span>${escHtml(p.method)}</span><span>KSh ${Number(p.amount).toFixed(2)}</span></div>`).join('');
+  const pays = (s.payments || []).map(p => `<div class="r-row"><span>${escHtml(payLabel(p.method))}</span><span>KSh ${Number(p.amount).toFixed(2)}</span></div>`).join('');
   return `<h3>EMINING FEEDS</h3><p>Quality Feeds For You</p><hr>
     <div>Date: ${escHtml(s.created_at)}</div><div>Receipt: ${escHtml(s.sale_id)}</div><div>Customer: ${escHtml(s.customer_name)}</div><hr>
     ${lines}<hr>
@@ -1092,9 +1089,9 @@ async function refundSale(orderId, refundable) {
   if (refundable <= 0) return alert('No paid amount remains available to refund.');
   const amount = prompt(`Maximum refundable: KSh ${Number(refundable).toFixed(2)}. Enter refund amount:`);
   if (amount === null) return;
-  const method = (prompt('Refund through CASH, MPESA, or BANK?') || '').trim().toUpperCase();
+  const method = (prompt('Refund through CASH, MPESA, or PAYBILL?') || '').trim().toUpperCase().replace('PAYBILL', 'BANK');
   const reason = (prompt('Refund reason:') || '').trim();
-  if (!['CASH','MPESA','BANK'].includes(method)) return alert('Use CASH, MPESA, or BANK.');
+  if (!['CASH','MPESA','BANK'].includes(method)) return alert('Use CASH, MPESA, or PAYBILL.');
   const sale = salesHistoryByOrder[orderId];
   const returned_items = [];
   for (const item of (sale?.items || [])) {

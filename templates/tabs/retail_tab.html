@@ -2,13 +2,15 @@
   <style>
     .st-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin:8px 0 12px}
     .st-tile{border:1px solid #dee2e6;border-radius:10px;padding:8px 10px;background:#fff;text-align:left;font:inherit;cursor:pointer}
-    .st-tile b{display:block;font-size:1.25rem;line-height:1.2}.st-tile span{font-size:.78rem;color:#555}
-    .st-tile.is-bad b{color:#b00020}.st-tile.is-warn b{color:#b26a00}
+    /* tiles and chips are <button>s: set colours explicitly or they inherit the button's white text on a white card */
+    #stock-tab .st-tile{color:#14231b}
+    .st-tile b{display:block;font-size:1.25rem;line-height:1.2;color:#14231b}.st-tile span{font-size:.78rem;color:#555}
+    #stock-tab .st-tile.is-bad b{color:#b00020}#stock-tab .st-tile.is-warn b{color:#b26a00}
     .st-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
     .st-bar input[type=search],.st-bar select{padding:10px;min-width:0}
     .st-bar input[type=search]{flex:1 1 180px;max-width:320px}
-    .st-chip{border:1px solid #ced4da;background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer}
-    .st-chip.on{background:#174b32;border-color:#174b32;color:#fff}
+    .st-chip{color:#1f2d26;border:1px solid #ced4da;background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer}
+    #stock-tab .st-chip.on{background:#174b32;border-color:#174b32;color:#fff}
     .st-pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:.75rem;font-weight:700;white-space:nowrap}
     .st-pill.out{background:#fde2e4;color:#b00020}.st-pill.low{background:#fff0d1;color:#8a5200}
     .st-pill.ok{background:#dff3e6;color:#17633a}.st-pill.idle{background:#eceff1;color:#546e7a}

@@ -41,7 +41,7 @@ window.escHtml = window.escHtml || function (s) {
         </div>
         <div class="pos-search-row">
           <label class="pos-search-field"><span class="sr-only">Search products</span><span aria-hidden="true">⌕</span><input type="search" id="search-input" autocomplete="off" placeholder="Search feed, category, or service…" oninput="searchProductsSoon()" /></label>
-          <label class="pos-category-field"><span class="sr-only">Filter by category</span><select id="category-filter" onchange="searchProducts()">
+          <label class="pos-category-field"><span class="sr-only">Filter by category</span><select id="category-filter" onchange="favMode=false;searchProducts()">
             <option value="">All Categories</option>
           </select></label>
         </div>
@@ -82,7 +82,7 @@ window.escHtml = window.escHtml || function (s) {
           <hr style="border-top: 1px solid #b6d4fe; margin: 12px 0;" />
           <div style="display:flex; gap:10px; align-items:center;">
              <input type="number" id="repay-amount" placeholder="Amount to pay" style="flex:2; height: 45px; font-size: 16px; padding: 10px;" min="1" />
-             <select id="repay-method" style="flex:1"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Bank</option></select>
+             <select id="repay-method" style="flex:1"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="BANK">Paybill</option></select>
              <button class="btn-sm btn-success" style="flex:1; height: 45px; font-size: 16px;" onclick="processDebtRepayment()">Settle Debt</button>
           </div>
           <details style="margin-top:12px">
