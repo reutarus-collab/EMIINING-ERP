@@ -106,3 +106,21 @@
 /* Paybill tender button */
 .tender-btn.paybill{border-color:#c9c3ee;color:#4b3fa3}
 .tender-btn.paybill.active{background:var(--pos-blue);border-color:var(--pos-blue);color:#fff}
+
+/* Sell cards, Grid view on phones: one full-width card per product.
+   Row 1: name (left) + stock badge (right). Row 2: pack chips in a wrapping row.
+   A phone card is only ~150px wide in two columns, so chips could never sit side by side. List view is untouched. */
+@media (max-width:700px){
+  .search-results-box.is-product-grid:not(.is-product-list){grid-template-columns:minmax(0,1fr)!important;gap:8px!important}
+  .search-results-box.is-product-grid:not(.is-product-list) .pos-product-card{
+    display:grid!important;grid-template-columns:minmax(0,1fr) auto;column-gap:10px;row-gap:6px;align-items:center;
+    min-height:0!important;padding:9px 10px!important}
+  .search-results-box.is-product-grid:not(.is-product-list) .pos-product-card h3{grid-column:1;grid-row:1;font-size:1rem;line-height:1.25}
+  .search-results-box.is-product-grid:not(.is-product-list) .product-card-meta{grid-column:2;grid-row:1;flex-direction:row!important;align-items:center!important;margin:0}
+  .search-results-box.is-product-grid:not(.is-product-list) .product-stock{white-space:nowrap;min-height:22px;padding:2px 8px}
+  .search-results-box.is-product-grid:not(.is-product-list) .product-pack-options{
+    grid-column:1 / -1;grid-row:2;display:flex!important;flex-wrap:wrap;gap:6px!important;margin-top:0!important}
+  .search-results-box.is-product-grid:not(.is-product-list) .pack-btn{
+    flex:1 1 0;min-width:84px;min-height:44px;padding:4px 8px!important;gap:0}
+  .search-results-box.is-product-grid:not(.is-product-list) .product-pack-options>.btn-sm{flex:1 1 100%}
+}
