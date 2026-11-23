@@ -3,6 +3,28 @@
 .po-group-row td { background: #eef2f7; font-weight: 700; letter-spacing: .02em; }
 .po-hint { font-size: .85rem; color: #555; margin: 4px 0 10px; }
 .po-warn { color: #b00; font-size: .85rem; }
+
+/* Item Master rows: one compact line per item on a phone; tap a row for the details */
+.im-sub { display: none; }
+.im-off { display: inline-block; background: #fde2e4; color: #b00020; border-radius: 999px; padding: 1px 8px; font-size: .72rem; font-weight: 700; margin-left: 6px; vertical-align: middle; }
+@media (max-width: 700px) {
+  #item-master-body tr.im-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 10px 12px; cursor: pointer; }
+  #item-master-body tr.im-row.im-open { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); background: #fbfdfb; }
+  #item-master-body tr.im-row > td { display: none; }
+  #item-master-body tr.im-row > td.im-name { display: block; grid-column: 1; font-weight: 400; }
+  #item-master-body tr.im-row > td.im-name b { font-size: 1.02rem; }
+  #item-master-body tr.im-row .im-sub { display: block; font-size: .78rem; color: #6c757d; margin-top: 1px; }
+  #item-master-body tr.im-row > td.im-stock { display: block; grid-column: 2; grid-row: 1; align-self: center; justify-self: end; white-space: nowrap; font-weight: 700; }
+  #item-master-body tr.im-row > td.im-stock::before { content: none; }
+  #item-master-body tr.im-row > td.im-stock::after { content: " \25BE"; color: #6c757d; font-size: .8rem; font-weight: 400; }
+  #item-master-body tr.im-open > td.im-stock::after { content: " \25B4"; }
+  #item-master-body tr.im-open > td.im-cat, #item-master-body tr.im-open > td.im-nut, #item-master-body tr.im-open > td.im-act { grid-column: 1 / -1; }
+  #item-master-body tr.im-open > td.im-cat, #item-master-body tr.im-open > td.im-unit, #item-master-body tr.im-open > td.im-cost,
+  #item-master-body tr.im-open > td.im-nut, #item-master-body tr.im-open > td.im-status { display: block; }
+  #item-master-body tr.im-open > td.im-act { display: flex; flex-wrap: wrap; gap: 8px; }
+  #item-master-body tr.im-open > td.im-act > button { flex: 1 1 30%; }
+  #item-master-body td.im-nut:has(> .im-na) { display: none !important; }
+}
 @media (max-width: 820px) {
   #create-po-modal, #create-item-modal, #receive-grn-modal, #view-po-modal, #create-supplier-modal, #nutrient-modal, #send-po-modal, #unit-modal {
     position: fixed !important; top: 6px !important; left: 6px !important; right: 6px !important;
@@ -505,6 +527,14 @@
         b.setAttribute('aria-expanded', String(po_itemMasterOpen));
     }
 
+    let po_imRowOpen = new Set();   // item rows opened for details on a phone
+    document.addEventListener('click', e => {
+        const tr = e.target.closest && e.target.closest('#item-master-body tr.im-row');
+        if (!tr || e.target.closest('button, select, input, a, label')) return;
+        const id = Number(tr.dataset.id);
+        if (po_imRowOpen.has(id)) po_imRowOpen.delete(id); else po_imRowOpen.add(id);
+        tr.classList.toggle('im-open');
+    });
     let po_imOpen = new Set();      // groups the person has opened; everything starts collapsed
     function po_imToggle(g) { if (po_imOpen.has(g)) po_imOpen.delete(g); else po_imOpen.add(g); po_renderItemMaster(); }
     function po_imExpandAll(open) { po_imOpen = open ? new Set(po_inventoryList.map(i => i.group)) : new Set(); po_renderItemMaster(); }
@@ -538,16 +568,17 @@
             const unitLabel = i.conversion_type === 'VARIABLE' ? `${escHtml(i.purchase_uom)} (weighed)` : (po_isCounted(i.purchase_uom) ? `${escHtml(i.purchase_uom)} (${po_num(i.conversion_factor)} kg)` : escHtml(i.purchase_uom));
             const unitCell = (i.unit_problem ? `<span class="po-warn" title="${escHtml(i.unit_problem)}">&#9888; </span>` : '') + unitLabel +
                 (canEdit ? ` <button type="button" class="btn-sm" onclick="po_openUnit(${i.id})">Unit</button>` : '');
-            html += `<tr>
-                <td><b>${escHtml(i.name)}</b></td>
-                <td>${catCell}</td>
-                <td>${unitCell}</td>
-                <td>${i.bag_size_kg || '-'} kg</td>
-                <td style="font-weight:bold; color:${stockColor};">${Number(i.stock_quantity_kg).toFixed(1)} kg</td>
-                <td>KSh ${Number(i.cost_per_kg).toFixed(2)}</td>
-                <td>${isRaw ? `${Number(i.crude_protein_pct).toFixed(1)} · ${Number(i.metabolizable_energy_mcal).toFixed(2)} · ${Number(i.crude_fiber_pct).toFixed(1)} · ${Number(i.max_inclusion_pct).toFixed(0)} <button type="button" class="btn btn-secondary" onclick="po_openNutrients(${i.id})">Edit</button>` : '-'}</td>
-                <td>${i.is_active ? 'Active' : '<b style="color:#b00">Hidden from Stock &amp; POS</b>'}</td>
-                <td>${window.currentRole === 'admin' ? `<button type="button" class="btn btn-secondary" onclick="po_renameItem(${i.id})">Rename</button> <button type="button" class="btn btn-secondary" onclick="po_setItemActive(${i.id}, ${!i.is_active})">${i.is_active ? 'Disable' : 'Enable'}</button> ` : ''}<button type="button" class="btn btn-secondary" style="color:#b00;" onclick="po_deleteItem(${i.id})">Delete</button></td>
+            const sub = [i.category, i.bag_size_kg ? i.bag_size_kg + ' kg bag' : ''].filter(Boolean).join(' \u00b7 ');
+            html += `<tr class="im-row${po_imRowOpen.has(i.id) ? ' im-open' : ''}" data-id="${i.id}">
+                <td class="im-name"><b>${escHtml(i.name)}</b>${i.is_active ? '' : ' <span class="im-off">Hidden</span>'}<span class="im-sub">${escHtml(sub)}</span></td>
+                <td class="im-cat">${catCell}</td>
+                <td class="im-unit">${unitCell}</td>
+                <td class="im-bag">${i.bag_size_kg || '-'} kg</td>
+                <td class="im-stock" style="font-weight:bold; color:${stockColor};">${Number(i.stock_quantity_kg).toFixed(1)} kg</td>
+                <td class="im-cost">KSh ${Number(i.cost_per_kg).toFixed(2)}</td>
+                <td class="im-nut">${isRaw ? `${Number(i.crude_protein_pct).toFixed(1)} · ${Number(i.metabolizable_energy_mcal).toFixed(2)} · ${Number(i.crude_fiber_pct).toFixed(1)} · ${Number(i.max_inclusion_pct).toFixed(0)} <button type="button" class="btn btn-secondary" onclick="po_openNutrients(${i.id})">Edit</button>` : '<span class="im-na">-</span>'}</td>
+                <td class="im-status">${i.is_active ? 'Active' : '<b style="color:#b00">Hidden from Stock &amp; POS</b>'}</td>
+                <td class="im-act">${window.currentRole === 'admin' ? `<button type="button" class="btn btn-secondary" onclick="po_renameItem(${i.id})">Rename</button> <button type="button" class="btn btn-secondary" onclick="po_setItemActive(${i.id}, ${!i.is_active})">${i.is_active ? 'Disable' : 'Enable'}</button> ` : ''}<button type="button" class="btn btn-secondary" style="color:#b00;" onclick="po_deleteItem(${i.id})">Delete</button></td>
             </tr>`;
         });
         tbody.innerHTML = html;

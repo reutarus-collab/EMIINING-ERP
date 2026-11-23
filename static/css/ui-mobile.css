@@ -725,3 +725,29 @@ header{background:#0f4d34!important}
 .header-sell{min-height:40px;padding:8px 16px;border:1px solid rgba(255,255,255,.45);border-radius:10px;background:#fff;color:var(--pos-navy);font-weight:800}
 .header-sell:hover{background:#e8f5ee}
 @media (max-width:700px){.header-sell{display:none}}
+
+/* ===== Dashboard v3: attention first, one sales card, compact today strip, owed card, 7-day bars ===== */
+.dash-attn{margin:0 0 14px}
+.dash-kpis{display:flex;flex-direction:column;gap:10px;margin:0 0 14px}
+.dash-kpi-main strong{font-size:clamp(1.6rem,6vw,2rem)}
+.dash-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:1px solid var(--pos-line);border-radius:13px;background:#fff;overflow:hidden}
+.dash-strip .dash-kpi{border:0;border-radius:0;padding:12px;min-height:44px}
+.dash-strip .dash-kpi+.dash-kpi{border-left:1px solid var(--pos-line)}
+.dash-strip .dash-kpi strong{font-size:1.05rem}
+.is-bad>.dash-dot{background:#a3262e}
+.dash-attn-item.is-bad{border-color:#d9959a}
+.dash-card{margin:0 0 14px;padding:14px;border:1px solid var(--pos-line);border-radius:13px;background:#fff}
+.dash-card[hidden]{display:none}
+.dash-card-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.dash-card-head h2{margin:0;font-size:1.05rem;color:var(--pos-navy)}
+.dash-card-head strong{font-size:1.35rem;color:#9a3412}
+.dash-owed-sub{display:block;margin:2px 0 6px;color:var(--pos-muted);font-size:.8125rem}
+.dash-owed-row{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--pos-line);font-size:.9rem}
+.dash-link{display:block;margin:6px 0 0 auto;padding:10px 0 0;border:0;background:none;color:#14532d;font:inherit;font-size:.8125rem;font-weight:700;cursor:pointer}
+.dash-chart{display:flex;gap:6px;margin-top:10px}
+.dash-yaxis{display:flex;flex-direction:column;justify-content:space-between;width:30px;height:130px;color:var(--pos-muted);font-size:.6875rem;text-align:right}
+.dash-bars{flex:1;display:flex;align-items:flex-end;justify-content:space-between;height:130px;padding:0 4px;border-left:1px solid #9ca3af;border-bottom:1px solid #9ca3af;box-sizing:border-box}
+.dash-bar{width:11%;background:#86b99b}
+.dash-bar.is-today{background:#14532d}
+.dash-xaxis{display:flex;justify-content:space-between;margin:4px 4px 0 40px;color:var(--pos-muted);font-size:.6875rem}
+.dash-xaxis .is-today{color:#14532d;font-weight:700}

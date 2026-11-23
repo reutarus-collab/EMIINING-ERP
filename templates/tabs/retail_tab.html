@@ -11,6 +11,19 @@
     .st-bar input[type=search]{flex:1 1 180px;max-width:320px}
     .st-chip{color:#1f2d26;border:1px solid #ced4da;background:#fff;border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer}
     #stock-tab .st-chip.on{background:#174b32;border-color:#174b32;color:#fff}
+    /* Stock rows on a phone: item, status, kg, bags, cover on the face; tap for sold / price / cost / value / Adjust */
+    @media (max-width:700px){
+      #stock-tab #stock-body tr.st-row{grid-template-columns:.8fr 1.5fr .8fr;gap:6px 10px;padding:10px 12px;cursor:pointer}
+      #stock-tab #stock-body tr.st-row>td:nth-child(1){grid-column:1/3}
+      #stock-tab #stock-body tr.st-row>td:nth-child(2){grid-column:3;justify-self:end;align-self:start;white-space:nowrap}
+      #stock-tab #stock-body tr.st-row>td:nth-child(2)::before{content:none}
+      #stock-tab #stock-body tr.st-row>td:nth-child(2)::after{content:" \25BE";color:#6c757d;font-size:.8rem}
+      #stock-tab #stock-body tr.st-open>td:nth-child(2)::after{content:" \25B4"}
+      #stock-tab #stock-body tr.st-row>td:nth-child(n+6){display:none}
+      #stock-tab #stock-body tr.st-open>td:nth-child(n+6){display:block}
+      #stock-tab #stock-body tr.st-open>td:nth-child(7){grid-column:auto}
+      #stock-tab #stock-body tr.st-open>td.m-nolabel{display:flex;grid-column:1/-1}
+    }
     .st-pill{display:inline-block;border-radius:999px;padding:2px 9px;font-size:.75rem;font-weight:700;white-space:nowrap}
     .st-pill.out{background:#fde2e4;color:#b00020}.st-pill.low{background:#fff0d1;color:#8a5200}
     .st-pill.ok{background:#dff3e6;color:#17633a}.st-pill.idle{background:#eceff1;color:#546e7a}
@@ -448,7 +461,7 @@ function renderStock() {
   rows.forEach(({i, x}) => {
     const cost = Number(i.unit_cost_per_kg || 0);
     const costCell = cost > 0 ? stockNum(cost) : (x.stock > 0 ? '<span class="st-bad">NO COST</span>' : '&mdash;');
-    html += `<tr><td>${retailEsc(i.name)}<span class="st-sub">${retailEsc(i.category)}</span></td>`
+    html += `<tr class="st-row"><td>${retailEsc(i.name)}<span class="st-sub">${retailEsc(i.category)}</span></td>`
       + `<td><span class="st-pill ${x.status}">${x.label}</span></td>`
       + `<td class="st-num">${stockNum(x.stock)}</td><td>${stockBags(x.stock, i.bag_size_kg)}</td>`
       + `<td class="st-num ${x.status === 'low' || x.status === 'out' ? 'st-bad' : ''}">${x.cover == null ? '&mdash;' : (x.cover > 365 ? '365+' : stockNum(x.cover, 1))}</td>`
@@ -461,6 +474,11 @@ function renderStock() {
   document.getElementById('stock-body').innerHTML = html || `<tr><td colspan="${cols}">No items match.</td></tr>`;
   document.getElementById('stock-count').textContent = `Showing ${rows.length} of ${all.length} items`;
 }
+document.getElementById('stock-body').addEventListener('click', e => {
+  if (e.target.closest('button, a, input, select')) return;
+  const tr = e.target.closest('tr.st-row');
+  if (tr) tr.classList.toggle('st-open');
+});
 async function loadDailyReport() {
   const box = document.getElementById('rep-body');
   const r = await fetch('/api/reports/daily?location_id=' + encodeURIComponent(activeLocationId), {credentials: 'same-origin'});

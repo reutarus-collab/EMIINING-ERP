@@ -168,17 +168,23 @@ def dashboard_trend():
     offset = timedelta(hours=3)
     today = (datetime.utcnow() + offset).date()
     first = today - timedelta(days=6)
-    start = datetime.combine(first, datetime.min.time()) - offset
+    lw_day = today - timedelta(days=7)
+    now_local = datetime.utcnow() + offset
+    start = datetime.combine(lw_day, datetime.min.time()) - offset
     rows = (db.session.query(OrderHeader.created_at, OrderHeader.total_amount, OrderHeader.credit_amount)
             .filter(OrderHeader.location_id == location.id, OrderHeader.status == 'COMPLETED',
                     OrderHeader.created_at >= start).all())
     days = {first + timedelta(days=i): [0.0, 0.0] for i in range(7)}
+    last_week_so_far = 0.0   # same weekday last week, only up to the current time of day
     for created, total, credit in rows:
-        bucket = days.get((created + offset).date())
+        local = created + offset
+        bucket = days.get(local.date())
         if bucket is not None:
             bucket[0] += total or 0.0
             bucket[1] += credit or 0.0
-    return jsonify(location_id=location.id, days=[
+        if local.date() == lw_day and local.time() <= now_local.time():
+            last_week_so_far += total or 0.0
+    return jsonify(location_id=location.id, last_week_same_time=round(last_week_so_far, 2), days=[
         {'date': day.isoformat(), 'sales': round(v[0], 2), 'credit': round(v[1], 2)}
         for day, v in sorted(days.items())])
 

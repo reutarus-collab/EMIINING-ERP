@@ -1,33 +1,51 @@
 <div id="dashboard-tab" class="tab-content active">
   <label class="dash-outlet"><span>Outlet</span><select id="pos-location" onchange="changePosLocation()" aria-label="Outlet"></select></label>
+
+  <section class="dash-attn" aria-label="Needs attention">
+    <h2>Needs attention</h2>
+    <div id="dash-attn-list" class="dash-attn-list" aria-live="polite"><p class="dash-attn-empty">Checking…</p></div>
+  </section>
+
   <section class="dash-kpis" aria-label="Today's summary" aria-live="polite">
     <button type="button" class="dash-kpi dash-kpi-main" onclick="openDashboardMetric('sales')">
       <span class="dash-kpi-label">Sales today</span>
       <strong id="dash-sales-value">Loading…</strong>
       <small id="dash-sales-count">Checking today’s activity</small>
       <span id="dash-sales-delta" class="dash-delta" hidden></span>
-      <svg id="dash-spark" class="dash-spark" viewBox="0 0 120 32" preserveAspectRatio="none" role="img" aria-label="Sales, last 7 days" hidden></svg>
     </button>
-    <button type="button" id="dash-credit-card" class="dash-kpi" onclick="openDashboardMetric('credit')">
-      <span class="dash-kpi-label">Credit issued</span>
-      <strong id="dash-credit-value">—</strong>
-      <small id="dash-credit-note">Today</small>
-    </button>
-    <button type="button" class="dash-kpi" onclick="openDashboardMetric('expenses')">
-      <span class="dash-kpi-label">Expenses</span>
-      <strong id="dash-expenses-value">—</strong>
-      <small>Today</small>
-    </button>
-    <button type="button" class="dash-kpi" onclick="openDashboardMetric('discounts')">
-      <span class="dash-kpi-label">Discounts</span>
-      <strong id="dash-discounts-value">—</strong>
-      <small>Today</small>
-    </button>
+    <div class="dash-strip">
+      <button type="button" id="dash-credit-card" class="dash-kpi" onclick="openDashboardMetric('credit')">
+        <span class="dash-kpi-label">Credit issued</span>
+        <strong id="dash-credit-value">—</strong>
+        <small id="dash-credit-note">Today</small>
+      </button>
+      <button type="button" class="dash-kpi" onclick="openDashboardMetric('expenses')">
+        <span class="dash-kpi-label">Expenses</span>
+        <strong id="dash-expenses-value">—</strong>
+        <small>Today</small>
+      </button>
+      <button type="button" class="dash-kpi" onclick="openDashboardMetric('discounts')">
+        <span class="dash-kpi-label">Discounts</span>
+        <strong id="dash-discounts-value">—</strong>
+        <small>Today</small>
+      </button>
+    </div>
   </section>
 
-  <section class="dash-attn" aria-label="Needs attention">
-    <h2>Needs attention</h2>
-    <div id="dash-attn-list" class="dash-attn-list" aria-live="polite"><p class="dash-attn-empty">Checking…</p></div>
+  <section id="dash-owed" class="dash-card" aria-label="Owed to you" hidden>
+    <div class="dash-card-head"><h2>Owed to you</h2><strong id="dash-owed-total">KSh 0</strong></div>
+    <small id="dash-owed-count" class="dash-owed-sub"></small>
+    <div id="dash-owed-list" class="dash-owed-list"></div>
+    <button type="button" class="dash-link" onclick="showTab('customers-tab'); if (typeof loadCustAdmin === 'function') loadCustAdmin();">All debtors &rsaquo;</button>
+  </section>
+
+  <section id="dash-chart-card" class="dash-card dash-chart-card" aria-label="Sales, last 7 days" hidden>
+    <div class="dash-card-head"><h2>Last 7 days</h2></div>
+    <div class="dash-chart">
+      <div id="dash-yaxis" class="dash-yaxis" aria-hidden="true"></div>
+      <div id="dash-bars" class="dash-bars" role="img" aria-label="Sales, last 7 days"></div>
+    </div>
+    <div id="dash-xaxis" class="dash-xaxis" aria-hidden="true"></div>
   </section>
   <p id="dash-summary-message" class="dashboard-summary-message" role="status"></p>
 </div>
@@ -42,25 +60,29 @@ async function dashJson(url){
   return d;
 }
 function dashMoney(n){ return 'KSh ' + Number(n||0).toLocaleString('en-KE',{minimumFractionDigits:0,maximumFractionDigits:0}); }
-function dashSparkline(days){
-  const svg = document.getElementById('dash-spark');
-  if (!svg) return;
+function dashBars(days){
+  const card = document.getElementById('dash-chart-card');
   const values = (days || []).map(d => Number(d.sales) || 0);
   const max = Math.max(...values, 0);
-  if (values.length < 2 || max <= 0) { svg.hidden = true; return; }
-  const step = 120 / (values.length - 1);
-  const pts = values.map((v, i) => [i * step, 30 - (v / max) * 26]);
-  const line = pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
-  const ns = 'http://www.w3.org/2000/svg';
-  svg.replaceChildren();
-  const area = document.createElementNS(ns, 'polygon');
-  area.setAttribute('class', 'area');
-  area.setAttribute('points', '0,32 ' + line + ' 120,32');
-  const poly = document.createElementNS(ns, 'polyline');
-  poly.setAttribute('points', line);
-  svg.append(area, poly);
-  svg.setAttribute('aria-label', 'Sales, last 7 days: ' + values.map(v => dashMoney(v)).join(', '));
-  svg.hidden = false;
+  if (values.length < 2 || max <= 0) { card.hidden = true; return; }
+  const step = max <= 10000 ? 2500 : max <= 40000 ? 10000 : 25000;
+  const top = Math.ceil(max / step) * step;
+  const bars = document.getElementById('dash-bars'), x = document.getElementById('dash-xaxis'), y = document.getElementById('dash-yaxis');
+  bars.replaceChildren(); x.replaceChildren(); y.replaceChildren();
+  [top, top / 2, 0].forEach(v => { const t = document.createElement('span'); t.textContent = v >= 1000 ? (v / 1000) + 'K' : v; y.append(t); });
+  values.forEach((v, i) => {
+    const bar = document.createElement('span');
+    bar.className = 'dash-bar' + (i === values.length - 1 ? ' is-today' : '');
+    bar.style.height = Math.max(2, v / top * 100) + '%';
+    bar.title = dashMoney(v);
+    bars.append(bar);
+    const d = new Date(days[i].date + 'T00:00:00');
+    const lab = document.createElement('span'); lab.textContent = d.toLocaleDateString('en-KE', {weekday: 'narrow'});
+    if (i === values.length - 1) lab.className = 'is-today';
+    x.append(lab);
+  });
+  bars.setAttribute('aria-label', 'Sales, last 7 days: ' + values.map(v => dashMoney(v)).join(', '));
+  card.hidden = false;
 }
 function dashAttention(list, tone, title, detail, action){
   const item = document.createElement('button');
@@ -119,12 +141,12 @@ async function loadDashboard(){
       msg.textContent = (daily.reason && daily.reason.message) || 'Could not load today’s summary.';
     }
     const delta = document.getElementById('dash-sales-delta');
-    if (daily.status === 'fulfilled' && summary.status === 'fulfilled' && summary.value.periods && summary.value.periods.yesterday) {
-      const y = Number(summary.value.periods.yesterday.gross_sales) || 0, t = Number(daily.value.total_sales) || 0;
-      delta.textContent = y > 0 ? Math.round(t / y * 100) + '% of yesterday (' + dashMoney(y) + ')' : 'No sales yesterday';
+    if (trend.status === 'fulfilled' && trend.value.last_week_same_time !== undefined) {
+      const wd = new Date().toLocaleDateString('en-KE', {weekday: 'long'});
+      delta.textContent = dashMoney(trend.value.last_week_same_time) + ' last ' + wd + ' by this time';
       delta.hidden = false;
     } else { delta.hidden = true; }
-    if (trend.status === 'fulfilled') dashSparkline(trend.value.days); else dashSparkline([]);
+    if (trend.status === 'fulfilled') dashBars(trend.value.days); else dashBars([]);
   } else {
     msg.textContent = '';
   }
@@ -146,18 +168,27 @@ async function loadDashboard(){
       .sort((a, b) => a.days - b.days);
     const goStock = () => { showTab('stock-tab'); if (typeof loadStock === 'function') loadStock(); };
     if (low.length) {
-      const detail = low.slice(0, 3).map(i => i.name + ' · ' + (i.days <= 0 ? 'out' : Math.max(1, Math.floor(i.days)) + 'd left')).join(', ') + (low.length > 3 ? ' +' + (low.length - 3) + ' more' : '');
-      dashAttention(list, 'warn', low.length + ' item' + (low.length === 1 ? '' : 's') + ' low on stock', detail, goStock);
+      low.slice(0, 5).forEach(i => dashAttention(list, i.days <= 0 ? 'bad' : 'warn', i.name, i.days <= 0 ? 'Out of stock' : Math.max(1, Math.floor(i.days)) + ' day' + (Math.floor(i.days) <= 1 ? '' : 's') + ' left', goStock));
+      if (low.length > 5) dashAttention(list, 'warn', '+' + (low.length - 5) + ' more low on stock', '', goStock);
     } else {
       dashAttention(list, 'ok', 'Stock levels look fine', 'Every selling item covers ' + DASH_COVER_DAYS + '+ days', goStock);
     }
   }
+  const owedCard = document.getElementById('dash-owed');
+  owedCard.hidden = true;
   if (customers.status === 'fulfilled' && Array.isArray(customers.value)) {
     const owing = customers.value.filter(c => Number(c.balance) > 0).sort((a, b) => b.balance - a.balance);
     if (owing.length) {
-      const total = owing.reduce((sum, c) => sum + Number(c.balance), 0);
-      dashAttention(list, 'info', dashMoney(total) + ' owed by customers', owing.length + ' customer' + (owing.length === 1 ? '' : 's') + ' · largest ' + owing[0].name + ' ' + dashMoney(owing[0].balance),
-        () => { showTab('customers-tab'); if (typeof loadCustAdmin === 'function') loadCustAdmin(); });
+      document.getElementById('dash-owed-total').textContent = dashMoney(owing.reduce((sum, c) => sum + Number(c.balance), 0));
+      document.getElementById('dash-owed-count').textContent = 'From ' + owing.length + ' customer' + (owing.length === 1 ? '' : 's') + (owing.length > 3 ? ' · top 3 below' : '');
+      const rows = document.getElementById('dash-owed-list'); rows.replaceChildren();
+      owing.slice(0, 3).forEach(c => {
+        const row = document.createElement('div'); row.className = 'dash-owed-row';
+        const n = document.createElement('span'); n.textContent = c.name;
+        const m = document.createElement('strong'); m.textContent = dashMoney(c.balance);
+        row.append(n, m); rows.append(row);
+      });
+      owedCard.hidden = false;
     }
   }
   if (payables.status === 'fulfilled' && Number(payables.value.total_owed) > 0) {
